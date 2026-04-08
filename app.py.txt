@@ -1,0 +1,93 @@
+import streamlit as st
+import pandas as pd  # Importamos o Pandas para lidar com nossa "planilha" de dados
+import os  # Biblioteca para checar se o arquivo já existe no computador
+
+# 1. CONFIGURAÇÃO INICIAL
+st.set_page_config(page_title="Meu App Financeiro", layout="wide")
+st.title("💸 Meu Monitor Financeiro")
+
+# Nome do arquivo onde vamos salvar as informações
+ARQUIVO_DADOS = 'dados_financeiros.csv'
+
+# 2. FUNÇÕES DE DADOS (A "memória" do nosso app)
+def carregar_dados():
+    """Lê o arquivo CSV. Se não existir, cria uma tabela vazia."""
+    if os.path.exists(ARQUIVO_DADOS):
+        return pd.read_csv(ARQUIVO_DADOS)
+    else:
+        # Cria uma tabela vazia com as colunas que precisamos
+        return pd.DataFrame(columns=['Data', 'Descrição', 'Valor', 'Tipo'])
+
+def salvar_dados(df):
+    """Salva a tabela no arquivo CSV."""
+    df.to_csv(ARQUIVO_DADOS, index=False)
+
+# Carregamos os dados atuais sempre que a página atualiza
+df_dados = carregar_dados()
+
+# 3. MENU LATERAL
+menu = st.sidebar.selectbox(
+    "Escolha uma opção no menu:", 
+    ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos"]
+)
+
+# 4. LÓGICA DAS TELAS
+
+if menu == "Dashboard":
+    st.header("📊 Resumo do Mês")
+    
+    # Fazendo os cálculos reais baseados nos dados salvos!
+    # Somamos todos os valores onde o Tipo é 'Entrada'
+    total_entradas = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum()
+    # Somamos todos os valores onde o Tipo é 'Saída'
+    total_saidas = df_dados[df_dados['Tipo'] == 'Saída']['Valor'].sum()
+    saldo_atual = total_entradas - total_saidas
+    
+    col1, col2, col3 = st.columns(3)
+    # Mostramos os valores formatados com R$
+    col1.metric(label="Receitas (Entradas)", value=f"R$ {total_entradas:.2f}")
+    col2.metric(label="Despesas (Saídas)", value=f"R$ {total_saidas:.2f}")
+    col3.metric(label="Saldo Atual", value=f"R$ {saldo_atual:.2f}")
+    
+    st.subheader("Seus Registros Recentes:")
+    st.dataframe(df_dados) # Mostra a nossa tabela na tela
+
+elif menu == "Entradas e Saídas":
+    st.header("💰 Entradas e Saídas")
+    st.write("Registre aqui seus ganhos e gastos do dia a dia.")
+    
+    # Criando um formulário para o usuário preencher
+    with st.form("form_registro", clear_on_submit=True):
+        data = st.date_input("Data")
+        descricao = st.text_input("Descrição (Ex: Conta de Luz, Salário)")
+        valor = st.number_input("Valor (R$)", min_value=0.01, format="%.2f")
+        tipo = st.selectbox("É uma Entrada ou Saída?", ["Entrada", "Saída"])
+        
+        # Botão para enviar o formulário
+        botao_salvar = st.form_submit_button("Salvar Registro")
+        
+        if botao_salvar:
+            # Se o botão for clicado, criamos um novo registro
+            novo_registro = pd.DataFrame([{
+                'Data': data, 
+                'Descrição': descricao, 
+                'Valor': valor, 
+                'Tipo': tipo
+            }])
+            
+            # Adicionamos o novo registro à nossa tabela existente
+            df_dados = pd.concat([df_dados, novo_registro], ignore_index=True)
+            
+            # Salvamos no arquivo CSV
+            salvar_dados(df_dados)
+            
+            # Mostramos uma mensagem de sucesso
+            st.success("Registro salvo com sucesso!")
+
+elif menu == "Cartão de Crédito":
+    st.header("💳 Fatura do Cartão")
+    st.write("Em breve: Vamos criar a lógica do cartão de crédito no próximo passo!")
+
+elif menu == "Investimentos":
+    st.header("📈 Meus Investimentos")
+    st.write("Em breve: Área dedicada aos seus investimentos.")
