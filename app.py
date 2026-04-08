@@ -240,26 +240,39 @@ else:
 
         st.divider()
 
+        # --- BLOCO DA PREVISÃO DE FATURAS ---
         st.subheader("🗓️ Resumo das Próximas Faturas")
         hoje = pd.Timestamp(date.today())
         
-        if hoje.day <= dia_fechamento: 
-            mes_base = hoje - pd.DateOffset(months=1)
-            status_fatura_atual = "Aberta"
-        elif hoje.day <= dia_vencimento: 
-            mes_base = hoje - pd.DateOffset(months=1)
-            status_fatura_atual = "Fechada"
-        else: 
-            mes_base = hoje
-            status_fatura_atual = "Aberta"
-            
+        # Encontra a fatura pendente mais antiga para ser a primeira da fila
+        faturas_pendentes_ativas = df_cartao[df_cartao['Status'] == 'Pendente']['Mês da Fatura'].unique()
+        
+        if len(faturas_pendentes_ativas) > 0:
+            faturas_dt = pd.to_datetime(faturas_pendentes_ativas, format='%m/%Y')
+            mes_base = faturas_dt.min()
+        else:
+            # Se não tiver pendente, usa a regra baseada no dia de hoje
+            if hoje.day < dia_fechamento:
+                mes_base = hoje - pd.DateOffset(months=1)
+            else:
+                mes_base = hoje
+                
         lista_6_meses = [(mes_base + pd.DateOffset(months=i)).strftime('%m/%Y') for i in range(6)]
         
         colunas_fatura = st.columns(6)
         for i, mes_str in enumerate(lista_6_meses):
             total_mes = df_cartao[(df_cartao['Mês da Fatura'] == mes_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
             label = f"Fatura {mes_str}"
-            if i == 0: label += f" ({status_fatura_atual})" 
+            
+            # Se for o dia do fechamento exato (dia 08 ou o que tiver configurado), já considera Fechada
+            if i == 0: 
+                if hoje.day < dia_fechamento:
+                    label += " (Aberta)"
+                elif dia_fechamento <= hoje.day <= dia_vencimento:
+                    label += " (Fechada)"
+                else:
+                    label += " (Aberta)"
+                    
             colunas_fatura[i].metric(label=label, value=f"R$ {total_mes:.2f}")
 
         st.divider()
@@ -284,22 +297,25 @@ else:
                 if st.form_submit_button("Lançar"):
                     data_dt = pd.to_datetime(data_compra)
                     
+                    # Se o dia da compra for <= ao dia de fechamento (ex: dia 07 <= 08)
                     if data_dt.day <= dia_fechamento:
-                        mes_inicio = data_dt - pd.DateOffset(months=1)
+                        mes_inicio = data_dt - pd.DateOffset(months=1) # Volta 1 mês
                     else:
-                        mes_inicio = data_dt
+                        mes_inicio = data_dt # Mantém mês atual
                         
                     valor_parcela = valor_total_compra / parcelas
                     novos_registros = []
                     for i in range(parcelas):
+                        mes_fatura = (mes_inicio + pd.DateOffset(months=i)).strftime('%m/%Y')
                         novos_registros.append({
-                            'Data Compra': data_compra, 'Mês da Fatura': (mes_inicio + pd.DateOffset(months=i)).strftime('%m/%Y'), 
+                            'Data Compra': data_compra, 'Mês da Fatura': mes_fatura, 
                             'Descrição': desc_compra, 'Categoria': categoria_cartao,
                             'Parcela': f"{i+1}/{parcelas}", 'Valor': valor_parcela, 'Status': 'Pendente'
                         })
                     df_cartao = pd.concat([df_cartao, pd.DataFrame(novos_registros)], ignore_index=True)
                     salvar_cartao(df_cartao)
-                    st.success("Compra Lançada na Nuvem!")
+                    
+                    st.success(f"Compra Lançada! (1ª parcela caiu na fatura {mes_inicio.strftime('%m/%Y')})")
                     st.rerun()
                 
         st.divider()
