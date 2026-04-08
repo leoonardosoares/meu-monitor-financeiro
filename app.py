@@ -8,7 +8,7 @@ from datetime import date
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-SENHA_DO_APP = "admin123"
+SENHA_DO_APP = "leo123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
