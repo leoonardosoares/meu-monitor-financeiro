@@ -49,11 +49,17 @@ else:
         st.stop()
 
     def obter_aba(nome, colunas):
-        try: return planilha.worksheet(nome)
-        except:
-            aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
-            aba.append_row(colunas)
-            return aba
+        try: 
+            return planilha.worksheet(nome)
+        except Exception as e:
+            # Se o erro for realmente a falta da aba, ele cria. Se for outro erro (como limite de acessos), ele avisa!
+            if "WorksheetNotFound" in str(type(e)):
+                aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
+                aba.append_row(colunas)
+                return aba
+            else:
+                st.error("O Google pediu para aguardarmos 1 minuto (Limite de acessos rápidos). Tente recarregar a página em instantes!")
+                st.stop()
 
     aba_financeiro = obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
     aba_cartao = obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
