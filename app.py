@@ -8,7 +8,7 @@ from datetime import date
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-SENHA_DO_APP = "leo123"
+SENHA_DO_APP = "admin123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -52,7 +52,6 @@ else:
         try: 
             return planilha.worksheet(nome)
         except Exception as e:
-            # Se o erro for realmente a falta da aba, ele cria. Se for outro erro (como limite de acessos), ele avisa!
             if "WorksheetNotFound" in str(type(e)):
                 aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
                 aba.append_row(colunas)
@@ -68,7 +67,7 @@ else:
     aba_orcamentos = obter_aba("orcamentos", ['Categoria', 'Limite'])
 
     # Funções de Carregar e Salvar
-    @st.cache_data(ttl=60) # Memoriza os dados por 60 segundos
+    @st.cache_data(ttl=60)
     def carregar_dados():
         dados = aba_financeiro.get_all_records()
         return pd.DataFrame(dados) if dados else pd.DataFrame(columns=['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
@@ -77,7 +76,7 @@ else:
         aba_financeiro.clear()
         dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
         aba_financeiro.update(values=[df.columns.tolist()] + dados_limpos)
-        carregar_dados.clear() # Apaga a memória assim que salva algo novo!
+        carregar_dados.clear()
 
     @st.cache_data(ttl=60)
     def carregar_cartao():
@@ -261,18 +260,15 @@ else:
 
         st.divider()
 
-        # --- BLOCO DA PREVISÃO DE FATURAS ---
         st.subheader("🗓️ Resumo das Próximas Faturas")
         hoje = pd.Timestamp(date.today())
         
-        # Encontra a fatura pendente mais antiga para ser a primeira da fila
         faturas_pendentes_ativas = df_cartao[df_cartao['Status'] == 'Pendente']['Mês da Fatura'].unique()
         
         if len(faturas_pendentes_ativas) > 0:
             faturas_dt = pd.to_datetime(faturas_pendentes_ativas, format='%m/%Y')
             mes_base = faturas_dt.min()
         else:
-            # Se não tiver pendente, usa a regra baseada no dia de hoje
             if hoje.day < dia_fechamento:
                 mes_base = hoje - pd.DateOffset(months=1)
             else:
@@ -285,7 +281,6 @@ else:
             total_mes = df_cartao[(df_cartao['Mês da Fatura'] == mes_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
             label = f"Fatura {mes_str}"
             
-            # Se for o dia do fechamento exato (dia 08 ou o que tiver configurado), já considera Fechada
             if i == 0: 
                 if hoje.day < dia_fechamento:
                     label += " (Aberta)"
@@ -318,11 +313,11 @@ else:
                 if st.form_submit_button("Lançar"):
                     data_dt = pd.to_datetime(data_compra)
                     
-                    # Se o dia da compra for <= ao dia de fechamento (ex: dia 07 <= 08)
-                    if data_dt.day <= dia_fechamento:
-                        mes_inicio = data_dt - pd.DateOffset(months=1) # Volta 1 mês
+                    # A MÁGICA CORRIGIDA (Menor que, sem o igual)
+                    if data_dt.day < dia_fechamento:
+                        mes_inicio = data_dt - pd.DateOffset(months=1)
                     else:
-                        mes_inicio = data_dt # Mantém mês atual
+                        mes_inicio = data_dt
                         
                     valor_parcela = valor_total_compra / parcelas
                     novos_registros = []
