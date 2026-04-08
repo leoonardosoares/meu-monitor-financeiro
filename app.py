@@ -1,54 +1,37 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
-import os
+import json
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date
 
-# 1. CONFIGURAÇÃO INICIAL (Deve ser sempre a primeira linha)
+# 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-# --- SISTEMA DE SEGURANÇA (LOGIN) ---
-# Mude a senha abaixo para a sua senha pessoal!
-SENHA_DO_APP = "leo123"
+SENHA_DO_APP = "admin123"
 
-# Criamos o "crachá" na memória do navegador, se ele ainda não existir
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
 
-# Se o usuário não estiver logado, mostra a tela de login
 if not st.session_state['logado']:
-    # Vamos centralizar a tela de login para ficar bonito
     col1, col2, col3 = st.columns([1, 2, 1])
-    
     with col2:
         st.title("🔒 Acesso Restrito")
-        st.write("Bem-vindo! Por favor, insira a senha para acessar o seu Monitor Financeiro.")
-        
-        # O type="password" esconde o que está sendo digitado
+        st.write("Insira a senha para acessar seu Monitor Financeiro na Nuvem.")
         senha_digitada = st.text_input("Senha de Acesso:", type="password")
-        
         if st.button("Entrar", use_container_width=True):
             if senha_digitada == SENHA_DO_APP:
                 st.session_state['logado'] = True
-                st.success("Acesso Liberado! Entrando...")
-                st.rerun() # Atualiza a tela para mostrar o aplicativo
+                st.rerun()
             else:
-                st.error("Senha incorreta. Tente novamente.")
-
-# Se ele estiver logado, mostra o aplicativo inteiro!
+                st.error("Senha incorreta.")
 else:
-    # --- O APLICATIVO COMEÇA AQUI ---
-    
-    # Adicionando o botão de Sair no topo do menu lateral
     if st.sidebar.button("🚪 Sair / Logout", use_container_width=True):
         st.session_state['logado'] = False
         st.rerun()
         
-    st.sidebar.divider() # Uma linha separadora
-    
-    st.title("💸 Meu Monitor Financeiro")
-
-    conn = sqlite3.connect('banco_financeiro.db', check_same_thread=False)
+    st.sidebar.divider()
+    st.title("💸 Meu Monitor Financeiro (Sincronizado ☁️)")
 
     LISTA_CATEGORIAS = [
         "Aluguel", "Condomínio", "IPTU", "Energia", "Academia", "Saúde", 
@@ -57,42 +40,78 @@ else:
         "Investimento", "Receita/Salário", "Outros"
     ]
 
-    def carregar_dados():
+    # --- 2. CONEXÃO MÁGICA COM O GOOGLE SHEETS ---
+    @st.cache_resource # Faz o app não ficar reconectando toda hora e travar
+    def conectar_google():
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(st.secrets["GOOGLE_JSON"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        return client.open("Banco_Monitor_Financeiro")
+
+    try:
+        planilha = conectar_google()
+    except Exception as e:
+        st.error(f"Erro ao conectar na planilha: {e}")
+        st.stop()
+
+    def obter_aba(nome, colunas):
         try:
-            return pd.read_sql("SELECT * FROM financeiro", conn)
+            return planilha.worksheet(nome)
         except:
-            return pd.DataFrame(columns=['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
+            # Se a aba não existir na planilha, o robô cria na hora!
+            aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
+            aba.append_row(colunas)
+            return aba
+
+    aba_financeiro = obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
+    aba_cartao = obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
+    aba_config = obter_aba("configuracoes", ['chave', 'valor'])
+
+    def carregar_dados():
+        dados = aba_financeiro.get_all_records()
+        if dados: return pd.DataFrame(dados)
+        return pd.DataFrame(columns=['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
 
     def salvar_dados(df):
-        df.to_sql('financeiro', conn, if_exists='replace', index=False)
+        aba_financeiro.clear()
+        # Transformamos tudo em texto para o Google Sheets não bugar com os números
+        aba_financeiro.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
 
     def carregar_cartao():
-        try:
-            return pd.read_sql("SELECT * FROM cartao", conn)
-        except:
-            return pd.DataFrame(columns=['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
+        dados = aba_cartao.get_all_records()
+        if dados: 
+            df = pd.DataFrame(dados)
+            # Corrige a formatação do valor que vem da planilha
+            df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce') 
+            return df
+        return pd.DataFrame(columns=['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
 
     def salvar_cartao(df):
-        df.to_sql('cartao', conn, if_exists='replace', index=False)
+        aba_cartao.clear()
+        aba_cartao.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
 
     def carregar_valor(chave, padrao):
-        try:
-            df = pd.read_sql(f"SELECT valor FROM configuracoes WHERE chave = '{chave}'", conn)
-            if not df.empty: return float(df['valor'].iloc[0])
-        except: pass
+        dados = aba_config.get_all_records()
+        df = pd.DataFrame(dados) if dados else pd.DataFrame(columns=['chave', 'valor'])
+        if not df.empty and chave in df['chave'].values:
+            return float(df.loc[df['chave'] == chave, 'valor'].iloc[0])
         return padrao
 
     def salvar_valor(chave, valor):
-        try: df = pd.read_sql("SELECT * FROM configuracoes", conn)
-        except: df = pd.DataFrame(columns=['chave', 'valor'])
-            
+        dados = aba_config.get_all_records()
+        df = pd.DataFrame(dados) if dados else pd.DataFrame(columns=['chave', 'valor'])
         if chave in df['chave'].values: df.loc[df['chave'] == chave, 'valor'] = valor
         else: df = pd.concat([df, pd.DataFrame([{'chave': chave, 'valor': valor}])], ignore_index=True)
-        df.to_sql('configuracoes', conn, if_exists='replace', index=False)
+        aba_config.clear()
+        aba_config.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
 
     df_dados = carregar_dados()
+    df_dados['Valor'] = pd.to_numeric(df_dados['Valor'], errors='coerce') # Garante que o valor é número para somar
+    
     df_cartao = carregar_cartao()
 
+    # --- 3. MENU LATERAL E CÁLCULOS GERAIS ---
     menu = st.sidebar.selectbox("Escolha uma opção:", ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos"])
 
     total_entradas = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados.empty else 0.0
@@ -101,6 +120,7 @@ else:
     total_investido = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Saída')]['Valor'].sum() if not df_dados.empty else 0.0
     patrimonio_total = saldo_bancario + total_investido
 
+    # --- 4. LÓGICA DAS TELAS ---
     if menu == "Dashboard":
         st.header("📊 Resumo do Mês")
         col1, col2, col3, col4 = st.columns(4)
@@ -110,10 +130,10 @@ else:
         col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
         
         st.divider()
-        st.subheader("📉 Despesas por Categoria (Conta Bancária)")
+        st.subheader("📉 Despesas por Categoria")
         df_saidas = df_dados[df_dados['Tipo'] == 'Saída']
         if not df_saidas.empty: st.bar_chart(df_saidas.groupby('Categoria')['Valor'].sum())
-        else: st.info("Nenhuma despesa registrada no Banco de Dados.")
+        else: st.info("Nenhuma despesa registrada.")
 
     elif menu == "Entradas e Saídas":
         st.header("💰 Entradas e Saídas")
@@ -126,15 +146,18 @@ else:
             if st.form_submit_button("Salvar Registro"):
                 df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data, 'Descrição': descricao, 'Categoria': categoria, 'Valor': valor, 'Tipo': tipo}])], ignore_index=True)
                 salvar_dados(df_dados)
-                st.success("Salvo com sucesso!")
+                st.success("Salvo com sucesso na nuvem!")
                 st.rerun()
                 
         st.divider()
         st.subheader("✏️ Seus Registros")
-        salvar_dados(st.data_editor(df_dados, num_rows="dynamic", use_container_width=True))
+        df_editado = st.data_editor(df_dados, num_rows="dynamic", use_container_width=True)
+        if not df_dados.equals(df_editado):
+            salvar_dados(df_editado)
 
     elif menu == "Cartão de Crédito":
         st.header("💳 Cartão de Crédito")
+        
         col_lim_esq, col_lim_dir = st.columns([1, 2])
         with col_lim_esq:
             limite_atual = carregar_valor("limite_cartao", 2000.0)
@@ -147,6 +170,7 @@ else:
         st.divider()
         st.subheader("💲 Pagar Fatura")
         faturas_pendentes = df_cartao[df_cartao['Status'] == 'Pendente']['Mês da Fatura'].unique() if not df_cartao.empty else []
+        
         if len(faturas_pendentes) > 0:
             faturas_pendentes = sorted(faturas_pendentes)
             col_pag1, col_pag2, col_pag3 = st.columns([2, 2, 2])
@@ -167,11 +191,13 @@ else:
             st.success("🎉 Nenhuma fatura pendente!")
 
         st.divider()
+        
         col_graf, col_form = st.columns([1, 1])
         with col_graf:
             st.subheader("📉 Gastos por Categoria")
             if not df_cartao.empty: st.bar_chart(df_cartao.groupby('Categoria')['Valor'].sum())
-            else: st.info("Nenhuma compra registrada ainda.")
+            else: st.info("Nenhuma compra registrada.")
+                
         with col_form:
             st.subheader("🛒 Lançar Compra")
             with st.form("form_cartao", clear_on_submit=True):
@@ -181,6 +207,7 @@ else:
                 col4, col5 = st.columns(2)
                 valor_total_compra = col4.number_input("Valor Total (R$)", min_value=0.01, format="%.2f")
                 parcelas = col5.number_input("Parcelas", min_value=1, max_value=48, value=1, step=1)
+                
                 if st.form_submit_button("Lançar"):
                     data_dt = pd.to_datetime(data_compra)
                     mes_inicio = data_dt if data_dt.day <= 8 else data_dt + pd.DateOffset(months=1)
@@ -194,16 +221,19 @@ else:
                         })
                     df_cartao = pd.concat([df_cartao, pd.DataFrame(novos_registros)], ignore_index=True)
                     salvar_cartao(df_cartao)
-                    st.success("Compra Lançada!")
+                    st.success("Compra Lançada na Nuvem!")
                     st.rerun()
                 
         st.divider()
         st.subheader("🧾 Extrato do Cartão")
-        salvar_cartao(st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True))
+        df_cartao_editado = st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True)
+        if not df_cartao.equals(df_cartao_editado):
+            salvar_cartao(df_cartao_editado)
 
     elif menu == "Investimentos":
         st.header("📈 Meus Investimentos")
         aba1, aba2 = st.tabs(["🎯 Metas e Aportes", "🔮 Simulador do Futuro"])
+        
         with aba1:
             st.subheader("Reserva de Emergência e Transbordo")
             meta_atual = carregar_valor("meta_reserva", 10000.0)
@@ -231,12 +261,11 @@ else:
                 if st.form_submit_button("Investir Agora"):
                     df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_aporte, 'Descrição': "Aporte de Investimento", 'Categoria': "Investimento", 'Valor': valor_aporte, 'Tipo': "Saída"}])], ignore_index=True)
                     salvar_dados(df_dados)
-                    st.success("Aporte registrado!")
+                    st.success("Aporte registrado na Nuvem!")
                     st.rerun()
 
         with aba2:
             st.subheader("Mágica dos Juros Compostos")
-            st.write("Veja como seu dinheiro atual pode crescer no futuro sem você fazer nada!")
             col_sim1, col_sim2 = st.columns(2)
             anos = col_sim1.slider("Tempo (em Anos):", min_value=1, max_value=30, value=5)
             taxa_anual = col_sim2.number_input("Taxa de Rendimento Anual estimada (%):", min_value=0.0, value=10.0, step=0.5)
@@ -252,7 +281,5 @@ else:
                 st.bar_chart(df_projecao['Patrimônio Acumulado (R$)'])
                 valor_final = df_projecao['Patrimônio Acumulado (R$)'].iloc[-1]
                 st.info(f"Em {anos} anos, seus **R\$ {total_investido:.2f}** se transformarão em **R\$ {valor_final:.2f}**!")
-                st.write("### 🔍 Detalhamento Ano a Ano")
-                st.dataframe(df_projecao.style.format("R$ {:.2f}"))
             else:
-                st.warning("Faça seu primeiro aporte na aba ao lado para usar o simulador.")
+                st.warning("Faça seu primeiro aporte para usar o simulador.")
