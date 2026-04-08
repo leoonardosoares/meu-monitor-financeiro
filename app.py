@@ -58,8 +58,8 @@ else:
     aba_financeiro = obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
     aba_cartao = obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
     aba_config = obter_aba("configuracoes", ['chave', 'valor'])
-    aba_categorias = obter_aba("categorias", ['Categoria']) # Nova aba
-    aba_orcamentos = obter_aba("orcamentos", ['Categoria', 'Limite']) # Nova aba
+    aba_categorias = obter_aba("categorias", ['Categoria'])
+    aba_orcamentos = obter_aba("orcamentos", ['Categoria', 'Limite'])
 
     # Funções de Carregar e Salvar
     def carregar_dados():
@@ -99,7 +99,6 @@ else:
     def carregar_categorias():
         dados = aba_categorias.get_all_records()
         if dados: return pd.DataFrame(dados)
-        # Se não tiver, cria um padrão
         df_padrao = pd.DataFrame([{"Categoria": c} for c in ["Aluguel", "Supermercado", "Lazer", "Saúde", "Outros"]])
         salvar_categorias(df_padrao)
         return df_padrao
@@ -124,7 +123,6 @@ else:
     df_dados = carregar_dados()
     df_dados['Valor'] = pd.to_numeric(df_dados['Valor'], errors='coerce') 
     
-    # Criando a coluna de Mês/Ano para o filtro
     df_dados['Data_DT'] = pd.to_datetime(df_dados['Data'], errors='coerce')
     df_dados['Mes_Ano'] = df_dados['Data_DT'].dt.strftime('%m/%Y').fillna("Sem Data")
     
@@ -132,15 +130,12 @@ else:
     df_categorias = carregar_categorias()
     df_orcamentos = carregar_orcamentos()
 
-    # Prepara a Lista de Categorias do Sistema
     LISTA_CATEGORIAS = df_categorias['Categoria'].dropna().unique().tolist()
-    # Protegendo categorias cruciais do sistema
     for cat_sistema in ["Cartão de Crédito", "Investimento", "Receita/Salário", "Outros"]:
         if cat_sistema not in LISTA_CATEGORIAS: LISTA_CATEGORIAS.append(cat_sistema)
 
     # --- 3. MENU LATERAL E FILTRO DE TEMPO ---
     st.sidebar.subheader("📅 Filtro de Mês")
-    # Pega todos os meses que existem no banco e no cartão
     todos_meses = set(df_dados['Mes_Ano'].unique().tolist() + df_cartao['Mês da Fatura'].unique().tolist())
     if "Sem Data" in todos_meses: todos_meses.remove("Sem Data")
     lista_meses = sorted(list(todos_meses), reverse=True)
@@ -150,7 +145,6 @@ else:
     
     menu = st.sidebar.selectbox("Escolha uma opção:", ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos", "Configurações e Orçamento"])
 
-    # Filtra as tabelas com base no mês selecionado
     if mes_selecionado != "Todos os Meses":
         df_dados_filtro = df_dados[df_dados['Mes_Ano'] == mes_selecionado]
         df_cartao_filtro = df_cartao[df_cartao['Mês da Fatura'] == mes_selecionado]
@@ -158,7 +152,6 @@ else:
         df_dados_filtro = df_dados
         df_cartao_filtro = df_cartao
 
-    # Cálculos Globais (Estes não mudam com o filtro para o Saldo Patrimonial ficar certo)
     total_entradas_global = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados.empty else 0.0
     total_saidas_global = df_dados[df_dados['Tipo'] == 'Saída']['Valor'].sum() if not df_dados.empty else 0.0
     saldo_bancario_global = total_entradas_global - total_saidas_global
@@ -171,14 +164,12 @@ else:
         texto_filtro = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else "(Todo o Período)"
         st.header(f"📊 Resumo do Mês {texto_filtro}")
         
-        # Métrica do filtro
         total_entradas_filtro = df_dados_filtro[df_dados_filtro['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados_filtro.empty else 0.0
         total_saidas_filtro = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']['Valor'].sum() if not df_dados_filtro.empty else 0.0
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Receitas do Período", f"R$ {total_entradas_filtro:.2f}")
         col2.metric("Despesas do Período", f"R$ {total_saidas_filtro:.2f}")
-        # O Saldo Bancário e Patrimônio são globais para você não achar que sumiu dinheiro!
         col3.metric("Saldo Bancário Total", f"R$ {saldo_bancario_global:.2f}")
         col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
         
@@ -211,6 +202,9 @@ else:
 
     elif menu == "Cartão de Crédito":
         st.header("💳 Cartão de Crédito")
+        
+        dia_fechamento = int(carregar_valor("dia_fechamento", 8))
+        dia_vencimento = int(carregar_valor("dia_vencimento", 15))
         
         col_lim_esq, col_lim_dir = st.columns([1, 2])
         with col_lim_esq:
@@ -246,13 +240,18 @@ else:
 
         st.divider()
 
-        # --- BLOCO DA PREVISÃO DE FATURAS ---
         st.subheader("🗓️ Resumo das Próximas Faturas")
         hoje = pd.Timestamp(date.today())
         
-        if hoje.day <= 8: mes_base = hoje; status_fatura_atual = "Aberta"
-        elif hoje.day <= 15: mes_base = hoje; status_fatura_atual = "Fechada"
-        else: mes_base = hoje + pd.DateOffset(months=1); status_fatura_atual = "Aberta"
+        if hoje.day <= dia_fechamento: 
+            mes_base = hoje - pd.DateOffset(months=1)
+            status_fatura_atual = "Aberta"
+        elif hoje.day <= dia_vencimento: 
+            mes_base = hoje - pd.DateOffset(months=1)
+            status_fatura_atual = "Fechada"
+        else: 
+            mes_base = hoje
+            status_fatura_atual = "Aberta"
             
         lista_6_meses = [(mes_base + pd.DateOffset(months=i)).strftime('%m/%Y') for i in range(6)]
         
@@ -264,13 +263,11 @@ else:
             colunas_fatura[i].metric(label=label, value=f"R$ {total_mes:.2f}")
 
         st.divider()
-        # ------------------------------------
         
         col_graf, col_form = st.columns([1, 1])
         with col_graf:
             texto_filtro_cc = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else ""
             st.subheader(f"📉 Gastos por Categoria {texto_filtro_cc}")
-            # Grafico usando o Filtro de Mês!
             if not df_cartao_filtro.empty: st.bar_chart(df_cartao_filtro.groupby('Categoria')['Valor'].sum())
             else: st.info("Nenhuma compra de cartão registrada neste período.")
                 
@@ -286,7 +283,12 @@ else:
                 
                 if st.form_submit_button("Lançar"):
                     data_dt = pd.to_datetime(data_compra)
-                    mes_inicio = data_dt if data_dt.day <= 8 else data_dt + pd.DateOffset(months=1)
+                    
+                    if data_dt.day <= dia_fechamento:
+                        mes_inicio = data_dt - pd.DateOffset(months=1)
+                    else:
+                        mes_inicio = data_dt
+                        
                     valor_parcela = valor_total_compra / parcelas
                     novos_registros = []
                     for i in range(parcelas):
@@ -326,6 +328,7 @@ else:
             col_inv3.metric("Outros Investimentos", f"R$ {valor_outros:.2f}")
             
             progresso = min(valor_reserva / nova_meta, 1.0)
+            st.write(f"**Progresso da Reserva ({progresso * 100:.1f}%)**")
             st.progress(progresso)
             if progresso == 1.0: st.success("Reserva completa! Novos aportes irão para 'Outros Investimentos'.")
                 
@@ -361,7 +364,7 @@ else:
     elif menu == "Configurações e Orçamento":
         st.header("⚙️ Configurações e Orçamento")
         
-        aba_cat, aba_orc = st.tabs(["🏷️ Editar Categorias", "🎯 Orçamento Mensal"])
+        aba_cat, aba_orc, aba_cartao_cfg = st.tabs(["🏷️ Editar Categorias", "🎯 Orçamento Mensal", "💳 Regras do Cartão"])
         
         with aba_cat:
             st.subheader("Minhas Categorias")
@@ -391,7 +394,6 @@ else:
                 else:
                     st.subheader(f"📊 Progresso em {mes_selecionado}")
                     
-                    # Agrupa os gastos do banco e do cartão do MÊS SELECIONADO
                     gastos_banco = df_dados_filtro[(df_dados_filtro['Tipo'] == 'Saída') & (df_dados_filtro['Categoria'] != 'Cartão de Crédito')]
                     gastos_banco_agrupado = gastos_banco.groupby('Categoria')['Valor'].sum()
                     gastos_cartao_agrupado = df_cartao_filtro.groupby('Categoria')['Valor'].sum()
@@ -404,14 +406,12 @@ else:
                         
                         if limite > 0:
                             tem_orcamento_valido = True
-                            # Soma banco + cartão
                             gasto_total = gastos_banco_agrupado.get(cat, 0.0) + gastos_cartao_agrupado.get(cat, 0.0)
-                            
                             percentual = gasto_total / limite
                             
                             if percentual >= 1.0:
                                 st.error(f"🚨 **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Estourou!)")
-                                st.progress(1.0) # Trava em 100%
+                                st.progress(1.0)
                             elif percentual >= 0.8:
                                 st.warning(f"⚠️ **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Quase lá!)")
                                 st.progress(percentual)
@@ -421,3 +421,25 @@ else:
                                 
                     if not tem_orcamento_valido:
                         st.write("Adicione categorias e limites maiores que zero na tabela ao lado para ver os gráficos.")
+
+        with aba_cartao_cfg:
+            st.subheader("Datas Importantes")
+            st.write("Defina aqui os dias de corte do seu cartão. Isso afeta em qual mês suas compras vão cair.")
+            
+            dia_fechamento_atual = int(carregar_valor("dia_fechamento", 8))
+            dia_vencimento_atual = int(carregar_valor("dia_vencimento", 15))
+            
+            col_dias1, col_dias2 = st.columns(2)
+            
+            novo_dia_fechamento = col_dias1.number_input("Dia de Fechamento (Melhor dia de compra):", min_value=1, max_value=31, value=dia_fechamento_atual, step=1)
+            novo_dia_vencimento = col_dias2.number_input("Dia de Vencimento da Fatura:", min_value=1, max_value=31, value=dia_vencimento_atual, step=1)
+            
+            if novo_dia_fechamento != dia_fechamento_atual:
+                salvar_valor("dia_fechamento", novo_dia_fechamento)
+                st.success("Dia de fechamento atualizado na nuvem!")
+                st.rerun()
+                
+            if novo_dia_vencimento != dia_vencimento_atual:
+                salvar_valor("dia_vencimento", novo_dia_vencimento)
+                st.success("Dia de vencimento atualizado na nuvem!")
+                st.rerun()
