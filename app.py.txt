@@ -1,93 +1,258 @@
 import streamlit as st
-import pandas as pd  # Importamos o Pandas para lidar com nossa "planilha" de dados
-import os  # Biblioteca para checar se o arquivo já existe no computador
+import pandas as pd
+import sqlite3
+import os
+from datetime import date
 
-# 1. CONFIGURAÇÃO INICIAL
+# 1. CONFIGURAÇÃO INICIAL (Deve ser sempre a primeira linha)
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
-st.title("💸 Meu Monitor Financeiro")
 
-# Nome do arquivo onde vamos salvar as informações
-ARQUIVO_DADOS = 'dados_financeiros.csv'
+# --- SISTEMA DE SEGURANÇA (LOGIN) ---
+# Mude a senha abaixo para a sua senha pessoal!
+SENHA_DO_APP = "leo123"
 
-# 2. FUNÇÕES DE DADOS (A "memória" do nosso app)
-def carregar_dados():
-    """Lê o arquivo CSV. Se não existir, cria uma tabela vazia."""
-    if os.path.exists(ARQUIVO_DADOS):
-        return pd.read_csv(ARQUIVO_DADOS)
-    else:
-        # Cria uma tabela vazia com as colunas que precisamos
-        return pd.DataFrame(columns=['Data', 'Descrição', 'Valor', 'Tipo'])
+# Criamos o "crachá" na memória do navegador, se ele ainda não existir
+if 'logado' not in st.session_state:
+    st.session_state['logado'] = False
 
-def salvar_dados(df):
-    """Salva a tabela no arquivo CSV."""
-    df.to_csv(ARQUIVO_DADOS, index=False)
-
-# Carregamos os dados atuais sempre que a página atualiza
-df_dados = carregar_dados()
-
-# 3. MENU LATERAL
-menu = st.sidebar.selectbox(
-    "Escolha uma opção no menu:", 
-    ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos"]
-)
-
-# 4. LÓGICA DAS TELAS
-
-if menu == "Dashboard":
-    st.header("📊 Resumo do Mês")
+# Se o usuário não estiver logado, mostra a tela de login
+if not st.session_state['logado']:
+    # Vamos centralizar a tela de login para ficar bonito
+    col1, col2, col3 = st.columns([1, 2, 1])
     
-    # Fazendo os cálculos reais baseados nos dados salvos!
-    # Somamos todos os valores onde o Tipo é 'Entrada'
-    total_entradas = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum()
-    # Somamos todos os valores onde o Tipo é 'Saída'
-    total_saidas = df_dados[df_dados['Tipo'] == 'Saída']['Valor'].sum()
-    saldo_atual = total_entradas - total_saidas
-    
-    col1, col2, col3 = st.columns(3)
-    # Mostramos os valores formatados com R$
-    col1.metric(label="Receitas (Entradas)", value=f"R$ {total_entradas:.2f}")
-    col2.metric(label="Despesas (Saídas)", value=f"R$ {total_saidas:.2f}")
-    col3.metric(label="Saldo Atual", value=f"R$ {saldo_atual:.2f}")
-    
-    st.subheader("Seus Registros Recentes:")
-    st.dataframe(df_dados) # Mostra a nossa tabela na tela
-
-elif menu == "Entradas e Saídas":
-    st.header("💰 Entradas e Saídas")
-    st.write("Registre aqui seus ganhos e gastos do dia a dia.")
-    
-    # Criando um formulário para o usuário preencher
-    with st.form("form_registro", clear_on_submit=True):
-        data = st.date_input("Data")
-        descricao = st.text_input("Descrição (Ex: Conta de Luz, Salário)")
-        valor = st.number_input("Valor (R$)", min_value=0.01, format="%.2f")
-        tipo = st.selectbox("É uma Entrada ou Saída?", ["Entrada", "Saída"])
+    with col2:
+        st.title("🔒 Acesso Restrito")
+        st.write("Bem-vindo! Por favor, insira a senha para acessar o seu Monitor Financeiro.")
         
-        # Botão para enviar o formulário
-        botao_salvar = st.form_submit_button("Salvar Registro")
+        # O type="password" esconde o que está sendo digitado
+        senha_digitada = st.text_input("Senha de Acesso:", type="password")
         
-        if botao_salvar:
-            # Se o botão for clicado, criamos um novo registro
-            novo_registro = pd.DataFrame([{
-                'Data': data, 
-                'Descrição': descricao, 
-                'Valor': valor, 
-                'Tipo': tipo
-            }])
-            
-            # Adicionamos o novo registro à nossa tabela existente
-            df_dados = pd.concat([df_dados, novo_registro], ignore_index=True)
-            
-            # Salvamos no arquivo CSV
-            salvar_dados(df_dados)
-            
-            # Mostramos uma mensagem de sucesso
-            st.success("Registro salvo com sucesso!")
+        if st.button("Entrar", use_container_width=True):
+            if senha_digitada == SENHA_DO_APP:
+                st.session_state['logado'] = True
+                st.success("Acesso Liberado! Entrando...")
+                st.rerun() # Atualiza a tela para mostrar o aplicativo
+            else:
+                st.error("Senha incorreta. Tente novamente.")
 
-elif menu == "Cartão de Crédito":
-    st.header("💳 Fatura do Cartão")
-    st.write("Em breve: Vamos criar a lógica do cartão de crédito no próximo passo!")
+# Se ele estiver logado, mostra o aplicativo inteiro!
+else:
+    # --- O APLICATIVO COMEÇA AQUI ---
+    
+    # Adicionando o botão de Sair no topo do menu lateral
+    if st.sidebar.button("🚪 Sair / Logout", use_container_width=True):
+        st.session_state['logado'] = False
+        st.rerun()
+        
+    st.sidebar.divider() # Uma linha separadora
+    
+    st.title("💸 Meu Monitor Financeiro")
 
-elif menu == "Investimentos":
-    st.header("📈 Meus Investimentos")
-    st.write("Em breve: Área dedicada aos seus investimentos.")
+    conn = sqlite3.connect('banco_financeiro.db', check_same_thread=False)
+
+    LISTA_CATEGORIAS = [
+        "Aluguel", "Condomínio", "IPTU", "Energia", "Academia", "Saúde", 
+        "Transporte", "Lavanderia", "Supermercado", "Lanche", "Lazer", 
+        "Assinatura", "Compras", "Alimentação", "Dívida", "Cartão de Crédito", 
+        "Investimento", "Receita/Salário", "Outros"
+    ]
+
+    def carregar_dados():
+        try:
+            return pd.read_sql("SELECT * FROM financeiro", conn)
+        except:
+            return pd.DataFrame(columns=['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
+
+    def salvar_dados(df):
+        df.to_sql('financeiro', conn, if_exists='replace', index=False)
+
+    def carregar_cartao():
+        try:
+            return pd.read_sql("SELECT * FROM cartao", conn)
+        except:
+            return pd.DataFrame(columns=['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
+
+    def salvar_cartao(df):
+        df.to_sql('cartao', conn, if_exists='replace', index=False)
+
+    def carregar_valor(chave, padrao):
+        try:
+            df = pd.read_sql(f"SELECT valor FROM configuracoes WHERE chave = '{chave}'", conn)
+            if not df.empty: return float(df['valor'].iloc[0])
+        except: pass
+        return padrao
+
+    def salvar_valor(chave, valor):
+        try: df = pd.read_sql("SELECT * FROM configuracoes", conn)
+        except: df = pd.DataFrame(columns=['chave', 'valor'])
+            
+        if chave in df['chave'].values: df.loc[df['chave'] == chave, 'valor'] = valor
+        else: df = pd.concat([df, pd.DataFrame([{'chave': chave, 'valor': valor}])], ignore_index=True)
+        df.to_sql('configuracoes', conn, if_exists='replace', index=False)
+
+    df_dados = carregar_dados()
+    df_cartao = carregar_cartao()
+
+    menu = st.sidebar.selectbox("Escolha uma opção:", ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos"])
+
+    total_entradas = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados.empty else 0.0
+    total_saidas = df_dados[df_dados['Tipo'] == 'Saída']['Valor'].sum() if not df_dados.empty else 0.0
+    saldo_bancario = total_entradas - total_saidas
+    total_investido = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Saída')]['Valor'].sum() if not df_dados.empty else 0.0
+    patrimonio_total = saldo_bancario + total_investido
+
+    if menu == "Dashboard":
+        st.header("📊 Resumo do Mês")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Receitas", f"R$ {total_entradas:.2f}")
+        col2.metric("Despesas", f"R$ {total_saidas:.2f}")
+        col3.metric("Saldo Bancário", f"R$ {saldo_bancario:.2f}")
+        col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
+        
+        st.divider()
+        st.subheader("📉 Despesas por Categoria (Conta Bancária)")
+        df_saidas = df_dados[df_dados['Tipo'] == 'Saída']
+        if not df_saidas.empty: st.bar_chart(df_saidas.groupby('Categoria')['Valor'].sum())
+        else: st.info("Nenhuma despesa registrada no Banco de Dados.")
+
+    elif menu == "Entradas e Saídas":
+        st.header("💰 Entradas e Saídas")
+        with st.form("form_registro", clear_on_submit=True):
+            data = st.date_input("Data", format="DD/MM/YYYY")
+            descricao = st.text_input("Descrição")
+            categoria = st.selectbox("Categoria", LISTA_CATEGORIAS)
+            valor = st.number_input("Valor (R$)", min_value=0.01, format="%.2f")
+            tipo = st.selectbox("É uma Entrada ou Saída?", ["Entrada", "Saída"])
+            if st.form_submit_button("Salvar Registro"):
+                df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data, 'Descrição': descricao, 'Categoria': categoria, 'Valor': valor, 'Tipo': tipo}])], ignore_index=True)
+                salvar_dados(df_dados)
+                st.success("Salvo com sucesso!")
+                st.rerun()
+                
+        st.divider()
+        st.subheader("✏️ Seus Registros")
+        salvar_dados(st.data_editor(df_dados, num_rows="dynamic", use_container_width=True))
+
+    elif menu == "Cartão de Crédito":
+        st.header("💳 Cartão de Crédito")
+        col_lim_esq, col_lim_dir = st.columns([1, 2])
+        with col_lim_esq:
+            limite_atual = carregar_valor("limite_cartao", 2000.0)
+            novo_limite = st.number_input("Limite Total (R$):", min_value=0.0, value=limite_atual, step=100.0)
+            if novo_limite != limite_atual: salvar_valor("limite_cartao", novo_limite)
+        with col_lim_dir:
+            gastos_pendentes = df_cartao[df_cartao['Status'] == 'Pendente']['Valor'].sum() if not df_cartao.empty else 0.0
+            st.metric("Limite Disponível", f"R$ {novo_limite - gastos_pendentes:.2f}")
+
+        st.divider()
+        st.subheader("💲 Pagar Fatura")
+        faturas_pendentes = df_cartao[df_cartao['Status'] == 'Pendente']['Mês da Fatura'].unique() if not df_cartao.empty else []
+        if len(faturas_pendentes) > 0:
+            faturas_pendentes = sorted(faturas_pendentes)
+            col_pag1, col_pag2, col_pag3 = st.columns([2, 2, 2])
+            with col_pag1: fatura_selecionada = st.selectbox("Selecione a fatura:", faturas_pendentes)
+            with col_pag2:
+                total_fatura_pagar = df_cartao[(df_cartao['Mês da Fatura'] == fatura_selecionada) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum()
+                st.metric("Valor a Pagar", f"R$ {total_fatura_pagar:.2f}")
+            with col_pag3:
+                st.write(""); st.write("")
+                if st.button("✅ Confirmar Pagamento"):
+                    df_cartao.loc[(df_cartao['Mês da Fatura'] == fatura_selecionada) & (df_cartao['Status'] == 'Pendente'), 'Status'] = 'Pago'
+                    salvar_cartao(df_cartao)
+                    df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': date.today(), 'Descrição': f"Fatura ({fatura_selecionada})", 'Categoria': "Cartão de Crédito", 'Valor': total_fatura_pagar, 'Tipo': "Saída"}])], ignore_index=True)
+                    salvar_dados(df_dados)
+                    st.success("Fatura paga!")
+                    st.rerun()
+        else:
+            st.success("🎉 Nenhuma fatura pendente!")
+
+        st.divider()
+        col_graf, col_form = st.columns([1, 1])
+        with col_graf:
+            st.subheader("📉 Gastos por Categoria")
+            if not df_cartao.empty: st.bar_chart(df_cartao.groupby('Categoria')['Valor'].sum())
+            else: st.info("Nenhuma compra registrada ainda.")
+        with col_form:
+            st.subheader("🛒 Lançar Compra")
+            with st.form("form_cartao", clear_on_submit=True):
+                data_compra = st.date_input("Data da Compra", format="DD/MM/YYYY")
+                desc_compra = st.text_input("O que comprou?")
+                categoria_cartao = st.selectbox("Categoria", LISTA_CATEGORIAS)
+                col4, col5 = st.columns(2)
+                valor_total_compra = col4.number_input("Valor Total (R$)", min_value=0.01, format="%.2f")
+                parcelas = col5.number_input("Parcelas", min_value=1, max_value=48, value=1, step=1)
+                if st.form_submit_button("Lançar"):
+                    data_dt = pd.to_datetime(data_compra)
+                    mes_inicio = data_dt if data_dt.day <= 8 else data_dt + pd.DateOffset(months=1)
+                    valor_parcela = valor_total_compra / parcelas
+                    novos_registros = []
+                    for i in range(parcelas):
+                        novos_registros.append({
+                            'Data Compra': data_compra, 'Mês da Fatura': (mes_inicio + pd.DateOffset(months=i)).strftime('%m/%Y'), 
+                            'Descrição': desc_compra, 'Categoria': categoria_cartao,
+                            'Parcela': f"{i+1}/{parcelas}", 'Valor': valor_parcela, 'Status': 'Pendente'
+                        })
+                    df_cartao = pd.concat([df_cartao, pd.DataFrame(novos_registros)], ignore_index=True)
+                    salvar_cartao(df_cartao)
+                    st.success("Compra Lançada!")
+                    st.rerun()
+                
+        st.divider()
+        st.subheader("🧾 Extrato do Cartão")
+        salvar_cartao(st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True))
+
+    elif menu == "Investimentos":
+        st.header("📈 Meus Investimentos")
+        aba1, aba2 = st.tabs(["🎯 Metas e Aportes", "🔮 Simulador do Futuro"])
+        with aba1:
+            st.subheader("Reserva de Emergência e Transbordo")
+            meta_atual = carregar_valor("meta_reserva", 10000.0)
+            nova_meta = st.number_input("Defina a Meta da sua Reserva (R$):", min_value=100.0, value=meta_atual, step=500.0)
+            if nova_meta != meta_atual: salvar_valor("meta_reserva", nova_meta)
+            
+            valor_reserva = total_investido if total_investido <= nova_meta else nova_meta
+            valor_outros = 0.0 if total_investido <= nova_meta else total_investido - nova_meta
+                
+            col_inv1, col_inv2, col_inv3 = st.columns(3)
+            col_inv1.metric("Total Investido", f"R$ {total_investido:.2f}")
+            col_inv2.metric("Fundo de Emergência", f"R$ {valor_reserva:.2f}")
+            col_inv3.metric("Outros Investimentos", f"R$ {valor_outros:.2f}")
+            
+            progresso = min(valor_reserva / nova_meta, 1.0)
+            st.write(f"**Progresso da Reserva ({progresso * 100:.1f}%)**")
+            st.progress(progresso)
+            if progresso == 1.0: st.success("Reserva completa! Novos aportes irão para 'Outros Investimentos'.")
+                
+            st.divider()
+            st.subheader("💸 Realizar Novo Aporte")
+            with st.form("form_investimento", clear_on_submit=True):
+                data_aporte = st.date_input("Data do Aporte", format="DD/MM/YYYY")
+                valor_aporte = st.number_input("Valor a Investir (R$)", min_value=0.01, format="%.2f")
+                if st.form_submit_button("Investir Agora"):
+                    df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_aporte, 'Descrição': "Aporte de Investimento", 'Categoria': "Investimento", 'Valor': valor_aporte, 'Tipo': "Saída"}])], ignore_index=True)
+                    salvar_dados(df_dados)
+                    st.success("Aporte registrado!")
+                    st.rerun()
+
+        with aba2:
+            st.subheader("Mágica dos Juros Compostos")
+            st.write("Veja como seu dinheiro atual pode crescer no futuro sem você fazer nada!")
+            col_sim1, col_sim2 = st.columns(2)
+            anos = col_sim1.slider("Tempo (em Anos):", min_value=1, max_value=30, value=5)
+            taxa_anual = col_sim2.number_input("Taxa de Rendimento Anual estimada (%):", min_value=0.0, value=10.0, step=0.5)
+            
+            if total_investido > 0:
+                dados_tabela = []
+                valor_acumulado = total_investido
+                for ano in range(1, anos + 1):
+                    rendimento_do_ano = valor_acumulado * (taxa_anual / 100)
+                    valor_acumulado += rendimento_do_ano
+                    dados_tabela.append({"Ano": ano, "Rendimento no Ano (R$)": rendimento_do_ano, "Patrimônio Acumulado (R$)": valor_acumulado})
+                df_projecao = pd.DataFrame(dados_tabela).set_index("Ano")
+                st.bar_chart(df_projecao['Patrimônio Acumulado (R$)'])
+                valor_final = df_projecao['Patrimônio Acumulado (R$)'].iloc[-1]
+                st.info(f"Em {anos} anos, seus **R\$ {total_investido:.2f}** se transformarão em **R\$ {valor_final:.2f}**!")
+                st.write("### 🔍 Detalhamento Ano a Ano")
+                st.dataframe(df_projecao.style.format("R$ {:.2f}"))
+            else:
+                st.warning("Faça seu primeiro aporte na aba ao lado para usar o simulador.")
