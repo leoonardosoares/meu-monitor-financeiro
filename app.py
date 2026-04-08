@@ -209,7 +209,7 @@ else:
 
 
     # --- 4. LÓGICA DAS TELAS ---
-    if menu == "Dashboard":
+    elif menu == "Dashboard":
         texto_filtro = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else "(Todo o Período)"
         st.header(f"📊 Resumo do Mês {texto_filtro}")
         
@@ -224,36 +224,37 @@ else:
         
         st.divider()
         
-        # --- NOVO: PROJEÇÃO PARA O PRÓXIMO MÊS ---
+        # --- PROJEÇÃO PARA O PRÓXIMO MÊS (CORRIGIDA) ---
         st.subheader("🔮 Visão do Próximo Mês")
         
-        # Descobre qual é o próximo mês baseado no filtro atual
+        # Descobre qual é o mês atual e o próximo baseado no filtro
         if mes_selecionado != "Todos os Meses":
             hoje_proj = pd.to_datetime(mes_selecionado, format='%m/%Y')
         else:
             hoje_proj = pd.Timestamp(date.today())
             
+        mes_atual_str = hoje_proj.strftime('%m/%Y')
         proximo_mes_dt = hoje_proj + pd.DateOffset(months=1)
         proximo_mes_str = proximo_mes_dt.strftime('%m/%Y')
 
         # Busca os dados
         receita_prevista = carregar_valor("receita_prevista", 0.0)
         total_custos_fixos = df_custos['Valor'].sum() if not df_custos.empty else 0.0
-        fatura_proximo_mes = df_cartao[(df_cartao['Mês da Fatura'] == proximo_mes_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
         
-        # A Mágica do Saldo Livre
-        saldo_projetado = receita_prevista - total_custos_fixos - fatura_proximo_mes
+        # A MUDANÇA DE LÓGICA: Pega a fatura do mês ATUAL para abater no mês que vem
+        fatura_abater = df_cartao[(df_cartao['Mês da Fatura'] == mes_atual_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
+        
+        saldo_projetado = receita_prevista - total_custos_fixos - fatura_abater
 
-        st.write(f"**Projeção de Caixa baseada na Fatura de: {proximo_mes_str}**")
+        st.write(f"**Projeção para {proximo_mes_str} (Abatendo a Fatura de {mes_atual_str})**")
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         col_p1.metric("Receita Prevista (+)", f"R$ {receita_prevista:.2f}")
         col_p2.metric("Custos Fixos (-)", f"R$ {total_custos_fixos:.2f}")
-        col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_proximo_mes:.2f}")
+        col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_abater:.2f}")
         
         if saldo_projetado >= 0:
             col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
         else:
-            # Mostra que ficou negativo visualmente
             col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
             
         st.divider()
