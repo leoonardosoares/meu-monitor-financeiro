@@ -33,7 +33,7 @@ else:
     st.sidebar.divider()
     st.title("💸 Meu Monitor Financeiro (Sincronizado ☁️)")
 
-    # --- 2. CONEXÃO COM O GOOGLE SHEETS E NOVAS ABAS ---
+    # --- 2. CONEXÃO COM O GOOGLE SHEETS OTIMIZADA ---
     @st.cache_resource 
     def conectar_google():
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -48,28 +48,31 @@ else:
         st.error(f"Erro ao conectar na planilha: {e}")
         st.stop()
 
-    def obter_aba(nome, colunas):
-        try: 
-            return planilha.worksheet(nome)
-        except Exception as e:
-            if "WorksheetNotFound" in str(type(e)):
-                aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
-                aba.append_row(colunas)
-                return aba
-            else:
-                st.error("O Google pediu para aguardarmos 1 minuto. Tente recarregar a página em instantes!")
-                st.stop()
-
     @st.cache_resource
     def carregar_abas():
-        return {
-            "financeiro": obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']),
-            "cartao": obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status']),
-            "configuracoes": obter_aba("configuracoes", ['chave', 'valor']),
-            "categorias": obter_aba("categorias", ['Categoria']),
-            "orcamentos": obter_aba("orcamentos", ['Categoria', 'Limite']),
-            "custos_fixos": obter_aba("custos_fixos", ['Descrição', 'Valor'])
-        }
+        try:
+            todas_abas = planilha.worksheets()
+            titulos_existentes = {aba.title: aba for aba in todas_abas}
+            
+            def obter_ou_criar(nome, colunas):
+                if nome in titulos_existentes:
+                    return titulos_existentes[nome]
+                else:
+                    aba = planilha.add_worksheet(title=nome, rows="1000", cols="20")
+                    aba.append_row(colunas)
+                    return aba
+
+            return {
+                "financeiro": obter_ou_criar("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']),
+                "cartao": obter_ou_criar("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status']),
+                "configuracoes": obter_ou_criar("configuracoes", ['chave', 'valor']),
+                "categorias": obter_ou_criar("categorias", ['Categoria']),
+                "orcamentos": obter_ou_criar("orcamentos", ['Categoria', 'Limite']),
+                "custos_fixos": obter_ou_criar("custos_fixos", ['Descrição', 'Valor'])
+            }
+        except Exception as e:
+            st.error(f"Erro de comunicação com o Google: {e}")
+            st.stop()
 
     abas_planilha = carregar_abas()
     aba_financeiro = abas_planilha["financeiro"]
@@ -79,7 +82,7 @@ else:
     aba_orcamentos = abas_planilha["orcamentos"]
     aba_custos = abas_planilha["custos_fixos"]
 
-    # Funções de Carregar e Salvar
+    # --- FUNÇÕES DE CARREGAR E SALVAR COM CACHE ---
     @st.cache_data(ttl=60)
     def carregar_dados():
         dados = aba_financeiro.get_all_records()
@@ -224,7 +227,6 @@ else:
         
         st.divider()
         
-        # --- PROJEÇÃO PARA O PRÓXIMO MÊS ---
         st.subheader("🔮 Visão do Próximo Mês")
         
         if mes_selecionado != "Todos os Meses":
@@ -239,7 +241,6 @@ else:
         receita_prevista = carregar_valor("receita_prevista", 0.0)
         total_custos_fixos = df_custos['Valor'].sum() if not df_custos.empty else 0.0
         
-        # A MUDANÇA: Pega a fatura do mês ATUAL para abater no próximo
         fatura_abater = df_cartao[(df_cartao['Mês da Fatura'] == mes_atual_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
         
         saldo_projetado = receita_prevista - total_custos_fixos - fatura_abater
@@ -278,10 +279,15 @@ else:
                 
         st.divider()
         st.subheader("✏️ Seus Registros (Todos os Meses)")
-        st.write("A tabela abaixo mostra todos os registros para permitir edições e exclusões seguras.")
-        df_editado = st.data_editor(df_dados.drop(columns=['Data_DT', 'Mes_Ano']), num_rows="dynamic", use_container_width=True)
-        if not df_dados.drop(columns=['Data_DT', 'Mes_Ano']).equals(df_editado):
-            salvar_dados(df_editado)
+        st.write("A tabela abaixo mostra todos os registros para permitir edições e exclusões seguras. Clique no botão abaixo para salvar as mudanças.")
+        # NOVA PROTEÇÃO: Formulário para a tabela de registros
+        with st.form("form_tabela_dados"):
+            df_editado = st.data_editor(df_dados.drop(columns=['Data_DT', 'Mes_Ano']), num_rows="dynamic", use_container_width=True)
+            if st.form_submit_button("💾 Salvar Alterações na Tabela"):
+                if not df_dados.drop(columns=['Data_DT', 'Mes_Ano']).equals(df_editado):
+                    salvar_dados(df_editado)
+                    st.success("Alterações salvas!")
+                    st.rerun()
 
     elif menu == "Cartão de Crédito":
         st.header("💳 Cartão de Crédito")
@@ -398,10 +404,15 @@ else:
                 
         st.divider()
         st.subheader("🧾 Extrato Geral do Cartão")
-        st.write("A tabela mostra todos os meses para edição.")
-        df_cartao_editado = st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True)
-        if not df_cartao.equals(df_cartao_editado):
-            salvar_cartao(df_cartao_editado)
+        st.write("Edite as linhas livremente. Quando terminar, clique no botão para salvar.")
+        # NOVA PROTEÇÃO: Formulário para o Extrato do Cartão
+        with st.form("form_tabela_cartao"):
+            df_cartao_editado = st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True)
+            if st.form_submit_button("💾 Salvar Alterações no Extrato"):
+                if not df_cartao.equals(df_cartao_editado):
+                    salvar_cartao(df_cartao_editado)
+                    st.success("Extrato salvo!")
+                    st.rerun()
 
     elif menu == "Investimentos":
         st.header("📈 Meus Investimentos")
@@ -462,25 +473,30 @@ else:
         
         with aba_cat:
             st.subheader("Minhas Categorias")
-            st.write("Adicione, edite ou apague as categorias que aparecerão nos formulários.")
-            df_cat_editado = st.data_editor(df_categorias, num_rows="dynamic", use_container_width=True)
-            if not df_categorias.equals(df_cat_editado):
-                salvar_categorias(df_cat_editado)
-                st.success("Categorias atualizadas!")
-                st.rerun()
+            st.write("Adicione, edite ou apague as categorias e clique em Salvar.")
+            # NOVA PROTEÇÃO: Formulário de Categorias
+            with st.form("form_tabela_cat"):
+                df_cat_editado = st.data_editor(df_categorias, num_rows="dynamic", use_container_width=True)
+                if st.form_submit_button("💾 Salvar Categorias"):
+                    if not df_categorias.equals(df_cat_editado):
+                        salvar_categorias(df_cat_editado)
+                        st.success("Categorias atualizadas!")
+                        st.rerun()
                 
         with aba_orc:
             st.subheader("Teto de Gastos por Categoria")
             st.write("Defina um limite de gastos. Coloque `0` para categorias sem limite.")
-            
             col_orc1, col_orc2 = st.columns([1, 1.5])
             
             with col_orc1:
-                df_orc_editado = st.data_editor(df_orcamentos, num_rows="dynamic", use_container_width=True)
-                if not df_orcamentos.equals(df_orc_editado):
-                    salvar_orcamentos(df_orc_editado)
-                    st.success("Orçamentos salvos!")
-                    st.rerun()
+                # NOVA PROTEÇÃO: Formulário de Orçamentos
+                with st.form("form_tabela_orc"):
+                    df_orc_editado = st.data_editor(df_orcamentos, num_rows="dynamic", use_container_width=True)
+                    if st.form_submit_button("💾 Salvar Orçamentos"):
+                        if not df_orcamentos.equals(df_orc_editado):
+                            salvar_orcamentos(df_orc_editado)
+                            st.success("Orçamentos salvos!")
+                            st.rerun()
                     
             with col_orc2:
                 if mes_selecionado == "Todos os Meses":
@@ -538,7 +554,6 @@ else:
                 st.success("Dia de vencimento atualizado na nuvem!")
                 st.rerun()
                 
-        # --- NOVA ABA: CONFIGURAR PROJEÇÃO ---
         with aba_proj:
             st.subheader("Receita Base do Mês")
             receita_atual = carregar_valor("receita_prevista", 0.0)
@@ -550,16 +565,19 @@ else:
                 
             st.divider()
             st.subheader("Custos Fixos Mensais")
-            st.write("Cadastre despesas que você sempre tem todo mês (Ex: Aluguel, Internet, Netflix).")
-            df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
-            if not df_custos.equals(df_custos_editado):
-                try:
-                    salvar_custos(df_custos_editado)
-                    st.success("Custos fixos salvos na nuvem!")
-                    st.rerun()
-                except Exception as e:
-                    st.error("🚨 O Google recusou a gravação! Veja o motivo exato abaixo:")
-                    if hasattr(e, 'response'):
-                        st.code(e.response.text)
-                    else:
-                        st.error(str(e))
+            st.write("Adicione ou edite seus custos e depois clique em Salvar.")
+            # NOVA PROTEÇÃO: Formulário de Custos Fixos
+            with st.form("form_tabela_custos"):
+                df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
+                if st.form_submit_button("💾 Salvar Custos Fixos"):
+                    if not df_custos.equals(df_custos_editado):
+                        try:
+                            salvar_custos(df_custos_editado)
+                            st.success("Custos fixos salvos na nuvem!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error("🚨 O Google recusou a gravação! Veja o motivo exato abaixo:")
+                            if hasattr(e, 'response'):
+                                st.code(e.response.text)
+                            else:
+                                st.error(str(e))
