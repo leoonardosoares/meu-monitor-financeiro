@@ -62,13 +62,15 @@ else:
     aba_orcamentos = obter_aba("orcamentos", ['Categoria', 'Limite'])
 
     # Funções de Carregar e Salvar
+    # Funções de Carregar e Salvar
     def carregar_dados():
         dados = aba_financeiro.get_all_records()
         return pd.DataFrame(dados) if dados else pd.DataFrame(columns=['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
 
     def salvar_dados(df):
         aba_financeiro.clear()
-        aba_financeiro.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_financeiro.update(values=[df.columns.tolist()] + dados_limpos)
 
     def carregar_cartao():
         dados = aba_cartao.get_all_records()
@@ -80,7 +82,8 @@ else:
 
     def salvar_cartao(df):
         aba_cartao.clear()
-        aba_cartao.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_cartao.update(values=[df.columns.tolist()] + dados_limpos)
 
     def carregar_valor(chave, padrao):
         dados = aba_config.get_all_records()
@@ -94,7 +97,8 @@ else:
         if chave in df['chave'].values: df.loc[df['chave'] == chave, 'valor'] = valor
         else: df = pd.concat([df, pd.DataFrame([{'chave': chave, 'valor': valor}])], ignore_index=True)
         aba_config.clear()
-        aba_config.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_config.update(values=[df.columns.tolist()] + dados_limpos)
 
     def carregar_categorias():
         dados = aba_categorias.get_all_records()
@@ -105,7 +109,8 @@ else:
 
     def salvar_categorias(df):
         aba_categorias.clear()
-        aba_categorias.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_categorias.update(values=[df.columns.tolist()] + dados_limpos)
 
     def carregar_orcamentos():
         dados = aba_orcamentos.get_all_records()
@@ -117,7 +122,8 @@ else:
 
     def salvar_orcamentos(df):
         aba_orcamentos.clear()
-        aba_orcamentos.update(values=[df.columns.values.tolist()] + df.astype(str).values.tolist())
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_orcamentos.update(values=[df.columns.tolist()] + dados_limpos)
 
     # Lendo tudo do banco
     df_dados = carregar_dados()
