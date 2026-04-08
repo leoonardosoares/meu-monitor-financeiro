@@ -60,11 +60,22 @@ else:
                 st.error("O Google pediu para aguardarmos 1 minuto (Limite de acessos rápidos). Tente recarregar a página em instantes!")
                 st.stop()
 
-    aba_financeiro = obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
-    aba_cartao = obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status'])
-    aba_config = obter_aba("configuracoes", ['chave', 'valor'])
-    aba_categorias = obter_aba("categorias", ['Categoria'])
-    aba_orcamentos = obter_aba("orcamentos", ['Categoria', 'Limite'])
+    @st.cache_resource # Cria uma "memória de ferro" para as abas
+    def carregar_abas():
+        return {
+            "financeiro": obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']),
+            "cartao": obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status']),
+            "configuracoes": obter_aba("configuracoes", ['chave', 'valor']),
+            "categorias": obter_aba("categorias", ['Categoria']),
+            "orcamentos": obter_aba("orcamentos", ['Categoria', 'Limite'])
+        }
+
+    abas_planilha = carregar_abas()
+    aba_financeiro = abas_planilha["financeiro"]
+    aba_cartao = abas_planilha["cartao"]
+    aba_config = abas_planilha["configuracoes"]
+    aba_categorias = abas_planilha["categorias"]
+    aba_orcamentos = abas_planilha["orcamentos"]
 
     # Funções de Carregar e Salvar
     @st.cache_data(ttl=60)
