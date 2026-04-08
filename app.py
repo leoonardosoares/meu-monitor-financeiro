@@ -539,7 +539,8 @@ else:
                 st.success("Dia de vencimento atualizado na nuvem!")
                 st.rerun()
                 
-        # --- NOVA ABA: CONFIGURAR PROJEÇÃO ---
+    
+       # --- NOVA ABA: CONFIGURAR PROJEÇÃO ---
         with aba_proj:
             st.subheader("Receita Base do Mês")
             receita_atual = carregar_valor("receita_prevista", 0.0)
@@ -554,6 +555,14 @@ else:
             st.write("Cadastre despesas que você sempre tem todo mês (Ex: Aluguel, Internet, Netflix).")
             df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
             if not df_custos.equals(df_custos_editado):
-                salvar_custos(df_custos_editado)
-                st.success("Custos fixos salvos na nuvem!")
-                st.rerun()
+                try:
+                    salvar_custos(df_custos_editado)
+                    st.success("Custos fixos salvos na nuvem!")
+                    st.rerun()
+                except Exception as e:
+                    st.error("🚨 O Google recusou a gravação! Veja o motivo exato abaixo:")
+                    # Esse código arranca a mensagem secreta do Google e mostra na tela
+                    if hasattr(e, 'response'):
+                        st.code(e.response.text)
+                    else:
+                        st.error(str(e))
