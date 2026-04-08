@@ -8,7 +8,7 @@ from datetime import date
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-SENHA_DO_APP = "leo123"
+SENHA_DO_APP = "admin123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -57,17 +57,18 @@ else:
                 aba.append_row(colunas)
                 return aba
             else:
-                st.error("O Google pediu para aguardarmos 1 minuto (Limite de acessos rápidos). Tente recarregar a página em instantes!")
+                st.error("O Google pediu para aguardarmos 1 minuto. Tente recarregar a página em instantes!")
                 st.stop()
 
-    @st.cache_resource # Cria uma "memória de ferro" para as abas
+    @st.cache_resource
     def carregar_abas():
         return {
             "financeiro": obter_aba("financeiro", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']),
             "cartao": obter_aba("cartao", ['Data Compra', 'Mês da Fatura', 'Descrição', 'Categoria', 'Parcela', 'Valor', 'Status']),
             "configuracoes": obter_aba("configuracoes", ['chave', 'valor']),
             "categorias": obter_aba("categorias", ['Categoria']),
-            "orcamentos": obter_aba("orcamentos", ['Categoria', 'Limite'])
+            "orcamentos": obter_aba("orcamentos", ['Categoria', 'Limite']),
+            "custos_fixos": obter_aba("custos_fixos", ['Descrição', 'Valor']) # NOVA ABA
         }
 
     abas_planilha = carregar_abas()
@@ -76,6 +77,7 @@ else:
     aba_config = abas_planilha["configuracoes"]
     aba_categorias = abas_planilha["categorias"]
     aba_orcamentos = abas_planilha["orcamentos"]
+    aba_custos = abas_planilha["custos_fixos"]
 
     # Funções de Carregar e Salvar
     @st.cache_data(ttl=60)
@@ -150,6 +152,21 @@ else:
         aba_orcamentos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_orcamentos.clear()
 
+    @st.cache_data(ttl=60)
+    def carregar_custos():
+        dados = aba_custos.get_all_records()
+        if dados: 
+            df = pd.DataFrame(dados)
+            df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce')
+            return df
+        return pd.DataFrame(columns=['Descrição', 'Valor'])
+
+    def salvar_custos(df):
+        aba_custos.clear()
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
+        carregar_custos.clear()
+
     # Lendo tudo do banco
     df_dados = carregar_dados()
     df_dados['Valor'] = pd.to_numeric(df_dados['Valor'], errors='coerce') 
@@ -160,6 +177,7 @@ else:
     df_cartao = carregar_cartao()
     df_categorias = carregar_categorias()
     df_orcamentos = carregar_orcamentos()
+    df_custos = carregar_custos()
 
     LISTA_CATEGORIAS = df_categorias['Categoria'].dropna().unique().tolist()
     for cat_sistema in ["Cartão de Crédito", "Investimento", "Receita/Salário", "Outros"]:
@@ -205,6 +223,41 @@ else:
         col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
         
         st.divider()
+        
+        # --- NOVO: PROJEÇÃO PARA O PRÓXIMO MÊS ---
+        st.subheader("🔮 Visão do Próximo Mês")
+        
+        # Descobre qual é o próximo mês baseado no filtro atual
+        if mes_selecionado != "Todos os Meses":
+            hoje_proj = pd.to_datetime(mes_selecionado, format='%m/%Y')
+        else:
+            hoje_proj = pd.Timestamp(date.today())
+            
+        proximo_mes_dt = hoje_proj + pd.DateOffset(months=1)
+        proximo_mes_str = proximo_mes_dt.strftime('%m/%Y')
+
+        # Busca os dados
+        receita_prevista = carregar_valor("receita_prevista", 0.0)
+        total_custos_fixos = df_custos['Valor'].sum() if not df_custos.empty else 0.0
+        fatura_proximo_mes = df_cartao[(df_cartao['Mês da Fatura'] == proximo_mes_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
+        
+        # A Mágica do Saldo Livre
+        saldo_projetado = receita_prevista - total_custos_fixos - fatura_proximo_mes
+
+        st.write(f"**Projeção de Caixa baseada na Fatura de: {proximo_mes_str}**")
+        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+        col_p1.metric("Receita Prevista (+)", f"R$ {receita_prevista:.2f}")
+        col_p2.metric("Custos Fixos (-)", f"R$ {total_custos_fixos:.2f}")
+        col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_proximo_mes:.2f}")
+        
+        if saldo_projetado >= 0:
+            col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+        else:
+            # Mostra que ficou negativo visualmente
+            col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+            
+        st.divider()
+        
         st.subheader("📉 Despesas por Categoria")
         df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
         if not df_saidas_grafico.empty: st.bar_chart(df_saidas_grafico.groupby('Categoria')['Valor'].sum())
@@ -324,7 +377,6 @@ else:
                 if st.form_submit_button("Lançar"):
                     data_dt = pd.to_datetime(data_compra)
                     
-                    # A MÁGICA CORRIGIDA (Menor que, sem o igual)
                     if data_dt.day < dia_fechamento:
                         mes_inicio = data_dt - pd.DateOffset(months=1)
                     else:
@@ -407,7 +459,7 @@ else:
     elif menu == "Configurações e Orçamento":
         st.header("⚙️ Configurações e Orçamento")
         
-        aba_cat, aba_orc, aba_cartao_cfg = st.tabs(["🏷️ Editar Categorias", "🎯 Orçamento Mensal", "💳 Regras do Cartão"])
+        aba_cat, aba_orc, aba_cartao_cfg, aba_proj = st.tabs(["🏷️ Categorias", "🎯 Orçamento", "💳 Regras do Cartão", "🔮 Projeção Fixa"])
         
         with aba_cat:
             st.subheader("Minhas Categorias")
@@ -485,4 +537,23 @@ else:
             if novo_dia_vencimento != dia_vencimento_atual:
                 salvar_valor("dia_vencimento", novo_dia_vencimento)
                 st.success("Dia de vencimento atualizado na nuvem!")
+                st.rerun()
+                
+        # --- NOVA ABA: CONFIGURAR PROJEÇÃO ---
+        with aba_proj:
+            st.subheader("Receita Base do Mês")
+            receita_atual = carregar_valor("receita_prevista", 0.0)
+            nova_receita = st.number_input("Qual o seu Salário / Receita fixa esperada? (R$):", min_value=0.0, value=receita_atual, step=100.0)
+            if nova_receita != receita_atual:
+                salvar_valor("receita_prevista", nova_receita)
+                st.success("Receita prevista atualizada na nuvem!")
+                st.rerun()
+                
+            st.divider()
+            st.subheader("Custos Fixos Mensais")
+            st.write("Cadastre despesas que você sempre tem todo mês (Ex: Aluguel, Internet, Netflix).")
+            df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
+            if not df_custos.equals(df_custos_editado):
+                salvar_custos(df_custos_editado)
+                st.success("Custos fixos salvos na nuvem!")
                 st.rerun()
