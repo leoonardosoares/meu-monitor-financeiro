@@ -8,7 +8,7 @@ from datetime import date
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-SENHA_DO_APP = "leo123"
+SENHA_DO_APP = "admin123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -68,7 +68,8 @@ else:
                 "configuracoes": obter_ou_criar("configuracoes", ['chave', 'valor']),
                 "categorias": obter_ou_criar("categorias", ['Categoria']),
                 "orcamentos": obter_ou_criar("orcamentos", ['Categoria', 'Limite']),
-                "custos_fixos": obter_ou_criar("custos_fixos", ['Descrição', 'Valor'])
+                "custos_fixos": obter_ou_criar("custos_fixos", ['Descrição', 'Valor']),
+                "extrato_bancario": obter_ou_criar("extrato_bancario", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']) # PREPARANDO O TERRENO
             }
         except Exception as e:
             st.error(f"Erro de comunicação com o Google: {e}")
@@ -195,7 +196,15 @@ else:
     mes_selecionado = st.sidebar.selectbox("Período:", ["Todos os Meses"] + lista_meses)
     st.sidebar.divider()
     
-    menu = st.sidebar.selectbox("Escolha uma opção:", ["Dashboard", "Entradas e Saídas", "Cartão de Crédito", "Investimentos", "Configurações e Orçamento"])
+    # NOVO MENU ADICIONADO AQUI!
+    menu = st.sidebar.selectbox("Escolha uma opção:", [
+        "Dashboard", 
+        "Dashboard Automático 🤖", 
+        "Entradas e Saídas", 
+        "Cartão de Crédito", 
+        "Investimentos", 
+        "Configurações e Orçamento"
+    ])
 
     if mes_selecionado != "Todos os Meses":
         df_dados_filtro = df_dados[df_dados['Mes_Ano'] == mes_selecionado]
@@ -263,6 +272,47 @@ else:
         if not df_saidas_grafico.empty: st.bar_chart(df_saidas_grafico.groupby('Categoria')['Valor'].sum())
         else: st.info("Nenhuma despesa registrada para este período.")
 
+    # --- NOVA TELA: DASHBOARD AUTOMÁTICO ---
+    elif menu == "Dashboard Automático 🤖":
+        st.header("🤖 Dashboard Automático (Visão Prévia)")
+        st.write("Esta é uma simulação de como ficará sua tela quando conectarmos com a API do seu banco via Open Finance!")
+        
+        # Gerando dados de mentira (Mock Data) para visualização
+        dados_mock = {
+            "Data da Transação": ["09/04/2026", "08/04/2026", "05/04/2026", "03/04/2026", "01/04/2026"],
+            "Descrição do Banco": ["PIX RECEBIDO - JOÃO SILVA", "UBER DO BRASIL", "IFOOD *RESTAURANTE", "MERCADO PAGO", "TED - SALÁRIO EMPRESA X"],
+            "Valor (R$)": [300.00, -25.00, -65.50, -150.00, 5000.00],
+            "Tipo": ["Entrada", "Saída", "Saída", "Saída", "Entrada"]
+        }
+        df_mock = pd.DataFrame(dados_mock)
+        
+        # Estilizando os valores para ficarem verdes (+) e vermelhos (-)
+        def colorir_valores(val):
+            color = 'green' if val > 0 else 'red'
+            return f'color: {color}'
+            
+        col1, col2, col3 = st.columns(3)
+        col1.metric("🏦 Saldo Atual na Conta", "R$ 5.059,50")
+        col2.metric("🟩 Entradas (Mês Atual)", "R$ 5.300,00")
+        col3.metric("🟥 Saídas (Mês Atual)", "R$ 240,50")
+        
+        st.divider()
+        col_graf1, col_graf2 = st.columns([1, 1.5]) # A tabela fica um pouco mais larga que o gráfico
+        
+        with col_graf1:
+            st.subheader("📊 Fluxo Bancário")
+            st.write("Visão direta da conta corrente")
+            df_grafico = pd.DataFrame({
+                "Tipo": ["Entradas", "Saídas"],
+                "Valor": [5300.00, 240.50]
+            }).set_index("Tipo")
+            st.bar_chart(df_grafico, color=["#1f77b4"])
+            
+        with col_graf2:
+            st.subheader("Últimas Sincronizações")
+            st.dataframe(df_mock.style.map(colorir_valores, subset=['Valor (R$)']), use_container_width=True, hide_index=True)
+            st.info("💡 Quando a integração estiver pronta, basta clicar em um botão de 'Sincronizar' e esta tabela será puxada direto do app do seu banco!")
+
     elif menu == "Entradas e Saídas":
         st.header("💰 Entradas e Saídas")
         with st.form("form_registro", clear_on_submit=True):
@@ -280,7 +330,6 @@ else:
         st.divider()
         st.subheader("✏️ Seus Registros (Todos os Meses)")
         st.write("A tabela abaixo mostra todos os registros para permitir edições e exclusões seguras. Clique no botão abaixo para salvar as mudanças.")
-        # NOVA PROTEÇÃO: Formulário para a tabela de registros
         with st.form("form_tabela_dados"):
             df_editado = st.data_editor(df_dados.drop(columns=['Data_DT', 'Mes_Ano']), num_rows="dynamic", use_container_width=True)
             if st.form_submit_button("💾 Salvar Alterações na Tabela"):
@@ -405,7 +454,6 @@ else:
         st.divider()
         st.subheader("🧾 Extrato Geral do Cartão")
         st.write("Edite as linhas livremente. Quando terminar, clique no botão para salvar.")
-        # NOVA PROTEÇÃO: Formulário para o Extrato do Cartão
         with st.form("form_tabela_cartao"):
             df_cartao_editado = st.data_editor(df_cartao, num_rows="dynamic", use_container_width=True)
             if st.form_submit_button("💾 Salvar Alterações no Extrato"):
@@ -474,7 +522,6 @@ else:
         with aba_cat:
             st.subheader("Minhas Categorias")
             st.write("Adicione, edite ou apague as categorias e clique em Salvar.")
-            # NOVA PROTEÇÃO: Formulário de Categorias
             with st.form("form_tabela_cat"):
                 df_cat_editado = st.data_editor(df_categorias, num_rows="dynamic", use_container_width=True)
                 if st.form_submit_button("💾 Salvar Categorias"):
@@ -489,7 +536,6 @@ else:
             col_orc1, col_orc2 = st.columns([1, 1.5])
             
             with col_orc1:
-                # NOVA PROTEÇÃO: Formulário de Orçamentos
                 with st.form("form_tabela_orc"):
                     df_orc_editado = st.data_editor(df_orcamentos, num_rows="dynamic", use_container_width=True)
                     if st.form_submit_button("💾 Salvar Orçamentos"):
@@ -566,7 +612,6 @@ else:
             st.divider()
             st.subheader("Custos Fixos Mensais")
             st.write("Adicione ou edite seus custos e depois clique em Salvar.")
-            # NOVA PROTEÇÃO: Formulário de Custos Fixos
             with st.form("form_tabela_custos"):
                 df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
                 if st.form_submit_button("💾 Salvar Custos Fixos"):
