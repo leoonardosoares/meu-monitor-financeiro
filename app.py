@@ -5,6 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
 import plotly.express as px
+import requests # <--- NOVO MOTOR DE COMUNICAÇÃO (INTERNET)
 
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
@@ -172,6 +173,28 @@ else:
         aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_custos.clear()
 
+    # --- FUNÇÃO SECRETA: CONEXÃO PLUGGY ---
+    def conectar_pluggy():
+        try:
+            client_id = st.secrets.get("PLUGGY_CLIENT_ID")
+            client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
+            
+            if not client_id or not client_secret:
+                return "CHAVES_FALTANDO"
+                
+            url = "https://api.pluggy.ai/auth"
+            payload = {"clientId": client_id, "clientSecret": client_secret}
+            headers = {"accept": "application/json", "content-type": "application/json"}
+            
+            response = requests.post(url, json=payload, headers=headers)
+            
+            if response.status_code == 200:
+                return response.json().get("apiKey")
+            else:
+                return f"ERRO DA PLUGGY: {response.status_code} - {response.text}"
+        except Exception as e:
+            return f"ERRO INTERNO: {e}"
+
     # Lendo tudo do banco
     df_dados = carregar_dados()
     df_dados['Valor'] = pd.to_numeric(df_dados['Valor'], errors='coerce') 
@@ -267,7 +290,6 @@ else:
             
         st.divider()
         
-        # --- NOVOS GRÁFICOS DO DASHBOARD MANUAL ---
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
         
@@ -275,9 +297,7 @@ else:
             st.write("**Despesas por Categoria**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
             if not df_saidas_grafico.empty:
-                # Agrupa por categoria
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
-                # Cria o gráfico Donut
                 fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4,
                                    color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_pizza.update_traces(textinfo='percent+label', textposition='inside')
@@ -289,12 +309,10 @@ else:
         with col_dash2:
             st.write("**Evolução de Entradas e Saídas (Diário)**")
             if not df_dados_filtro.empty:
-                # Prepara dados diários para o Spline
                 df_linha = df_dados_filtro.copy()
                 df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
                 df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
                 
-                # Cria o gráfico de Linha Spline
                 fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo',
                                    markers=True, line_shape='spline',
                                    color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
@@ -309,12 +327,13 @@ else:
             else:
                 st.info("Nenhuma movimentação para exibir.")
 
+
     # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
     elif menu == "Dashboard Automático 🤖":
         st.header("🤖 Inteligência Financeira (Sincronização)")
         st.write("Visão unificada das suas contas e cartões com análises avançadas em tempo real. *(Modo Visualização Ativado)*")
         
-        # MOCKUP DE DADOS PARA ANÁLISE (Ficção que virará realidade)
+        # MOCKUP DE DADOS PARA ANÁLISE
         data_hoje = date.today()
         dias_extrato = [(data_hoje - timedelta(days=i)).strftime('%d/%m/%Y') for i in range(10)]
         dias_grafico = [(data_hoje - timedelta(days=i)).strftime('%d/%m') for i in range(9, -1, -1)]
@@ -336,78 +355,56 @@ else:
             "Cartão": ["Nubank Final 1234"] * 5
         })
 
-        # BLOCO 1: KPIs PROFISSIONAIS
         st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        
         kpi1.metric("Saldo em Conta (Hoje)", "R$ 3.800,00", "+ R$ 5.045,00 (Salário Entrou)")
         kpi2.metric("Saídas do Mês (Banco)", "R$ 1.245,00", "- 15% vs Mês Passado", delta_color="inverse")
         kpi3.metric("Fatura em Aberto (Cartão)", "R$ 759,90", "⚠️ Fecha em 3 dias", delta_color="off")
         kpi4.metric("Comprometimento da Renda", "40%", "Renda Segura (< 50%)", delta_color="normal")
-        
         st.divider()
         
-        # BLOCO 2: ANÁLISE GRÁFICA AVANÇADA E PROFISSIONAL
         col_graf1, col_graf2 = st.columns([1.2, 1])
-        
         with col_graf1:
             st.subheader("📈 Fluxo de Caixa Diário (Últimos 10 dias)")
-            st.caption("Evolução do seu saldo bancário líquido com preenchimento de área.")
-            
-            # Preparando os dados de mentira para o gráfico cumulativo profissional
-            fluxo_diario_prof = pd.DataFrame({
-                "Dia": dias_grafico,
-                "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]
-            })
-            
-            fig_area = px.area(
-                fluxo_diario_prof, 
-                x="Dia", 
-                y="Saldo_R$", 
-                title="",
-                labels={"Saldo_R$": "Saldo Bancário"},
-                markers=True,
-                line_shape="spline", # Mantendo nossa linha curva mágica aqui!
-                color_discrete_sequence=["#2ECC71"]
-            )
-            
-            fig_area.update_layout(
-                xaxis_title="Dias",
-                yaxis_title="Saldo em Conta (R$)",
-                margin=dict(l=0, r=0, t=10, b=0),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                hovermode="x unified"
-            )
-            
+            fluxo_diario_prof = pd.DataFrame({"Dia": dias_grafico, "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]})
+            fig_area = px.area(fluxo_diario_prof, x="Dia", y="Saldo_R$", title="", labels={"Saldo_R$": "Saldo Bancário"},
+                               markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
+            fig_area.update_layout(xaxis_title="Dias", yaxis_title="Saldo em Conta (R$)", margin=dict(l=0, r=0, t=10, b=0),
+                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified")
             fig_area.update_xaxes(showgrid=False)
             fig_area.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
-            
             st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False})
             
         with col_graf2:
-            st.subheader("🍩 Concentração de Gastos (Banco + Cartão)")
-            st.caption("Onde seu dinheiro está indo de verdade.")
+            st.subheader("🍩 Concentração de Gastos")
             gastos_consolidados = pd.DataFrame({
                 "Categoria": ["Supermercado", "Lazer", "Transporte", "Moradia", "Compras", "Viagem"],
                 "Total_Gasto": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]
             })
-            # Substituído por um Plotly Horizontal Bar para ficar mais clean
             fig_bar = px.bar(gastos_consolidados.sort_values('Total_Gasto', ascending=True), 
-                             x='Total_Gasto', y='Categoria', orientation='h',
-                             color_discrete_sequence=["#E74C3C"])
+                             x='Total_Gasto', y='Categoria', orientation='h', color_discrete_sequence=["#E74C3C"])
             fig_bar.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
             fig_bar.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
             
         st.divider()
 
-        # BLOCO 3: BASE DE DADOS SINCRONIZADA
         col_sync1, col_sync2 = st.columns([1, 1])
         with col_sync1:
             st.subheader("📋 Últimas Transações Sincronizadas")
+        
+        # --- O BOTÃO QUE FAZ A MÁGICA DE TESTAR A CONEXÃO ---
         with col_sync2:
-            st.button("🔄 Forçar Sincronização com o Banco Agora", type="primary", use_container_width=True)
+            if st.button("🔄 Testar Conexão com Pluggy API", type="primary", use_container_width=True):
+                with st.spinner("Descriptografando chaves do cofre e conectando..."):
+                    token = conectar_pluggy()
+                    if token == "CHAVES_FALTANDO":
+                        st.error("⚠️ As chaves PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET não foram encontradas no cofre do Streamlit (Settings > Secrets).")
+                    elif token and "ERRO" not in token:
+                        st.success("✅ SUCESSO ABSOLUTO! O seu aplicativo acabou de se comunicar com o motor da Pluggy e gerou um Token de Acesso válido!")
+                        st.info("No próximo passo, nós usaremos esse token para abrir a tela de conectar com o seu Banco!")
+                    else:
+                        st.error(token)
 
         aba_banco, aba_cartao = st.tabs(["🏦 Extrato da Conta Corrente", "💳 Compras no Cartão de Crédito"])
         
@@ -419,7 +416,6 @@ else:
             
         with aba_cartao:
             st.dataframe(df_cartao_sync, use_container_width=True, hide_index=True)
-
 
     elif menu == "Entradas e Saídas":
         st.header("💰 Entradas e Saídas")
