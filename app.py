@@ -4,7 +4,7 @@ import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
-import plotly.express as px # <--- NOVO MOTOR DE GRÁFICOS IMPORTADO AQUI
+import plotly.express as px
 
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
@@ -197,7 +197,7 @@ else:
     mes_selecionado = st.sidebar.selectbox("Período:", ["Todos os Meses"] + lista_meses)
     st.sidebar.divider()
     
-    menu = st.sidebar.selectbox("Escolha uma option:", [
+    menu = st.sidebar.selectbox("Escolha uma opção:", [
         "Dashboard", 
         "Dashboard Automático 🤖", 
         "Entradas e Saídas", 
@@ -267,10 +267,47 @@ else:
             
         st.divider()
         
-        st.subheader("📉 Despesas por Categoria")
-        df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
-        if not df_saidas_grafico.empty: st.bar_chart(df_saidas_grafico.groupby('Categoria')['Valor'].sum())
-        else: st.info("Nenhuma despesa registrada para este período.")
+        # --- NOVOS GRÁFICOS DO DASHBOARD MANUAL ---
+        st.subheader("📉 Análise Gráfica do Período")
+        col_dash1, col_dash2 = st.columns([1, 1.2])
+        
+        with col_dash1:
+            st.write("**Despesas por Categoria**")
+            df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
+            if not df_saidas_grafico.empty:
+                # Agrupa por categoria
+                df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
+                # Cria o gráfico Donut
+                fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4,
+                                   color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_pizza.update_traces(textinfo='percent+label', textposition='inside')
+                fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+                st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
+            else:
+                st.info("Nenhuma despesa para exibir.")
+                
+        with col_dash2:
+            st.write("**Evolução de Entradas e Saídas (Diário)**")
+            if not df_dados_filtro.empty:
+                # Prepara dados diários para o Spline
+                df_linha = df_dados_filtro.copy()
+                df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
+                df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
+                
+                # Cria o gráfico de Linha Spline
+                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo',
+                                   markers=True, line_shape='spline',
+                                   color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+                
+                fig_linha.update_layout(
+                    xaxis_title="Dias", yaxis_title="R$",
+                    margin=dict(t=10, b=10, l=10, r=10),
+                    hovermode="x unified", legend_title_text=""
+                )
+                fig_linha.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+                st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
+            else:
+                st.info("Nenhuma movimentação para exibir.")
 
     # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
     elif menu == "Dashboard Automático 🤖":
@@ -323,42 +360,45 @@ else:
                 "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]
             })
             
-            # <--- A MÁGICA DO GRÁFICO PROFISSIONAL COMEÇA AQUI --->
             fig_area = px.area(
                 fluxo_diario_prof, 
                 x="Dia", 
                 y="Saldo_R$", 
                 title="",
                 labels={"Saldo_R$": "Saldo Bancário"},
-                markers=True, # Adiciona bolinhas nos dados
-                line_shape="spline", # Suaviza a linha para ficar curva!
-                color_discrete_sequence=["#2ECC71"] # Define a cor verde financeira
+                markers=True,
+                line_shape="spline", # Mantendo nossa linha curva mágica aqui!
+                color_discrete_sequence=["#2ECC71"]
             )
             
-            # Customizando eixos e tooltips profissionalmente
             fig_area.update_layout(
                 xaxis_title="Dias",
                 yaxis_title="Saldo em Conta (R$)",
                 margin=dict(l=0, r=0, t=10, b=0),
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                hovermode="x unified" # Tooltip interativo preto profissional
+                hovermode="x unified"
             )
             
             fig_area.update_xaxes(showgrid=False)
             fig_area.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
             
-            st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False}) # Renderiza o gráfico lindo
+            st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False})
             
         with col_graf2:
             st.subheader("🍩 Concentração de Gastos (Banco + Cartão)")
             st.caption("Onde seu dinheiro está indo de verdade.")
-            # Soma fictícia de Banco + Cartão por Categoria
             gastos_consolidados = pd.DataFrame({
                 "Categoria": ["Supermercado", "Lazer", "Transporte", "Moradia", "Compras", "Viagem"],
-                "Total Gasto (R$)": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]
-            }).set_index("Categoria")
-            st.bar_chart(gastos_consolidados, color="#E74C3C") # Cor vermelha de saída
+                "Total_Gasto": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]
+            })
+            # Substituído por um Plotly Horizontal Bar para ficar mais clean
+            fig_bar = px.bar(gastos_consolidados.sort_values('Total_Gasto', ascending=True), 
+                             x='Total_Gasto', y='Categoria', orientation='h',
+                             color_discrete_sequence=["#E74C3C"])
+            fig_bar.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
+            fig_bar.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
             
         st.divider()
 
