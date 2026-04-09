@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from datetime import date
+from datetime import date, timedelta
 
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
@@ -69,7 +69,7 @@ else:
                 "categorias": obter_ou_criar("categorias", ['Categoria']),
                 "orcamentos": obter_ou_criar("orcamentos", ['Categoria', 'Limite']),
                 "custos_fixos": obter_ou_criar("custos_fixos", ['Descrição', 'Valor']),
-                "extrato_bancario": obter_ou_criar("extrato_bancario", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo']) # PREPARANDO O TERRENO
+                "extrato_bancario": obter_ou_criar("extrato_bancario", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
             }
         except Exception as e:
             st.error(f"Erro de comunicação com o Google: {e}")
@@ -196,7 +196,6 @@ else:
     mes_selecionado = st.sidebar.selectbox("Período:", ["Todos os Meses"] + lista_meses)
     st.sidebar.divider()
     
-    # NOVO MENU ADICIONADO AQUI!
     menu = st.sidebar.selectbox("Escolha uma opção:", [
         "Dashboard", 
         "Dashboard Automático 🤖", 
@@ -272,46 +271,86 @@ else:
         if not df_saidas_grafico.empty: st.bar_chart(df_saidas_grafico.groupby('Categoria')['Valor'].sum())
         else: st.info("Nenhuma despesa registrada para este período.")
 
-    # --- NOVA TELA: DASHBOARD AUTOMÁTICO ---
+    # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL ---
     elif menu == "Dashboard Automático 🤖":
-        st.header("🤖 Dashboard Automático (Visão Prévia)")
-        st.write("Esta é uma simulação de como ficará sua tela quando conectarmos com a API do seu banco via Open Finance!")
+        st.header("🤖 Inteligência Financeira (Sincronização)")
+        st.write("Visão unificada das suas contas e cartões com análises avançadas em tempo real. *(Modo Visualização Ativado)*")
         
-        # Gerando dados de mentira (Mock Data) para visualização
-        dados_mock = {
-            "Data da Transação": ["09/04/2026", "08/04/2026", "05/04/2026", "03/04/2026", "01/04/2026"],
-            "Descrição do Banco": ["PIX RECEBIDO - JOÃO SILVA", "UBER DO BRASIL", "IFOOD *RESTAURANTE", "MERCADO PAGO", "TED - SALÁRIO EMPRESA X"],
-            "Valor (R$)": [300.00, -25.00, -65.50, -150.00, 5000.00],
-            "Tipo": ["Entrada", "Saída", "Saída", "Saída", "Entrada"]
-        }
-        df_mock = pd.DataFrame(dados_mock)
+        # MOCKUP DE DADOS PARA ANÁLISE (Ficção que virará realidade)
+        data_hoje = date.today()
+        dias = [(data_hoje - timedelta(days=i)).strftime('%d/%m/%Y') for i in range(10)]
         
-        # Estilizando os valores para ficarem verdes (+) e vermelhos (-)
-        def colorir_valores(val):
-            color = 'green' if val > 0 else 'red'
-            return f'color: {color}'
-            
-        col1, col2, col3 = st.columns(3)
-        col1.metric("🏦 Saldo Atual na Conta", "R$ 5.059,50")
-        col2.metric("🟩 Entradas (Mês Atual)", "R$ 5.300,00")
-        col3.metric("🟥 Saídas (Mês Atual)", "R$ 240,50")
+        df_banco_sync = pd.DataFrame({
+            "Data": dias,
+            "Descrição": ["Salário", "Pix Mercado", "Uber", "Ifood", "Pix João", "Conta de Luz", "Netflix", "Gasolina", "Rendimento CDI", "Restaurante"],
+            "Categoria": ["Receita", "Supermercado", "Transporte", "Lazer", "Outros", "Moradia", "Lazer", "Transporte", "Investimento", "Lazer"],
+            "Valor": [5000.0, -350.0, -45.0, -80.0, -150.0, -200.0, -50.0, -250.0, 45.0, -120.0],
+            "Tipo": ["Entrada", "Saída", "Saída", "Saída", "Saída", "Saída", "Saída", "Saída", "Entrada", "Saída"],
+            "Conta": ["Itaú"] * 10
+        })
+        
+        df_cartao_sync = pd.DataFrame({
+            "Data": dias[:5],
+            "Descrição": ["Amazon", "Mercado Livre", "Farmácia", "Assinatura Software", "Passagem Aérea"],
+            "Categoria": ["Compras", "Compras", "Saúde", "Outros", "Viagem"],
+            "Valor": [150.0, 89.9, 45.0, 25.0, 450.0],
+            "Cartão": ["Nubank Final 1234"] * 5
+        })
+
+        # BLOCO 1: KPIs PROFISSIONAIS
+        st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        
+        kpi1.metric("Saldo em Conta (Hoje)", "R$ 3.800,00", "+ R$ 5.045,00 (Salário Entrou)")
+        kpi2.metric("Saídas do Mês (Banco)", "R$ 1.245,00", "- 15% vs Mês Passado", delta_color="inverse")
+        kpi3.metric("Fatura em Aberto (Cartão)", "R$ 759,90", "⚠️ Fecha em 3 dias", delta_color="off")
+        kpi4.metric("Comprometimento da Renda", "40%", "Renda Segura (< 50%)", delta_color="normal")
         
         st.divider()
-        col_graf1, col_graf2 = st.columns([1, 1.5]) # A tabela fica um pouco mais larga que o gráfico
+        
+        # BLOCO 2: ANÁLISE GRÁFICA AVANÇADA
+        col_graf1, col_graf2 = st.columns([1.2, 1])
         
         with col_graf1:
-            st.subheader("📊 Fluxo Bancário")
-            st.write("Visão direta da conta corrente")
-            df_grafico = pd.DataFrame({
-                "Tipo": ["Entradas", "Saídas"],
-                "Valor": [5300.00, 240.50]
-            }).set_index("Tipo")
-            st.bar_chart(df_grafico, color=["#1f77b4"])
+            st.subheader("📈 Fluxo de Caixa Diário (Últimos 10 dias)")
+            st.caption("Evolução do seu saldo bancário líquido.")
+            # Simulação de saldo cumulativo (Gráfico de Área)
+            fluxo_diario = pd.DataFrame({
+                "Dia": range(1, 11),
+                "Saldo em Conta": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]
+            }).set_index("Dia")
+            st.area_chart(fluxo_diario, color="#2ECC71") # Cor verde financeira
             
         with col_graf2:
-            st.subheader("Últimas Sincronizações")
-            st.dataframe(df_mock.style.map(colorir_valores, subset=['Valor (R$)']), use_container_width=True, hide_index=True)
-            st.info("💡 Quando a integração estiver pronta, basta clicar em um botão de 'Sincronizar' e esta tabela será puxada direto do app do seu banco!")
+            st.subheader("🍩 Concentração de Gastos (Banco + Cartão)")
+            st.caption("Onde seu dinheiro está indo de verdade.")
+            # Soma fictícia de Banco + Cartão por Categoria
+            gastos_consolidados = pd.DataFrame({
+                "Categoria": ["Supermercado", "Lazer", "Transporte", "Moradia", "Compras", "Viagem"],
+                "Total Gasto (R$)": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]
+            }).set_index("Categoria")
+            st.bar_chart(gastos_consolidados, color="#E74C3C") # Cor vermelha de saída
+            
+        st.divider()
+
+        # BLOCO 3: BASE DE DADOS SINCRONIZADA
+        col_sync1, col_sync2 = st.columns([1, 1])
+        with col_sync1:
+            st.subheader("📋 Últimas Transações Sincronizadas")
+        with col_sync2:
+            st.button("🔄 Forçar Sincronização com o Banco Agora", type="primary", use_container_width=True)
+
+        aba_banco, aba_cartao = st.tabs(["🏦 Extrato da Conta Corrente", "💳 Compras no Cartão de Crédito"])
+        
+        def estilo_valor(val):
+            return 'color: green; font-weight: bold' if val > 0 else 'color: red; font-weight: bold'
+
+        with aba_banco:
+            st.dataframe(df_banco_sync.style.map(estilo_valor, subset=['Valor']), use_container_width=True, hide_index=True)
+            
+        with aba_cartao:
+            st.dataframe(df_cartao_sync, use_container_width=True, hide_index=True)
+
 
     elif menu == "Entradas e Saídas":
         st.header("💰 Entradas e Saídas")
@@ -464,165 +503,4 @@ else:
 
     elif menu == "Investimentos":
         st.header("📈 Meus Investimentos")
-        aba1, aba2 = st.tabs(["🎯 Metas e Aportes", "🔮 Simulador do Futuro"])
-        
-        with aba1:
-            st.subheader("Reserva de Emergência e Transbordo")
-            meta_atual = carregar_valor("meta_reserva", 10000.0)
-            nova_meta = st.number_input("Defina a Meta da sua Reserva (R$):", min_value=100.0, value=meta_atual, step=500.0)
-            if nova_meta != meta_atual: salvar_valor("meta_reserva", nova_meta)
-            
-            valor_reserva = total_investido_global if total_investido_global <= nova_meta else nova_meta
-            valor_outros = 0.0 if total_investido_global <= nova_meta else total_investido_global - nova_meta
-                
-            col_inv1, col_inv2, col_inv3 = st.columns(3)
-            col_inv1.metric("Total Investido", f"R$ {total_investido_global:.2f}")
-            col_inv2.metric("Fundo de Emergência", f"R$ {valor_reserva:.2f}")
-            col_inv3.metric("Outros Investimentos", f"R$ {valor_outros:.2f}")
-            
-            progresso = min(valor_reserva / nova_meta, 1.0)
-            st.write(f"**Progresso da Reserva ({progresso * 100:.1f}%)**")
-            st.progress(progresso)
-            if progresso == 1.0: st.success("Reserva completa! Novos aportes irão para 'Outros Investimentos'.")
-                
-            st.divider()
-            st.subheader("💸 Realizar Novo Aporte")
-            with st.form("form_investimento", clear_on_submit=True):
-                data_aporte = st.date_input("Data do Aporte", format="DD/MM/YYYY")
-                valor_aporte = st.number_input("Valor a Investir (R$)", min_value=0.01, format="%.2f")
-                if st.form_submit_button("Investir Agora"):
-                    df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_aporte, 'Descrição': "Aporte de Investimento", 'Categoria': "Investimento", 'Valor': valor_aporte, 'Tipo': "Saída"}])], ignore_index=True)
-                    salvar_dados(df_dados)
-                    st.success("Aporte registrado na Nuvem!")
-                    st.rerun()
-
-        with aba2:
-            st.subheader("Mágica dos Juros Compostos")
-            col_sim1, col_sim2 = st.columns(2)
-            anos = col_sim1.slider("Tempo (em Anos):", min_value=1, max_value=30, value=5)
-            taxa_anual = col_sim2.number_input("Taxa de Rendimento Anual estimada (%):", min_value=0.0, value=10.0, step=0.5)
-            
-            if total_investido_global > 0:
-                dados_tabela = []
-                valor_acumulado = total_investido_global
-                for ano in range(1, anos + 1):
-                    rendimento_do_ano = valor_acumulado * (taxa_anual / 100)
-                    valor_acumulado += rendimento_do_ano
-                    dados_tabela.append({"Ano": ano, "Rendimento no Ano (R$)": rendimento_do_ano, "Patrimônio Acumulado (R$)": valor_acumulado})
-                df_projecao = pd.DataFrame(dados_tabela).set_index("Ano")
-                st.bar_chart(df_projecao['Patrimônio Acumulado (R$)'])
-            else:
-                st.warning("Faça seu primeiro aporte para usar o simulador.")
-
-    elif menu == "Configurações e Orçamento":
-        st.header("⚙️ Configurações e Orçamento")
-        
-        aba_cat, aba_orc, aba_cartao_cfg, aba_proj = st.tabs(["🏷️ Categorias", "🎯 Orçamento", "💳 Regras do Cartão", "🔮 Projeção Fixa"])
-        
-        with aba_cat:
-            st.subheader("Minhas Categorias")
-            st.write("Adicione, edite ou apague as categorias e clique em Salvar.")
-            with st.form("form_tabela_cat"):
-                df_cat_editado = st.data_editor(df_categorias, num_rows="dynamic", use_container_width=True)
-                if st.form_submit_button("💾 Salvar Categorias"):
-                    if not df_categorias.equals(df_cat_editado):
-                        salvar_categorias(df_cat_editado)
-                        st.success("Categorias atualizadas!")
-                        st.rerun()
-                
-        with aba_orc:
-            st.subheader("Teto de Gastos por Categoria")
-            st.write("Defina um limite de gastos. Coloque `0` para categorias sem limite.")
-            col_orc1, col_orc2 = st.columns([1, 1.5])
-            
-            with col_orc1:
-                with st.form("form_tabela_orc"):
-                    df_orc_editado = st.data_editor(df_orcamentos, num_rows="dynamic", use_container_width=True)
-                    if st.form_submit_button("💾 Salvar Orçamentos"):
-                        if not df_orcamentos.equals(df_orc_editado):
-                            salvar_orcamentos(df_orc_editado)
-                            st.success("Orçamentos salvos!")
-                            st.rerun()
-                    
-            with col_orc2:
-                if mes_selecionado == "Todos os Meses":
-                    st.info("⚠️ Selecione um Mês no filtro lateral para ver a barra de progresso do orçamento.")
-                else:
-                    st.subheader(f"📊 Progresso em {mes_selecionado}")
-                    
-                    gastos_banco = df_dados_filtro[(df_dados_filtro['Tipo'] == 'Saída') & (df_dados_filtro['Categoria'] != 'Cartão de Crédito')]
-                    gastos_banco_agrupado = gastos_banco.groupby('Categoria')['Valor'].sum()
-                    gastos_cartao_agrupado = df_cartao_filtro.groupby('Categoria')['Valor'].sum()
-                    
-                    tem_orcamento_valido = False
-                    
-                    for index, row in df_orcamentos.iterrows():
-                        cat = row['Categoria']
-                        limite = float(row['Limite']) if pd.notna(row['Limite']) else 0.0
-                        
-                        if limite > 0:
-                            tem_orcamento_valido = True
-                            gasto_total = gastos_banco_agrupado.get(cat, 0.0) + gastos_cartao_agrupado.get(cat, 0.0)
-                            percentual = gasto_total / limite
-                            
-                            if percentual >= 1.0:
-                                st.error(f"🚨 **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Estourou!)")
-                                st.progress(1.0)
-                            elif percentual >= 0.8:
-                                st.warning(f"⚠️ **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Quase lá!)")
-                                st.progress(percentual)
-                            else:
-                                st.success(f"✅ **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Tranquilo)")
-                                st.progress(percentual)
-                                
-                    if not tem_orcamento_valido:
-                        st.write("Adicione categorias e limites maiores que zero na tabela ao lado para ver os gráficos.")
-
-        with aba_cartao_cfg:
-            st.subheader("Datas Importantes")
-            st.write("Defina aqui os dias de corte do seu cartão. Isso afeta em qual mês suas compras vão cair.")
-            
-            dia_fechamento_atual = int(carregar_valor("dia_fechamento", 8))
-            dia_vencimento_atual = int(carregar_valor("dia_vencimento", 15))
-            
-            col_dias1, col_dias2 = st.columns(2)
-            
-            novo_dia_fechamento = col_dias1.number_input("Dia de Fechamento (Melhor dia de compra):", min_value=1, max_value=31, value=dia_fechamento_atual, step=1)
-            novo_dia_vencimento = col_dias2.number_input("Dia de Vencimento da Fatura:", min_value=1, max_value=31, value=dia_vencimento_atual, step=1)
-            
-            if novo_dia_fechamento != dia_fechamento_atual:
-                salvar_valor("dia_fechamento", novo_dia_fechamento)
-                st.success("Dia de fechamento atualizado na nuvem!")
-                st.rerun()
-                
-            if novo_dia_vencimento != dia_vencimento_atual:
-                salvar_valor("dia_vencimento", novo_dia_vencimento)
-                st.success("Dia de vencimento atualizado na nuvem!")
-                st.rerun()
-                
-        with aba_proj:
-            st.subheader("Receita Base do Mês")
-            receita_atual = carregar_valor("receita_prevista", 0.0)
-            nova_receita = st.number_input("Qual o seu Salário / Receita fixa esperada? (R$):", min_value=0.0, value=receita_atual, step=100.0)
-            if nova_receita != receita_atual:
-                salvar_valor("receita_prevista", nova_receita)
-                st.success("Receita prevista atualizada na nuvem!")
-                st.rerun()
-                
-            st.divider()
-            st.subheader("Custos Fixos Mensais")
-            st.write("Adicione ou edite seus custos e depois clique em Salvar.")
-            with st.form("form_tabela_custos"):
-                df_custos_editado = st.data_editor(df_custos, num_rows="dynamic", use_container_width=True)
-                if st.form_submit_button("💾 Salvar Custos Fixos"):
-                    if not df_custos.equals(df_custos_editado):
-                        try:
-                            salvar_custos(df_custos_editado)
-                            st.success("Custos fixos salvos na nuvem!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error("🚨 O Google recusou a gravação! Veja o motivo exato abaixo:")
-                            if hasattr(e, 'response'):
-                                st.code(e.response.text)
-                            else:
-                                st.error(str(e))
+        aba1, aba2 = st.tabs
