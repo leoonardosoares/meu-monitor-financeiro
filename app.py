@@ -331,7 +331,7 @@ else:
                 title="",
                 labels={"Saldo_R$": "Saldo Bancário"},
                 markers=True, # Adiciona bolinhas nos dados
-                line_shape="monotone", # Suaviza a linha para ficar curva!
+                line_shape="spline", # Suaviza a linha para ficar curva!
                 color_discrete_sequence=["#2ECC71"] # Define a cor verde financeira
             )
             
