@@ -143,17 +143,14 @@ else:
     def carregar_valor(chave, padrao):
         dados = aba_config.get_all_records()
         df = pd.DataFrame(dados) if dados else pd.DataFrame(columns=['chave', 'valor'])
-        if not df.empty and chave in df['chave'].values: 
-            return float(df.loc[df['chave'] == chave, 'valor'].iloc[0])
+        if not df.empty and chave in df['chave'].values: return float(df.loc[df['chave'] == chave, 'valor'].iloc[0])
         return padrao
 
     def salvar_valor(chave, valor):
         dados = aba_config.get_all_records()
         df = pd.DataFrame(dados) if dados else pd.DataFrame(columns=['chave', 'valor'])
-        if chave in df['chave'].values: 
-            df.loc[df['chave'] == chave, 'valor'] = valor
-        else: 
-            df = pd.concat([df, pd.DataFrame([{'chave': chave, 'valor': valor}])], ignore_index=True)
+        if chave in df['chave'].values: df.loc[df['chave'] == chave, 'valor'] = valor
+        else: df = pd.concat([df, pd.DataFrame([{'chave': chave, 'valor': valor}])], ignore_index=True)
         aba_config.clear()
         dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
         aba_config.update(values=[df.columns.tolist()] + dados_limpos)
@@ -162,8 +159,7 @@ else:
     @st.cache_data(ttl=60)
     def carregar_categorias():
         dados = aba_categorias.get_all_records()
-        if dados: 
-            return pd.DataFrame(dados)
+        if dados: return pd.DataFrame(dados)
         df_padrao = pd.DataFrame([{"Categoria": c} for c in ["Aluguel", "Supermercado", "Lazer", "Saúde", "Outros"]])
         salvar_categorias(df_padrao)
         return df_padrao
@@ -208,19 +204,16 @@ else:
     def obter_api_key_pluggy():
         client_id = st.secrets.get("PLUGGY_CLIENT_ID")
         client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
-        if not client_id or not client_secret: 
-            return None
+        if not client_id or not client_secret: return None
         url = "https://api.pluggy.ai/auth"
         response = requests.post(url, json={"clientId": client_id, "clientSecret": client_secret}, headers={"accept": "application/json", "content-type": "application/json"})
-        if response.status_code == 200: 
-            return response.json().get("apiKey")
+        if response.status_code == 200: return response.json().get("apiKey")
         return None
 
     def obter_connect_token(api_key):
         url = "https://api.pluggy.ai/connect_token"
         response = requests.post(url, json={}, headers={"accept": "application/json", "content-type": "application/json", "X-API-KEY": api_key})
-        if response.status_code == 200: 
-            return response.json().get("accessToken")
+        if response.status_code == 200: return response.json().get("accessToken")
         return None
 
     def extrair_dados_do_banco(api_key):
@@ -229,8 +222,7 @@ else:
             req_items = requests.get("https://api.pluggy.ai/items", headers=headers)
             items = req_items.json().get("results", [])
             
-            if not items: 
-                return None, None
+            if not items: return None, None
             
             lista_contas = []
             lista_transacoes = []
@@ -241,11 +233,7 @@ else:
                 accounts = req_acc.json().get("results", [])
                 
                 for acc in accounts:
-                    lista_contas.append({
-                        "Conta": acc["name"], 
-                        "Tipo": acc["type"], 
-                        "Saldo": float(acc["balance"])
-                    })
+                    lista_contas.append({"Conta": acc["name"], "Tipo": acc["type"], "Saldo": float(acc["balance"])})
                     
                     req_tx = requests.get(f"https://api.pluggy.ai/transactions?accountId={acc['id']}", headers=headers)
                     transactions = req_tx.json().get("results", [])
@@ -254,12 +242,9 @@ else:
                         data_formatada = pd.to_datetime(tx["date"]).strftime('%d/%m/%Y')
                         valor = float(tx["amount"])
                         lista_transacoes.append({
-                            "Data": data_formatada, 
-                            "Descrição": tx["description"],
-                            "Categoria": tx.get("category", "Outros"), 
-                            "Valor": valor,
-                            "Tipo": "Entrada" if valor > 0 else "Saída", 
-                            "Conta": acc["name"],
+                            "Data": data_formatada, "Descrição": tx["description"],
+                            "Categoria": tx.get("category", "Outros"), "Valor": valor,
+                            "Tipo": "Entrada" if valor > 0 else "Saída", "Conta": acc["name"],
                             "Data_DT": pd.to_datetime(tx["date"]).tz_localize(None)
                         })
                         
@@ -267,6 +252,10 @@ else:
         except Exception as e:
             st.error(f"Erro no motor de extração: {e}")
             return None, None
+
+    # Função Auxiliar para Rótulos (Legendas) nos gráficos no padrão BR
+    def formata_br(valor):
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     # Lendo tudo do banco
     df_dados = carregar_dados()
@@ -282,14 +271,12 @@ else:
 
     LISTA_CATEGORIAS = df_categorias['Categoria'].dropna().unique().tolist()
     for cat_sistema in ["Cartão de Crédito", "Investimento", "Receita/Salário", "Outros"]:
-        if cat_sistema not in LISTA_CATEGORIAS: 
-            LISTA_CATEGORIAS.append(cat_sistema)
+        if cat_sistema not in LISTA_CATEGORIAS: LISTA_CATEGORIAS.append(cat_sistema)
 
     # --- 3. MENU LATERAL E FILTRO DE TEMPO ---
     st.sidebar.subheader("📅 Filtro de Mês")
     todos_meses = set(df_dados['Mes_Ano'].unique().tolist() + df_cartao['Mês da Fatura'].unique().tolist())
-    if "Sem Data" in todos_meses: 
-        todos_meses.remove("Sem Data")
+    if "Sem Data" in todos_meses: todos_meses.remove("Sem Data")
     lista_meses = sorted(list(todos_meses), reverse=True)
     
     mes_selecionado = st.sidebar.selectbox("Período:", ["Todos os Meses"] + lista_meses)
@@ -354,26 +341,26 @@ else:
         col_p2.metric("Custos Fixos (-)", f"R$ {total_custos_fixos:.2f}")
         col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_abater:.2f}")
         
-        if saldo_projetado >= 0: 
-            col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
-        else: 
-            col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+        if saldo_projetado >= 0: col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+        else: col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
             
         st.divider()
+        
+        # --- A NOVA TELA DE GRÁFICOS DO DASHBOARD MANUAL ---
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
         
         with col_dash1:
-            st.write("**Despesas por Categoria**")
+            st.write("**Despesas da Conta Corrente (Pizza)**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
                 fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig_pizza.update_traces(textinfo='percent+label', textposition='inside')
+                # Adicionando rótulos de valores na Pizza
+                fig_pizza.update_traces(textinfo='percent+label+value', textposition='inside')
                 fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
                 st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
-            else: 
-                st.info("Nenhuma despesa para exibir.")
+            else: st.info("Nenhuma despesa na conta corrente para exibir.")
                 
         with col_dash2:
             st.write("**Evolução de Entradas e Saídas (Diário)**")
@@ -381,23 +368,44 @@ else:
                 df_linha = df_dados_filtro.copy()
                 df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
                 df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+                # Preparando a legenda BR para o gráfico de linha
+                df_linha['Label'] = df_linha['Valor'].apply(formata_br)
+                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+                fig_linha.update_traces(textposition="top center", mode="lines+markers+text")
                 fig_linha.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
-                fig_linha.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
-            else: 
-                st.info("Nenhuma movimentação para exibir.")
+            else: st.info("Nenhuma movimentação para exibir.")
+
+        # --- O NOVO GRÁFICO GERAL (CONTA + CARTÃO) COM RÓTULOS ---
+        st.write("")
+        st.write("**🍩 Visão Geral de Despesas: Conta Corrente + Fatura do Cartão**")
+        df_saidas_manuais = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída'][['Categoria', 'Valor']].copy()
+        df_saidas_cartao = df_cartao_filtro[['Categoria', 'Valor']].copy()
+        df_gastos_totais = pd.concat([df_saidas_manuais, df_saidas_cartao])
+        
+        if not df_gastos_totais.empty:
+            df_gastos_agrupado = df_gastos_totais.groupby('Categoria')['Valor'].sum().reset_index()
+            # Formata a legenda para o gráfico
+            df_gastos_agrupado['Label'] = df_gastos_agrupado['Valor'].apply(formata_br)
+            
+            fig_bar_manual = px.bar(df_gastos_agrupado.sort_values('Valor', ascending=True), 
+                                    x='Valor', y='Categoria', orientation='h', text='Label', color_discrete_sequence=["#E74C3C"])
+            fig_bar_manual.update_traces(textposition='outside')
+            fig_bar_manual.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
+            fig_bar_manual.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+            st.plotly_chart(fig_bar_manual, use_container_width=True, config={'displayModeBar': False})
+        else:
+            st.info("Nenhuma despesa ou compra de cartão registrada neste período.")
 
 
     # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
     elif menu == "Dashboard Automático 🤖":
         col_tit1, col_tit2 = st.columns([2, 1])
-        with col_tit1: 
-            st.header("🤖 Inteligência Financeira (Sincronização)")
+        with col_tit1: st.header("🤖 Inteligência Financeira (Sincronização)")
         with col_tit2:
             st.write("") 
             if st.button("🔄 Puxar Extrato do Banco Agora", type="primary", use_container_width=True):
-                with st.spinner("Extraindo dados milionários do banco de testes..."):
+                with st.spinner("Extraindo dados da Pluggy... (Pode levar alguns segundos)"):
                     api_key = obter_api_key_pluggy()
                     if api_key:
                         contas_reais, transacoes_reais = extrair_dados_do_banco(api_key)
@@ -407,18 +415,12 @@ else:
                             
                             df_backup = pd.DataFrame(transacoes_reais).drop(columns=['Data_DT'])
                             salvar_extrato_bancario_google(df_backup)
-                            
                             st.success("✅ Extrato puxado e salvo na nuvem com sucesso!")
                         else:
-                            st.warning("A conexão funcionou, mas não encontrei transações. Você logou no banco de testes?")
+                            st.warning("⚠️ Conta conectada, mas o banco de testes ainda não gerou as transações. Aguarde 30 segundos e clique novamente!")
                     else:
                         st.error("Erro ao conectar com a API.")
-                        
         st.write("Visão unificada das suas contas e cartões com análises avançadas em tempo real.")
-        
-        # --- FUNÇÃO PARA FORMATAR MOEDA ---
-        def formata_br(valor):
-            return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
         if 'transacoes_reais' in st.session_state and 'contas_reais' in st.session_state:
             df_contas = pd.DataFrame(st.session_state['contas_reais'])
@@ -440,29 +442,7 @@ else:
             df_pizza_real = gastos_consolidados.groupby('Categoria')['Valor'].sum().reset_index()
             
             df_banco_view = df_tx.drop(columns=['Data_DT'])
-            
-            # --- KPIs COM DADOS REAIS MANTENDO SEU FORMATO PREFERIDO ---
-            st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
-            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-            
-            # Formatação exata do que você pediu
-            kpi1.metric("Saldo em Conta (Hoje)", formata_br(saldo_total), f"+ {formata_br(entradas_reais)} (Salário Entrou)")
-            kpi2.metric("Saídas do Mês (Banco)", formata_br(saidas_reais), "- 15% vs Mês Passado", delta_color="inverse")
-            
-            # Lógica da Fatura Aberta Real
-            fatura_pendente = df_cartao[df_cartao['Status'] == 'Pendente']['Valor'].sum() if not df_cartao.empty else 0.0
-            kpi3.metric(
-                "Fatura em Aberto (Cartão)", 
-                formata_br(fatura_pendente) if fatura_pendente > 0 else "R$ 0,00", 
-                "⚠️ Fecha em 3 dias" if fatura_pendente > 0 else "Nenhuma fatura pendente", 
-                delta_color="off" if fatura_pendente > 0 else "normal"
-            )
-            
-            # Lógica do Comprometimento da Renda Real
-            receita_base = carregar_valor("receita_prevista", 5000.0)
-            comprometimento = (saidas_reais / receita_base * 100) if receita_base > 0 else 0
-            texto_comp = "Renda Segura (< 50%)" if comprometimento < 50 else "Atenção (Acima de 50%)"
-            kpi4.metric("Comprometimento da Renda", f"{comprometimento:.0f}%", texto_comp, delta_color="normal" if comprometimento < 50 else "inverse")
+            eh_real = True
             
         else:
             data_hoje = date.today()
@@ -489,34 +469,46 @@ else:
             df_agrupado = pd.DataFrame({"Data_Curta": dias_grafico, "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]})
             df_pizza_real = pd.DataFrame({"Categoria": ["Supermercado", "Lazer", "Transporte", "Moradia", "Compras", "Viagem"], "Valor": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]})
             df_banco_view = df_banco_sync
+            eh_real = False
 
-            # --- KPIs ORIGINAIS INTACTOS (MOCKUP) ---
-            st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
-            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        
+        if eh_real:
+            fatura_pendente = df_cartao[df_cartao['Status'] == 'Pendente']['Valor'].sum() if not df_cartao.empty else 0.0
+            receita_base = carregar_valor("receita_prevista", 5000.0) 
+            comprometimento = (saidas_reais / receita_base * 100) if receita_base > 0 else 0
+            texto_comp = "Renda Segura (< 50%)" if comprometimento < 50 else "Atenção (Acima de 50%)"
+            
+            kpi1.metric("Saldo em Conta (Hoje)", formata_br(saldo_total), f"+ {formata_br(entradas_reais)} (Salário Entrou)")
+            kpi2.metric("Saídas do Mês (Banco)", formata_br(saidas_reais), "- 15% vs Mês Passado", delta_color="inverse")
+            kpi3.metric("Fatura em Aberto (Cartão)", formata_br(fatura_pendente) if fatura_pendente > 0 else "R$ 0,00", "⚠️ Fecha em 3 dias" if fatura_pendente > 0 else "Nenhuma fatura pendente", delta_color="off" if fatura_pendente > 0 else "normal")
+            kpi4.metric("Comprometimento da Renda", f"{comprometimento:.0f}%", texto_comp, delta_color="normal" if comprometimento < 50 else "inverse")
+        else:
             kpi1.metric("Saldo em Conta (Hoje)", "R$ 3.800,00", "+ R$ 5.045,00 (Salário Entrou)")
             kpi2.metric("Saídas do Mês (Banco)", "R$ 1.245,00", "- 15% vs Mês Passado", delta_color="inverse")
             kpi3.metric("Fatura em Aberto (Cartão)", "R$ 759,90", "⚠️ Fecha em 3 dias", delta_color="off")
             kpi4.metric("Comprometimento da Renda", "40%", "Renda Segura (< 50%)", delta_color="normal")
-
+            
         st.divider()
-        
         col_graf1, col_graf2 = st.columns([1.2, 1])
         with col_graf1:
             st.subheader("📈 Fluxo de Caixa Diário (Últimos 10 dias)")
-            fig_area = px.area(df_agrupado, x="Data_Curta", y="Saldo_R$", title="", labels={"Saldo_R$": "Saldo Bancário"},
-                               markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
-            fig_area.update_layout(xaxis_title="Dias", yaxis_title="Saldo em Conta (R$)", margin=dict(l=0, r=0, t=10, b=0),
-                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified")
-            fig_area.update_xaxes(showgrid=False)
-            fig_area.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+            # Adicionando Rótulos na linha de área
+            df_agrupado['Label'] = df_agrupado['Saldo_R$'].apply(formata_br)
+            fig_area = px.area(df_agrupado, x="Data_Curta", y="Saldo_R$", text='Label', title="", markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
+            fig_area.update_traces(textposition="top center", mode="lines+markers+text")
+            fig_area.update_layout(xaxis_title="Dias", yaxis_title="Saldo (R$)", margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
             st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False})
             
         with col_graf2:
             st.subheader("🍩 Concentração de Gastos")
+            # Adicionando Rótulos nas barras
+            df_pizza_real['Label'] = df_pizza_real['Valor'].apply(formata_br)
             fig_bar = px.bar(df_pizza_real.sort_values('Valor', ascending=True), 
-                             x='Valor', y='Categoria', orientation='h', color_discrete_sequence=["#E74C3C"])
+                             x='Valor', y='Categoria', orientation='h', text='Label', color_discrete_sequence=["#E74C3C"])
+            fig_bar.update_traces(textposition='outside')
             fig_bar.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
-            fig_bar.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
             
         st.divider()
@@ -567,7 +559,6 @@ else:
                                         document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro ao inicializar:</strong> " + e.message + "</div>";
                                     }}
                                 }}
-
                                 var script = document.createElement('script');
                                 script.src = "https://cdn.pluggy.ai/pluggy-connect/v1.3.0/pluggy-connect.js";
                                 script.onload = initPluggy;
@@ -593,16 +584,13 @@ else:
         aba_banco, aba_cartao = st.tabs(["🏦 Extrato da Conta Corrente", "💳 Compras no Cartão de Crédito"])
         
         def estilo_valor(val):
-            try:
-                return 'color: green; font-weight: bold' if float(val) > 0 else 'color: red; font-weight: bold'
-            except:
-                return ''
+            try: return 'color: green; font-weight: bold' if float(val) > 0 else 'color: red; font-weight: bold'
+            except: return ''
 
         with aba_banco:
             st.dataframe(df_banco_view.style.map(estilo_valor, subset=['Valor']), use_container_width=True, hide_index=True)
             
         with aba_cartao:
-            # Se fosse implementar o cartao de crédito real da pluggy seria aqui
             st.dataframe(df_cartao_sync, use_container_width=True, hide_index=True)
 
     elif menu == "Entradas e Saídas":
@@ -707,8 +695,17 @@ else:
         with col_graf:
             texto_filtro_cc = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else ""
             st.subheader(f"📉 Gastos por Categoria {texto_filtro_cc}")
-            if not df_cartao_filtro.empty: st.bar_chart(df_cartao_filtro.groupby('Categoria')['Valor'].sum())
-            else: st.info("Nenhuma compra de cartão registrada neste período.")
+            
+            if not df_cartao_filtro.empty: 
+                # NOVO: Trocando de st.bar_chart para px.bar para ter a legenda de dados!
+                df_cartao_agrupado = df_cartao_filtro.groupby('Categoria')['Valor'].sum().reset_index()
+                df_cartao_agrupado['Label'] = df_cartao_agrupado['Valor'].apply(formata_br)
+                fig_cartao = px.bar(df_cartao_agrupado, x='Categoria', y='Valor', text='Label', color_discrete_sequence=["#9B59B6"])
+                fig_cartao.update_traces(textposition='outside')
+                fig_cartao.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
+                st.plotly_chart(fig_cartao, use_container_width=True, config={'displayModeBar': False})
+            else: 
+                st.info("Nenhuma compra de cartão registrada neste período.")
                 
         with col_form:
             st.subheader("🛒 Lançar Compra")
@@ -800,9 +797,15 @@ else:
                 for ano in range(1, anos + 1):
                     rendimento_do_ano = valor_acumulado * (taxa_anual / 100)
                     valor_acumulado += rendimento_do_ano
-                    dados_tabela.append({"Ano": ano, "Rendimento no Ano (R$)": rendimento_do_ano, "Patrimônio Acumulado (R$)": valor_acumulado})
-                df_projecao = pd.DataFrame(dados_tabela).set_index("Ano")
-                st.bar_chart(df_projecao['Patrimônio Acumulado (R$)'])
+                    dados_tabela.append({"Ano": str(ano), "Rendimento no Ano (R$)": rendimento_do_ano, "Patrimônio Acumulado (R$)": valor_acumulado})
+                
+                df_projecao = pd.DataFrame(dados_tabela)
+                # NOVO: Trocando para px.bar para ter rótulos de dados
+                df_projecao['Label'] = df_projecao['Patrimônio Acumulado (R$)'].apply(formata_br)
+                fig_inv = px.bar(df_projecao, x='Ano', y='Patrimônio Acumulado (R$)', text='Label', color_discrete_sequence=["#3498DB"])
+                fig_inv.update_traces(textposition='outside')
+                fig_inv.update_layout(margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_inv, use_container_width=True, config={'displayModeBar': False})
             else:
                 st.warning("Faça seu primeiro aporte para usar o simulador.")
 
