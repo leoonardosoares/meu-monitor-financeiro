@@ -5,7 +5,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
 import plotly.express as px
-import requests # <--- NOVO MOTOR DE COMUNICAÇÃO (INTERNET)
+import requests
+import streamlit.components.v1 as components # <--- NOVO: Para desenhar a tela do Banco
 
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
@@ -173,27 +174,21 @@ else:
         aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_custos.clear()
 
-    # --- FUNÇÃO SECRETA: CONEXÃO PLUGGY ---
-    def conectar_pluggy():
-        try:
-            client_id = st.secrets.get("PLUGGY_CLIENT_ID")
-            client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
-            
-            if not client_id or not client_secret:
-                return "CHAVES_FALTANDO"
-                
-            url = "https://api.pluggy.ai/auth"
-            payload = {"clientId": client_id, "clientSecret": client_secret}
-            headers = {"accept": "application/json", "content-type": "application/json"}
-            
-            response = requests.post(url, json=payload, headers=headers)
-            
-            if response.status_code == 200:
-                return response.json().get("apiKey")
-            else:
-                return f"ERRO DA PLUGGY: {response.status_code} - {response.text}"
-        except Exception as e:
-            return f"ERRO INTERNO: {e}"
+    # --- FUNÇÕES DE CONEXÃO PLUGGY ---
+    def obter_api_key_pluggy():
+        client_id = st.secrets.get("PLUGGY_CLIENT_ID")
+        client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
+        if not client_id or not client_secret: return None
+        url = "https://api.pluggy.ai/auth"
+        response = requests.post(url, json={"clientId": client_id, "clientSecret": client_secret}, headers={"accept": "application/json", "content-type": "application/json"})
+        if response.status_code == 200: return response.json().get("apiKey")
+        return None
+
+    def obter_connect_token(api_key):
+        url = "https://api.pluggy.ai/connect_token"
+        response = requests.post(url, headers={"accept": "application/json", "content-type": "application/json", "X-API-KEY": api_key})
+        if response.status_code == 200: return response.json().get("accessToken")
+        return None
 
     # Lendo tudo do banco
     df_dados = carregar_dados()
@@ -389,23 +384,56 @@ else:
             
         st.divider()
 
-        col_sync1, col_sync2 = st.columns([1, 1])
-        with col_sync1:
-            st.subheader("📋 Últimas Transações Sincronizadas")
-        
-        # --- O BOTÃO QUE FAZ A MÁGICA DE TESTAR A CONEXÃO ---
-        with col_sync2:
-            if st.button("🔄 Testar Conexão com Pluggy API", type="primary", use_container_width=True):
-                with st.spinner("Descriptografando chaves do cofre e conectando..."):
-                    token = conectar_pluggy()
-                    if token == "CHAVES_FALTANDO":
-                        st.error("⚠️ As chaves PLUGGY_CLIENT_ID e PLUGGY_CLIENT_SECRET não foram encontradas no cofre do Streamlit (Settings > Secrets).")
-                    elif token and "ERRO" not in token:
-                        st.success("✅ SUCESSO ABSOLUTO! O seu aplicativo acabou de se comunicar com o motor da Pluggy e gerou um Token de Acesso válido!")
-                        st.info("No próximo passo, nós usaremos esse token para abrir a tela de conectar com o seu Banco!")
-                    else:
-                        st.error(token)
+        # --- NOVO BLOCO: O BOTÃO DE CONECTAR O BANCO DE VERDADE ---
+        st.subheader("🔗 Gerenciar Conexões Bancárias")
+        if "mostrar_pluggy" not in st.session_state:
+            st.session_state["mostrar_pluggy"] = False
 
+        if st.button("🏦 Conectar Nova Conta Bancária", type="primary"):
+            st.session_state["mostrar_pluggy"] = True
+            
+        if st.session_state["mostrar_pluggy"]:
+            with st.spinner("Gerando ambiente seguro com criptografia de ponta-a-ponta..."):
+                api_key = obter_api_key_pluggy()
+                if api_key:
+                    connect_token = obter_connect_token(api_key)
+                    if connect_token:
+                        # Este é o código HTML que desenha a tela da Pluggy perfeitamente no Streamlit
+                        html_code = f"""
+                        <!DOCTYPE html>
+                        <html>
+                        <head>
+                            <script src="https://cdn.pluggy.ai/pluggy-connect/v1.2.0/pluggy-connect.js"></script>
+                        </head>
+                        <body style="margin: 0; padding: 0;">
+                            <div id="pluggy-connect-container" style="height: 700px; width: 100%; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
+                            <script>
+                                const pluggyConnect = new PluggyConnect({{
+                                    connectToken: '{connect_token}',
+                                    container: 'pluggy-connect-container',
+                                    onSuccess: (itemData) => {{
+                                        alert("🎉 Sucesso! Seu banco foi conectado! Pode fechar este painel e recarregar a página.");
+                                    }},
+                                    onError: (error) => {{
+                                        alert("Erro na conexão: " + error.message);
+                                    }}
+                                }});
+                                pluggyConnect.init();
+                            </script>
+                        </body>
+                        </html>
+                        """
+                        st.write("---")
+                        st.info("🔐 **Ambiente Seguro Banco Central:** Escolha seu banco abaixo e siga as instruções. Seus dados não ficam salvos no aplicativo, apenas a autorização de leitura.")
+                        components.html(html_code, height=750)
+                    else:
+                        st.error("Falha ao gerar o Token de Conexão. Tente novamente.")
+                else:
+                    st.error("Erro na API Key. Verifique as configurações do cofre.")
+                    
+        st.divider()
+
+        st.subheader("📋 Últimas Transações Sincronizadas")
         aba_banco, aba_cartao = st.tabs(["🏦 Extrato da Conta Corrente", "💳 Compras no Cartão de Crédito"])
         
         def estilo_valor(val):
