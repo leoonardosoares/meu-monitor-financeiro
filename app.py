@@ -6,7 +6,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from datetime import date, timedelta
 import plotly.express as px
 import requests
-import streamlit.components.v1 as components # <--- NOVO: Para desenhar a tela do Banco
+import streamlit.components.v1 as components
 
 # 1. CONFIGURAÇÃO INICIAL
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
@@ -174,7 +174,7 @@ else:
         aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_custos.clear()
 
-    # --- FUNÇÕES DE CONEXÃO PLUGGY ---
+    # --- FUNÇÕES DE CONEXÃO PLUGGY (CORRIGIDAS) ---
     def obter_api_key_pluggy():
         client_id = st.secrets.get("PLUGGY_CLIENT_ID")
         client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
@@ -186,7 +186,8 @@ else:
 
     def obter_connect_token(api_key):
         url = "https://api.pluggy.ai/connect_token"
-        response = requests.post(url, headers={"accept": "application/json", "content-type": "application/json", "X-API-KEY": api_key})
+        # Enviar um JSON vazio previne erros no servidor da Pluggy
+        response = requests.post(url, json={}, headers={"accept": "application/json", "content-type": "application/json", "X-API-KEY": api_key})
         if response.status_code == 200: return response.json().get("accessToken")
         return None
 
@@ -384,12 +385,13 @@ else:
             
         st.divider()
 
-        # --- NOVO BLOCO: O BOTÃO DE CONECTAR O BANCO DE VERDADE ---
+        # --- BLOCO: CONEXÃO COM O BANCO ---
         st.subheader("🔗 Gerenciar Conexões Bancárias")
         if "mostrar_pluggy" not in st.session_state:
             st.session_state["mostrar_pluggy"] = False
 
-        if st.button("🏦 Conectar Nova Conta Bancária", type="primary"):
+        # Removi o type="primary" para ele ficar com a cor padrão bonitinha do Streamlit
+        if st.button("🏦 Conectar Nova Conta Bancária"):
             st.session_state["mostrar_pluggy"] = True
             
         if st.session_state["mostrar_pluggy"]:
@@ -398,36 +400,40 @@ else:
                 if api_key:
                     connect_token = obter_connect_token(api_key)
                     if connect_token:
-                        # Este é o código HTML que desenha a tela da Pluggy perfeitamente no Streamlit
+                        # Código HTML blindado com Try/Catch para te avisar se der erro
                         html_code = f"""
                         <!DOCTYPE html>
                         <html>
                         <head>
-                            <script src="https://cdn.pluggy.ai/pluggy-connect/v1.2.0/pluggy-connect.js"></script>
+                            <script src="https://cdn.pluggy.ai/pluggy-connect/v1/pluggy-connect.js"></script>
                         </head>
-                        <body style="margin: 0; padding: 0;">
+                        <body style="margin: 0; padding: 0; background-color: #f9f9f9;">
                             <div id="pluggy-connect-container" style="height: 700px; width: 100%; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
                             <script>
-                                const pluggyConnect = new PluggyConnect({{
-                                    connectToken: '{connect_token}',
-                                    container: 'pluggy-connect-container',
-                                    onSuccess: (itemData) => {{
-                                        alert("🎉 Sucesso! Seu banco foi conectado! Pode fechar este painel e recarregar a página.");
-                                    }},
-                                    onError: (error) => {{
-                                        alert("Erro na conexão: " + error.message);
-                                    }}
-                                }});
-                                pluggyConnect.init();
+                                try {{
+                                    const pluggyConnect = new PluggyConnect({{
+                                        connectToken: '{connect_token}',
+                                        container: 'pluggy-connect-container',
+                                        onSuccess: (itemData) => {{
+                                            console.log(itemData);
+                                        }},
+                                        onError: (error) => {{
+                                            console.error("Erro Connect: ", error);
+                                        }}
+                                    }});
+                                    pluggyConnect.init();
+                                }} catch(e) {{
+                                    document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro ao carregar o componente do banco:</strong> " + e.message + "</div>";
+                                }}
                             </script>
                         </body>
                         </html>
                         """
                         st.write("---")
-                        st.info("🔐 **Ambiente Seguro Banco Central:** Escolha seu banco abaixo e siga as instruções. Seus dados não ficam salvos no aplicativo, apenas a autorização de leitura.")
-                        components.html(html_code, height=750)
+                        st.info("🔐 **Ambiente Seguro Banco Central:** Escolha seu banco abaixo e siga as instruções.")
+                        components.html(html_code, height=750, scrolling=True)
                     else:
-                        st.error("Falha ao gerar o Token de Conexão. Tente novamente.")
+                        st.error("Falha ao gerar o Token de Conexão. Verifique o console ou tente novamente.")
                 else:
                     st.error("Erro na API Key. Verifique as configurações do cofre.")
                     
