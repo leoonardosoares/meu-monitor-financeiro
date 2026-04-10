@@ -11,7 +11,6 @@ import streamlit.components.v1 as components
 # 1. CONFIGURAÇÃO INICIAL E ESTILO CUSTOMIZADO
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-# --- BANHO DE LOJA (CSS) PARA DEIXAR OS BOTÕES VERDES ---
 st.markdown("""
 <style>
     div.stButton > button:first-child {
@@ -92,7 +91,7 @@ else:
                 "categorias": obter_ou_criar("categorias", ['Categoria']),
                 "orcamentos": obter_ou_criar("orcamentos", ['Categoria', 'Limite']),
                 "custos_fixos": obter_ou_criar("custos_fixos", ['Descrição', 'Valor']),
-                "extrato_bancario": obter_ou_criar("extrato_bancario", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo'])
+                "extrato_bancario": obter_ou_criar("extrato_bancario", ['Data', 'Descrição', 'Categoria', 'Valor', 'Tipo', 'Conta'])
             }
         except Exception as e:
             st.error(f"Erro de comunicação com o Google: {e}")
@@ -105,8 +104,9 @@ else:
     aba_categorias = abas_planilha["categorias"]
     aba_orcamentos = abas_planilha["orcamentos"]
     aba_custos = abas_planilha["custos_fixos"]
+    aba_extrato = abas_planilha["extrato_bancario"]
 
-    # --- FUNÇÕES DE CARREGAR E SALVAR COM CACHE ---
+    # --- FUNÇÕES DE CARREGAR E SALVAR ---
     @st.cache_data(ttl=60)
     def carregar_dados():
         dados = aba_financeiro.get_all_records()
@@ -132,6 +132,11 @@ else:
         dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
         aba_cartao.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_cartao.clear()
+
+    def salvar_extrato_bancario_google(df):
+        aba_extrato.clear()
+        dados_limpos = json.loads(df.fillna("").astype(str).to_json(orient='values'))
+        aba_extrato.update(values=[df.columns.tolist()] + dados_limpos)
 
     @st.cache_data(ttl=60)
     def carregar_valor(chave, padrao):
@@ -194,7 +199,7 @@ else:
         aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_custos.clear()
 
-    # --- FUNÇÕES DE CONEXÃO PLUGGY ---
+    # --- O MOTOR DE EXTRAÇÃO PLUGGY ---
     def obter_api_key_pluggy():
         client_id = st.secrets.get("PLUGGY_CLIENT_ID")
         client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
@@ -210,10 +215,46 @@ else:
         if response.status_code == 200: return response.json().get("accessToken")
         return None
 
-    # Lendo tudo do banco
+    def extrair_dados_do_banco(api_key):
+        headers = {"accept": "application/json", "X-API-KEY": api_key}
+        try:
+            req_items = requests.get("https://api.pluggy.ai/items", headers=headers)
+            items = req_items.json().get("results", [])
+            
+            if not items: return None, None
+            
+            lista_contas = []
+            lista_transacoes = []
+            
+            for item in items:
+                item_id = item["id"]
+                req_acc = requests.get(f"https://api.pluggy.ai/accounts?itemId={item_id}", headers=headers)
+                accounts = req_acc.json().get("results", [])
+                
+                for acc in accounts:
+                    lista_contas.append({"Conta": acc["name"], "Tipo": acc["type"], "Saldo": float(acc["balance"])})
+                    
+                    req_tx = requests.get(f"https://api.pluggy.ai/transactions?accountId={acc['id']}", headers=headers)
+                    transactions = req_tx.json().get("results", [])
+                    
+                    for tx in transactions:
+                        data_formatada = pd.to_datetime(tx["date"]).strftime('%d/%m/%Y')
+                        valor = float(tx["amount"])
+                        lista_transacoes.append({
+                            "Data": data_formatada, "Descrição": tx["description"],
+                            "Categoria": tx.get("category", "Outros"), "Valor": valor,
+                            "Tipo": "Entrada" if valor > 0 else "Saída", "Conta": acc["name"],
+                            "Data_DT": pd.to_datetime(tx["date"]).tz_localize(None)
+                        })
+                        
+            return lista_contas, lista_transacoes
+        except Exception as e:
+            st.error(f"Erro no motor de extração: {e}")
+            return None, None
+
+    # Lendo tudo do banco Google
     df_dados = carregar_dados()
     df_dados['Valor'] = pd.to_numeric(df_dados['Valor'], errors='coerce') 
-    
     df_dados['Data_DT'] = pd.to_datetime(df_dados['Data'], errors='coerce')
     df_dados['Mes_Ano'] = df_dados['Data_DT'].dt.strftime('%m/%Y').fillna("Sem Data")
     
@@ -236,8 +277,8 @@ else:
     st.sidebar.divider()
     
     menu = st.sidebar.selectbox("Escolha uma opção:", [
-        "Dashboard", 
         "Dashboard Automático 🤖", 
+        "Dashboard (Manual)", 
         "Entradas e Saídas", 
         "Cartão de Crédito", 
         "Investimentos", 
@@ -258,10 +299,9 @@ else:
     patrimonio_total = saldo_bancario_global + total_investido_global
 
     # --- 4. LÓGICA DAS TELAS ---
-    if menu == "Dashboard":
+    if menu == "Dashboard (Manual)":
         texto_filtro = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else "(Todo o Período)"
         st.header(f"📊 Resumo do Mês {texto_filtro}")
-        
         total_entradas_filtro = df_dados_filtro[df_dados_filtro['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados_filtro.empty else 0.0
         total_saidas_filtro = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']['Valor'].sum() if not df_dados_filtro.empty else 0.0
         
@@ -270,39 +310,11 @@ else:
         col2.metric("Despesas do Período", f"R$ {total_saidas_filtro:.2f}")
         col3.metric("Saldo Bancário Total", f"R$ {saldo_bancario_global:.2f}")
         col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
-        
         st.divider()
-        st.subheader("🔮 Visão do Próximo Mês")
         
-        if mes_selecionado != "Todos os Meses":
-            hoje_proj = pd.to_datetime(mes_selecionado, format='%m/%Y')
-        else:
-            hoje_proj = pd.Timestamp(date.today())
-            
-        mes_atual_str = hoje_proj.strftime('%m/%Y')
-        proximo_mes_dt = hoje_proj + pd.DateOffset(months=1)
-        proximo_mes_str = proximo_mes_dt.strftime('%m/%Y')
-
-        receita_prevista = carregar_valor("receita_prevista", 0.0)
-        total_custos_fixos = df_custos['Valor'].sum() if not df_custos.empty else 0.0
-        fatura_abater = df_cartao[(df_cartao['Mês da Fatura'] == mes_atual_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
-        saldo_projetado = receita_prevista - total_custos_fixos - fatura_abater
-
-        st.write(f"**Projeção para {proximo_mes_str} (Abatendo a Fatura de {mes_atual_str})**")
-        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-        col_p1.metric("Receita Prevista (+)", f"R$ {receita_prevista:.2f}")
-        col_p2.metric("Custos Fixos (-)", f"R$ {total_custos_fixos:.2f}")
-        col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_abater:.2f}")
-        
-        if saldo_projetado >= 0: col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
-        else: col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
-            
-        st.divider()
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
-        
         with col_dash1:
-            st.write("**Despesas por Categoria**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
@@ -313,152 +325,143 @@ else:
             else: st.info("Nenhuma despesa para exibir.")
                 
         with col_dash2:
-            st.write("**Evolução de Entradas e Saídas (Diário)**")
             if not df_dados_filtro.empty:
                 df_linha = df_dados_filtro.copy()
                 df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
                 df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
                 fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
                 fig_linha.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
-                fig_linha.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-
-    # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
     elif menu == "Dashboard Automático 🤖":
-        st.header("🤖 Inteligência Financeira (Sincronização)")
-        st.write("Visão unificada das suas contas e cartões com análises avançadas em tempo real. *(Modo Visualização Ativado)*")
-        
-        data_hoje = date.today()
-        dias_extrato = [(data_hoje - timedelta(days=i)).strftime('%d/%m/%Y') for i in range(10)]
-        dias_grafico = [(data_hoje - timedelta(days=i)).strftime('%d/%m') for i in range(9, -1, -1)]
-        
-        df_banco_sync = pd.DataFrame({
-            "Data": dias_extrato,
-            "Descrição": ["Salário", "Pix Mercado", "Uber", "Ifood", "Pix João", "Conta de Luz", "Netflix", "Gasolina", "Rendimento CDI", "Restaurante"],
-            "Categoria": ["Receita", "Supermercado", "Transporte", "Lazer", "Outros", "Moradia", "Lazer", "Transporte", "Investimento", "Lazer"],
-            "Valor": [5000.0, -350.0, -45.0, -80.0, -150.0, -200.0, -50.0, -250.0, 45.0, -120.0],
-            "Tipo": ["Entrada", "Saída", "Saída", "Saída", "Saída", "Saída", "Saída", "Saída", "Entrada", "Saída"],
-            "Conta": ["Itaú"] * 10
-        })
-        
-        df_cartao_sync = pd.DataFrame({
-            "Data": dias_extrato[:5],
-            "Descrição": ["Amazon", "Mercado Livre", "Farmácia", "Assinatura Software", "Passagem Aérea"],
-            "Categoria": ["Compras", "Compras", "Saúde", "Outros", "Viagem"],
-            "Valor": [150.0, 89.9, 45.0, 25.0, 450.0],
-            "Cartão": ["Nubank Final 1234"] * 5
-        })
+        col_tit1, col_tit2 = st.columns([2, 1])
+        with col_tit1: st.header("🤖 Inteligência Financeira Automática")
+        with col_tit2:
+            st.write("") 
+            if st.button("🔄 Puxar Extrato do Banco Agora", type="primary", use_container_width=True):
+                with st.spinner("Extraindo dados da Pluggy... (Pode levar alguns segundos)"):
+                    api_key = obter_api_key_pluggy()
+                    if api_key:
+                        contas_reais, transacoes_reais = extrair_dados_do_banco(api_key)
+                        if contas_reais and transacoes_reais:
+                            st.session_state['contas_reais'] = contas_reais
+                            st.session_state['transacoes_reais'] = transacoes_reais
+                            
+                            df_backup = pd.DataFrame(transacoes_reais).drop(columns=['Data_DT'])
+                            salvar_extrato_bancario_google(df_backup)
+                            st.success("✅ Extrato puxado e salvo na nuvem com sucesso!")
+                        else:
+                            st.warning("⚠️ Conta conectada, mas o banco de testes ainda não gerou as transações. Aguarde 30 segundos e clique novamente!")
+                    else:
+                        st.error("Erro ao conectar com a API.")
+        st.write("Visão unificada sincronizada via Open Finance.")
 
-        st.subheader("💡 Indicadores Chave de Desempenho (KPIs)")
+        if 'transacoes_reais' in st.session_state and 'contas_reais' in st.session_state:
+            df_contas = pd.DataFrame(st.session_state['contas_reais'])
+            df_tx = pd.DataFrame(st.session_state['transacoes_reais'])
+            df_tx = df_tx.sort_values(by='Data_DT', ascending=False)
+            
+            saldo_total = df_contas['Saldo'].sum()
+            entradas_reais = df_tx[df_tx['Tipo'] == 'Entrada']['Valor'].sum()
+            saidas_reais = abs(df_tx[df_tx['Tipo'] == 'Saída']['Valor'].sum())
+            
+            df_tx_grafico = df_tx.copy()
+            df_tx_grafico['Data_Curta'] = df_tx_grafico['Data_DT'].dt.strftime('%d/%m')
+            df_agrupado = df_tx_grafico.groupby('Data_Curta')['Valor'].sum().cumsum().reset_index()
+            df_agrupado.rename(columns={'Valor': 'Saldo_R$'}, inplace=True)
+            df_agrupado['Saldo_R$'] = df_agrupado['Saldo_R$'] + saldo_total 
+            
+            gastos_consolidados = df_tx[df_tx['Tipo'] == 'Saída'].copy()
+            gastos_consolidados['Valor'] = abs(gastos_consolidados['Valor'])
+            df_pizza_real = gastos_consolidados.groupby('Categoria')['Valor'].sum().reset_index()
+            df_banco_view = df_tx.drop(columns=['Data_DT'])
+            eh_real = True
+            
+        else:
+            st.info("👇 Estes são dados de demonstração. Clique no botão verde acima para carregar as transações do banco conectado.")
+            saldo_total = 3800.00
+            entradas_reais = 5045.00
+            saidas_reais = 1245.00
+            df_agrupado = pd.DataFrame({"Data_Curta": ["01/04", "02/04", "03/04", "04/04", "05/04", "06/04"], "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 4800]})
+            df_pizza_real = pd.DataFrame({"Categoria": ["Supermercado", "Lazer", "Transporte"], "Valor": [350.0, 250.0, 295.0]})
+            df_banco_view = pd.DataFrame({"Data": ["09/04/2026"], "Descrição": ["PIX TESTE"], "Categoria": ["Outros"], "Valor": [100.0], "Tipo": ["Entrada"], "Conta": ["Mock"]})
+            eh_real = False
+
+        st.subheader("💡 Indicadores Sincronizados (KPIs)")
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Saldo em Conta (Hoje)", "R$ 3.800,00", "+ R$ 5.045,00 (Salário Entrou)")
-        kpi2.metric("Saídas do Mês (Banco)", "R$ 1.245,00", "- 15% vs Mês Passado", delta_color="inverse")
-        kpi3.metric("Fatura em Aberto (Cartão)", "R$ 759,90", "⚠️ Fecha em 3 dias", delta_color="off")
-        kpi4.metric("Comprometimento da Renda", "40%", "Renda Segura (< 50%)", delta_color="normal")
-        st.divider()
+        kpi1.metric("Saldo Consolidado (Hoje)", f"R$ {saldo_total:,.2f}", "+ Atualizado agora" if eh_real else "+ R$ 5.045,00 (Salário Entrou)")
         
+        fatura_pendente = df_cartao[df_cartao['Status'] == 'Pendente']['Valor'].sum() if not df_cartao.empty else 0.0
+        kpi2.metric("Fatura em Aberto (Cartão)", f"R$ {fatura_pendente:,.2f}" if fatura_pendente > 0 else "R$ 0,00", "⚠️ Fatura do mês" if fatura_pendente > 0 else "Nenhuma fatura pendente", delta_color="off" if fatura_pendente > 0 else "normal")
+        
+        kpi3.metric("Saídas (Extrato)", f"R$ {saidas_reais:,.2f}", "- Calculado pelo banco", delta_color="inverse")
+        
+        receita_base = carregar_valor("receita_prevista", 5000.0) 
+        comprometimento = (saidas_reais / receita_base * 100) if receita_base > 0 else 0
+        texto_comp = "Renda Segura (< 50%)" if comprometimento < 50 else "Atenção (Acima de 50%)"
+        kpi4.metric("Comprometimento", f"{comprometimento:.0f}%" if eh_real else "40%", texto_comp if eh_real else "Renda Segura (< 50%)", delta_color="normal" if comprometimento < 50 else "inverse")
+        
+        st.divider()
         col_graf1, col_graf2 = st.columns([1.2, 1])
         with col_graf1:
-            st.subheader("📈 Fluxo de Caixa Diário (Últimos 10 dias)")
-            fluxo_diario_prof = pd.DataFrame({"Dia": dias_grafico, "Saldo_R$": [1000, 6000, 5650, 5605, 5525, 5375, 5175, 5125, 4875, 4800]})
-            fig_area = px.area(fluxo_diario_prof, x="Dia", y="Saldo_R$", title="", labels={"Saldo_R$": "Saldo Bancário"},
-                               markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
-            fig_area.update_layout(xaxis_title="Dias", yaxis_title="Saldo em Conta (R$)", margin=dict(l=0, r=0, t=10, b=0),
-                                   paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified")
-            fig_area.update_xaxes(showgrid=False)
-            fig_area.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+            st.subheader("📈 Saldo Evolutivo")
+            fig_area = px.area(df_agrupado, x="Data_Curta", y="Saldo_R$", title="", markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
+            fig_area.update_layout(xaxis_title="Dias", yaxis_title="Saldo (R$)", margin=dict(l=0, r=0, t=10, b=0), hovermode="x unified")
             st.plotly_chart(fig_area, use_container_width=True, config={'displayModeBar': False})
             
         with col_graf2:
-            st.subheader("🍩 Concentração de Gastos")
-            gastos_consolidados = pd.DataFrame({
-                "Categoria": ["Supermercado", "Lazer", "Transporte", "Moradia", "Compras", "Viagem"],
-                "Total_Gasto": [350.0, 250.0, 295.0, 200.0, 239.9, 450.0]
-            })
-            fig_bar = px.bar(gastos_consolidados.sort_values('Total_Gasto', ascending=True), 
-                             x='Total_Gasto', y='Categoria', orientation='h', color_discrete_sequence=["#E74C3C"])
+            st.subheader("🍩 Para onde o dinheiro foi?")
+            fig_bar = px.bar(df_pizza_real.sort_values('Valor', ascending=True), x='Valor', y='Categoria', orientation='h', color_discrete_sequence=["#E74C3C"])
             fig_bar.update_layout(margin=dict(l=0, r=0, t=10, b=0), xaxis_title="", yaxis_title="")
-            fig_bar.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
             
         st.divider()
 
-        # --- BLOCO: CONEXÃO COM O BANCO ---
         st.subheader("🔗 Gerenciar Conexões Bancárias")
-        if "mostrar_pluggy" not in st.session_state:
-            st.session_state["mostrar_pluggy"] = False
-
-        if st.button("🏦 Conectar Nova Conta Bancária"):
-            st.session_state["mostrar_pluggy"] = True
+        modo_sandbox = st.checkbox("⚙️ Modo de Teste (Sandbox Ativado)", value=True, help="Desmarque esta opção APENAS quando a Pluggy aprovar seu acesso a dados reais no painel deles.")
+        
+        if "mostrar_pluggy" not in st.session_state: st.session_state["mostrar_pluggy"] = False
+        if st.button("🏦 Conectar Nova Conta", key="btn_nova_conta"): st.session_state["mostrar_pluggy"] = True
             
         if st.session_state["mostrar_pluggy"]:
-            with st.spinner("Gerando ambiente seguro com Sandbox ativado..."):
-                api_key = obter_api_key_pluggy()
-                if api_key:
-                    connect_token = obter_connect_token(api_key)
-                    if connect_token:
-                        # --- AGORA SIM: includeSandbox: true adicionado! ---
-                        html_code = f"""
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <meta charset="utf-8">
-                        </head>
-                        <body style="margin: 0; padding: 0; background-color: #f9f9f9;">
-                            <div id="pluggy-connect-container" style="height: 700px; width: 100%; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
-                            <script>
-                                function initPluggy() {{
-                                    try {{
-                                        const pluggyConnect = new window.PluggyConnect({{
-                                            connectToken: '{connect_token}',
-                                            includeSandbox: true, // A CHAVE MESTRA QUE FALTAVA!
-                                            container: 'pluggy-connect-container',
-                                            onSuccess: (itemData) => {{
-                                                console.log("Sucesso: ", itemData);
-                                                document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 40px; color: #2ECC71; font-family: sans-serif; text-align: center;'><h2>🎉 Sucesso! Banco Conectado!</h2><p>Você já pode fechar esta tela.</p></div>";
-                                            }},
-                                            onError: (error) => {{
-                                                console.error("Erro Connect: ", error);
-                                                document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro no banco:</strong> " + error.message + "</div>";
-                                            }}
-                                        }});
-                                        pluggyConnect.init();
-                                    }} catch(e) {{
-                                        document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro ao inicializar:</strong> " + e.message + "</div>";
-                                    }}
-                                }}
+            api_key = obter_api_key_pluggy()
+            if api_key:
+                connect_token = obter_connect_token(api_key)
+                sandbox_str = "true" if modo_sandbox else "false" 
+                html_code = f"""
+                <!DOCTYPE html><html><head><meta charset="utf-8"></head>
+                <body style="margin: 0; padding: 0;">
+                    <div id="pluggy-connect-container" style="height: 700px; width: 100%;"></div>
+                    <script>
+                        function initPluggy() {{
+                            const pluggyConnect = new window.PluggyConnect({{
+                                connectToken: '{connect_token}',
+                                includeSandbox: {sandbox_str},
+                                container: 'pluggy-connect-container',
+                                onSuccess: (itemData) => {{ alert("Sucesso! Banco Conectado!"); }},
+                            }});
+                            pluggyConnect.init();
+                        }}
+                        var script = document.createElement('script');
+                        script.src = "https://cdn.pluggy.ai/pluggy-connect/v1.3.0/pluggy-connect.js";
+                        script.onload = initPluggy;
+                        document.head.appendChild(script);
+                    </script>
+                </body></html>
+                """
+                st.write("---")
+                if modo_sandbox: st.info("🔐 **Ambiente de Testes:** Procure por 'Pluggy Sandbox'.")
+                else: st.warning("⚠️ **Ambiente Real:** Você só verá os bancos reais (Nubank, Itaú, etc) se tiver solicitado Acesso de Produção no site da Pluggy.")
+                components.html(html_code, height=750, scrolling=True)
 
-                                var script = document.createElement('script');
-                                script.src = "https://cdn.pluggy.ai/pluggy-connect/v1.3.0/pluggy-connect.js";
-                                script.onload = initPluggy;
-                                document.head.appendChild(script);
-                            </script>
-                        </body>
-                        </html>
-                        """
-                        st.write("---")
-                        st.info("🔐 **Ambiente de Testes (Sandbox) Liberado!** Procure por 'Pluggy Sandbox'.")
-                        components.html(html_code, height=750, scrolling=True)
-                    else:
-                        st.error("Falha ao gerar o Token de Conexão. Verifique o console ou tente novamente.")
-                else:
-                    st.error("Erro na API Key. Verifique as configurações do cofre.")
-                    
         st.divider()
-
-        st.subheader("📋 Últimas Transações Sincronizadas")
-        aba_banco, aba_cartao = st.tabs(["🏦 Extrato da Conta Corrente", "💳 Compras no Cartão de Crédito"])
-        
+        st.subheader("📋 Tabela de Transações Sincronizadas")
         def estilo_valor(val):
-            return 'color: green; font-weight: bold' if val > 0 else 'color: red; font-weight: bold'
+            try: return 'color: green; font-weight: bold' if float(val) > 0 else 'color: red; font-weight: bold'
+            except: return ''
 
-        with aba_banco:
-            st.dataframe(df_banco_sync.style.map(estilo_valor, subset=['Valor']), use_container_width=True, hide_index=True)
-            
-        with aba_cartao:
-            st.dataframe(df_cartao_sync, use_container_width=True, hide_index=True)
+        st.dataframe(df_banco_view.style.map(estilo_valor, subset=['Valor']), use_container_width=True, hide_index=True)
 
     elif menu == "Entradas e Saídas":
         st.header("💰 Entradas e Saídas")
@@ -487,7 +490,6 @@ else:
 
     elif menu == "Cartão de Crédito":
         st.header("💳 Cartão de Crédito")
-        
         dia_fechamento = int(carregar_valor("dia_fechamento", 8))
         dia_vencimento = int(carregar_valor("dia_vencimento", 15))
         
@@ -524,7 +526,6 @@ else:
             st.success("🎉 Nenhuma fatura pendente!")
 
         st.divider()
-
         st.subheader("🗓️ Resumo das Próximas Faturas")
         hoje = pd.Timestamp(date.today())
         
@@ -557,7 +558,6 @@ else:
             colunas_fatura[i].metric(label=label, value=f"R$ {total_mes:.2f}")
 
         st.divider()
-        
         col_graf, col_form = st.columns([1, 1])
         with col_graf:
             texto_filtro_cc = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else ""
@@ -696,22 +696,18 @@ else:
                     st.info("⚠️ Selecione um Mês no filtro lateral para ver a barra de progresso do orçamento.")
                 else:
                     st.subheader(f"📊 Progresso em {mes_selecionado}")
-                    
                     gastos_banco = df_dados_filtro[(df_dados_filtro['Tipo'] == 'Saída') & (df_dados_filtro['Categoria'] != 'Cartão de Crédito')]
                     gastos_banco_agrupado = gastos_banco.groupby('Categoria')['Valor'].sum()
                     gastos_cartao_agrupado = df_cartao_filtro.groupby('Categoria')['Valor'].sum()
-                    
                     tem_orcamento_valido = False
                     
                     for index, row in df_orcamentos.iterrows():
                         cat = row['Categoria']
                         limite = float(row['Limite']) if pd.notna(row['Limite']) else 0.0
-                        
                         if limite > 0:
                             tem_orcamento_valido = True
                             gasto_total = gastos_banco_agrupado.get(cat, 0.0) + gastos_cartao_agrupado.get(cat, 0.0)
                             percentual = gasto_total / limite
-                            
                             if percentual >= 1.0:
                                 st.error(f"🚨 **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Estourou!)")
                                 st.progress(1.0)
@@ -721,19 +717,16 @@ else:
                             else:
                                 st.success(f"✅ **{cat}**: R$ {gasto_total:.2f} / R$ {limite:.2f} (Tranquilo)")
                                 st.progress(percentual)
-                                
                     if not tem_orcamento_valido:
                         st.write("Adicione categorias e limites maiores que zero na tabela ao lado para ver os gráficos.")
 
         with aba_cartao_cfg:
             st.subheader("Datas Importantes")
             st.write("Defina aqui os dias de corte do seu cartão. Isso afeta em qual mês suas compras vão cair.")
-            
             dia_fechamento_atual = int(carregar_valor("dia_fechamento", 8))
             dia_vencimento_atual = int(carregar_valor("dia_vencimento", 15))
             
             col_dias1, col_dias2 = st.columns(2)
-            
             novo_dia_fechamento = col_dias1.number_input("Dia de Fechamento (Melhor dia de compra):", min_value=1, max_value=31, value=dia_fechamento_atual, step=1)
             novo_dia_vencimento = col_dias2.number_input("Dia de Vencimento da Fatura:", min_value=1, max_value=31, value=dia_vencimento_atual, step=1)
             
@@ -741,7 +734,6 @@ else:
                 salvar_valor("dia_fechamento", novo_dia_fechamento)
                 st.success("Dia de fechamento atualizado na nuvem!")
                 st.rerun()
-                
             if novo_dia_vencimento != dia_vencimento_atual:
                 salvar_valor("dia_vencimento", novo_dia_vencimento)
                 st.success("Dia de vencimento atualizado na nuvem!")
@@ -768,8 +760,4 @@ else:
                             st.success("Custos fixos salvos na nuvem!")
                             st.rerun()
                         except Exception as e:
-                            st.error("🚨 O Google recusou a gravação! Veja o motivo exato abaixo:")
-                            if hasattr(e, 'response'):
-                                st.code(e.response.text)
-                            else:
-                                st.error(str(e))
+                            st.error(f"Erro ao salvar: {e}")
