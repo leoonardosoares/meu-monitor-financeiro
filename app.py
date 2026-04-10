@@ -8,8 +8,28 @@ import plotly.express as px
 import requests
 import streamlit.components.v1 as components
 
-# 1. CONFIGURAÇÃO INICIAL
+# 1. CONFIGURAÇÃO INICIAL E ESTILO CUSTOMIZADO
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
+
+# --- NOVO: BANHO DE LOJA (CSS) PARA DEIXAR OS BOTÕES VERDES ---
+st.markdown("""
+<style>
+    div.stButton > button:first-child {
+        background-color: #2ECC71 !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: bold !important;
+        padding: 0.5rem 1rem !important;
+        transition: all 0.3s ease !important;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #27AE60 !important;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1) !important;
+        color: white !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 SENHA_DO_APP = "admin123"
 
@@ -174,7 +194,7 @@ else:
         aba_custos.update(values=[df.columns.tolist()] + dados_limpos)
         carregar_custos.clear()
 
-    # --- FUNÇÕES DE CONEXÃO PLUGGY (CORRIGIDAS) ---
+    # --- FUNÇÕES DE CONEXÃO PLUGGY ---
     def obter_api_key_pluggy():
         client_id = st.secrets.get("PLUGGY_CLIENT_ID")
         client_secret = st.secrets.get("PLUGGY_CLIENT_SECRET")
@@ -186,7 +206,6 @@ else:
 
     def obter_connect_token(api_key):
         url = "https://api.pluggy.ai/connect_token"
-        # Enviar um JSON vazio previne erros no servidor da Pluggy
         response = requests.post(url, json={}, headers={"accept": "application/json", "content-type": "application/json", "X-API-KEY": api_key})
         if response.status_code == 200: return response.json().get("accessToken")
         return None
@@ -329,7 +348,6 @@ else:
         st.header("🤖 Inteligência Financeira (Sincronização)")
         st.write("Visão unificada das suas contas e cartões com análises avançadas em tempo real. *(Modo Visualização Ativado)*")
         
-        # MOCKUP DE DADOS PARA ANÁLISE
         data_hoje = date.today()
         dias_extrato = [(data_hoje - timedelta(days=i)).strftime('%d/%m/%Y') for i in range(10)]
         dias_grafico = [(data_hoje - timedelta(days=i)).strftime('%d/%m') for i in range(9, -1, -1)]
@@ -390,7 +408,6 @@ else:
         if "mostrar_pluggy" not in st.session_state:
             st.session_state["mostrar_pluggy"] = False
 
-        # Removi o type="primary" para ele ficar com a cor padrão bonitinha do Streamlit
         if st.button("🏦 Conectar Nova Conta Bancária"):
             st.session_state["mostrar_pluggy"] = True
             
@@ -400,31 +417,44 @@ else:
                 if api_key:
                     connect_token = obter_connect_token(api_key)
                     if connect_token:
-                        # Código HTML blindado com Try/Catch para te avisar se der erro
+                        # CÓDIGO HTML BLINDADO (Corrige o erro PluggyConnect is not defined)
                         html_code = f"""
                         <!DOCTYPE html>
                         <html>
                         <head>
-                            <script src="https://cdn.pluggy.ai/pluggy-connect/v1/pluggy-connect.js"></script>
+                            <meta charset="utf-8">
                         </head>
                         <body style="margin: 0; padding: 0; background-color: #f9f9f9;">
                             <div id="pluggy-connect-container" style="height: 700px; width: 100%; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"></div>
                             <script>
-                                try {{
-                                    const pluggyConnect = new PluggyConnect({{
-                                        connectToken: '{connect_token}',
-                                        container: 'pluggy-connect-container',
-                                        onSuccess: (itemData) => {{
-                                            console.log(itemData);
-                                        }},
-                                        onError: (error) => {{
-                                            console.error("Erro Connect: ", error);
-                                        }}
-                                    }});
-                                    pluggyConnect.init();
-                                }} catch(e) {{
-                                    document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro ao carregar o componente do banco:</strong> " + e.message + "</div>";
+                                function initPluggy() {{
+                                    try {{
+                                        const pluggyConnect = new window.PluggyConnect({{
+                                            connectToken: '{connect_token}',
+                                            container: 'pluggy-connect-container',
+                                            onSuccess: (itemData) => {{
+                                                console.log("Sucesso: ", itemData);
+                                                document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 40px; color: #2ECC71; font-family: sans-serif; text-align: center;'><h2>🎉 Sucesso! Banco Conectado!</h2><p>Você já pode fechar esta tela.</p></div>";
+                                            }},
+                                            onError: (error) => {{
+                                                console.error("Erro Connect: ", error);
+                                                document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro no banco:</strong> " + error.message + "</div>";
+                                            }}
+                                        }});
+                                        pluggyConnect.init();
+                                    }} catch(e) {{
+                                        document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro ao inicializar:</strong> " + e.message + "</div>";
+                                    }}
                                 }}
+
+                                // Carrega o script dinamicamente para garantir que ele exista ANTES de rodar
+                                var script = document.createElement('script');
+                                script.src = "https://cdn.pluggy.ai/pluggy-connect/v1.3.0/pluggy-connect.js";
+                                script.onload = initPluggy;
+                                script.onerror = function() {{
+                                    document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro de Rede:</strong> Não foi possível carregar a biblioteca da Pluggy. Verifique sua conexão com a internet.</div>";
+                                }};
+                                document.head.appendChild(script);
                             </script>
                         </body>
                         </html>
