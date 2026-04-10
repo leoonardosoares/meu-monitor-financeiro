@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 # 1. CONFIGURAÇÃO INICIAL E ESTILO CUSTOMIZADO
 st.set_page_config(page_title="Meu App Financeiro", layout="wide")
 
-# --- NOVO: BANHO DE LOJA (CSS) PARA DEIXAR OS BOTÕES VERDES ---
+# --- BANHO DE LOJA (CSS) PARA DEIXAR OS BOTÕES VERDES ---
 st.markdown("""
 <style>
     div.stButton > button:first-child {
@@ -257,7 +257,6 @@ else:
     total_investido_global = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Saída')]['Valor'].sum() if not df_dados.empty else 0.0
     patrimonio_total = saldo_bancario_global + total_investido_global
 
-
     # --- 4. LÓGICA DAS TELAS ---
     if menu == "Dashboard":
         texto_filtro = f"({mes_selecionado})" if mes_selecionado != "Todos os Meses" else "(Todo o Período)"
@@ -273,7 +272,6 @@ else:
         col4.metric("Patrimônio Total 💎", f"R$ {patrimonio_total:.2f}")
         
         st.divider()
-        
         st.subheader("🔮 Visão do Próximo Mês")
         
         if mes_selecionado != "Todos os Meses":
@@ -287,9 +285,7 @@ else:
 
         receita_prevista = carregar_valor("receita_prevista", 0.0)
         total_custos_fixos = df_custos['Valor'].sum() if not df_custos.empty else 0.0
-        
         fatura_abater = df_cartao[(df_cartao['Mês da Fatura'] == mes_atual_str) & (df_cartao['Status'] == 'Pendente')]['Valor'].sum() if not df_cartao.empty else 0.0
-        
         saldo_projetado = receita_prevista - total_custos_fixos - fatura_abater
 
         st.write(f"**Projeção para {proximo_mes_str} (Abatendo a Fatura de {mes_atual_str})**")
@@ -298,13 +294,10 @@ else:
         col_p2.metric("Custos Fixos (-)", f"R$ {total_custos_fixos:.2f}")
         col_p3.metric("Fatura do Cartão (-)", f"R$ {fatura_abater:.2f}")
         
-        if saldo_projetado >= 0:
-            col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
-        else:
-            col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+        if saldo_projetado >= 0: col_p4.metric("💰 Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
+        else: col_p4.metric("⚠️ Saldo Livre Estimado", f"R$ {saldo_projetado:.2f}")
             
         st.divider()
-        
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
         
@@ -313,13 +306,11 @@ else:
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
-                fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4,
-                                   color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_pizza.update_traces(textinfo='percent+label', textposition='inside')
                 fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
                 st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
-            else:
-                st.info("Nenhuma despesa para exibir.")
+            else: st.info("Nenhuma despesa para exibir.")
                 
         with col_dash2:
             st.write("**Evolução de Entradas e Saídas (Diário)**")
@@ -327,20 +318,11 @@ else:
                 df_linha = df_dados_filtro.copy()
                 df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
                 df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-                
-                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo',
-                                   markers=True, line_shape='spline',
-                                   color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
-                
-                fig_linha.update_layout(
-                    xaxis_title="Dias", yaxis_title="R$",
-                    margin=dict(t=10, b=10, l=10, r=10),
-                    hovermode="x unified", legend_title_text=""
-                )
+                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+                fig_linha.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
                 fig_linha.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
-            else:
-                st.info("Nenhuma movimentação para exibir.")
+            else: st.info("Nenhuma movimentação para exibir.")
 
 
     # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
@@ -412,12 +394,12 @@ else:
             st.session_state["mostrar_pluggy"] = True
             
         if st.session_state["mostrar_pluggy"]:
-            with st.spinner("Gerando ambiente seguro com criptografia de ponta-a-ponta..."):
+            with st.spinner("Gerando ambiente seguro com Sandbox ativado..."):
                 api_key = obter_api_key_pluggy()
                 if api_key:
                     connect_token = obter_connect_token(api_key)
                     if connect_token:
-                        # CÓDIGO HTML BLINDADO (Corrige o erro PluggyConnect is not defined)
+                        # --- AGORA SIM: includeSandbox: true adicionado! ---
                         html_code = f"""
                         <!DOCTYPE html>
                         <html>
@@ -431,6 +413,7 @@ else:
                                     try {{
                                         const pluggyConnect = new window.PluggyConnect({{
                                             connectToken: '{connect_token}',
+                                            includeSandbox: true, // A CHAVE MESTRA QUE FALTAVA!
                                             container: 'pluggy-connect-container',
                                             onSuccess: (itemData) => {{
                                                 console.log("Sucesso: ", itemData);
@@ -447,20 +430,16 @@ else:
                                     }}
                                 }}
 
-                                // Carrega o script dinamicamente para garantir que ele exista ANTES de rodar
                                 var script = document.createElement('script');
                                 script.src = "https://cdn.pluggy.ai/pluggy-connect/v1.3.0/pluggy-connect.js";
                                 script.onload = initPluggy;
-                                script.onerror = function() {{
-                                    document.getElementById('pluggy-connect-container').innerHTML = "<div style='padding: 20px; color: red; font-family: sans-serif;'><strong>Erro de Rede:</strong> Não foi possível carregar a biblioteca da Pluggy. Verifique sua conexão com a internet.</div>";
-                                }};
                                 document.head.appendChild(script);
                             </script>
                         </body>
                         </html>
                         """
                         st.write("---")
-                        st.info("🔐 **Ambiente Seguro Banco Central:** Escolha seu banco abaixo e siga as instruções.")
+                        st.info("🔐 **Ambiente de Testes (Sandbox) Liberado!** Procure por 'Pluggy Sandbox'.")
                         components.html(html_code, height=750, scrolling=True)
                     else:
                         st.error("Falha ao gerar o Token de Conexão. Verifique o console ou tente novamente.")
