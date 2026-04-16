@@ -160,7 +160,7 @@ else:
     def carregar_categorias():
         dados = aba_categorias.get_all_records()
         if dados: return pd.DataFrame(dados)
-        df_padrao = pd.DataFrame([{"Categoria": c} for c in ["Aluguel", "Supermercado", "Lazer", "Saúde", "Outros"]])
+        df_padrao = pd.DataFrame([{"Categoria": c} for c in ["Aluguel", "Supermercado", "Lazer", "Saúde", "Outros", "Condomínio"]])
         salvar_categorias(df_padrao)
         return df_padrao
 
@@ -346,29 +346,31 @@ else:
             
         st.divider()
         
-        # --- A NOVA TELA DE GRÁFICOS DO DASHBOARD MANUAL ---
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
         
         with col_dash1:
-            st.write("**Despesas da Conta Corrente (Pizza)**")
+            st.write("**Despesas Variáveis (Pizza)**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
+            
+            # NOVO: Filtro para ignorar as categorias de gastos grandes da pizza
+            categorias_ignoradas = ['Aluguel', 'Condomínio', 'Cartão de Crédito']
+            df_saidas_grafico = df_saidas_grafico[~df_saidas_grafico['Categoria'].isin(categorias_ignoradas)]
+            
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
                 fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-                # Adicionando rótulos de valores na Pizza
                 fig_pizza.update_traces(textinfo='percent+label+value', textposition='inside')
                 fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
                 st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
-            else: st.info("Nenhuma despesa na conta corrente para exibir.")
+            else: st.info("Nenhuma despesa variável para exibir.")
                 
         with col_dash2:
-            st.write("**Evolução de Entradas e Saídas (Diário)**")
+            st.write("**Evolução de Entradas e Saídas (Linha)**")
             if not df_dados_filtro.empty:
                 df_linha = df_dados_filtro.copy()
                 df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
                 df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-                # Preparando a legenda BR para o gráfico de linha
                 df_linha['Label'] = df_linha['Valor'].apply(formata_br)
                 fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
                 fig_linha.update_traces(textposition="top center", mode="lines+markers+text")
@@ -376,7 +378,22 @@ else:
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-        # --- O NOVO GRÁFICO GERAL (CONTA + CARTÃO) COM RÓTULOS ---
+        # --- NOVO GRÁFICO: ÁREA DE RECEITAS E DESPESAS ---
+        st.write("")
+        st.write("**🌊 Volume de Receitas e Despesas (Área)**")
+        if not df_dados_filtro.empty:
+            df_area = df_dados_filtro.copy()
+            df_area['Data_Formatada'] = pd.to_datetime(df_area['Data'], errors='coerce').dt.strftime('%d/%m')
+            df_area = df_area.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
+            df_area['Label'] = df_area['Valor'].apply(formata_br)
+            
+            fig_area_manual = px.area(df_area, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+            fig_area_manual.update_traces(textposition="top center")
+            fig_area_manual.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
+            st.plotly_chart(fig_area_manual, use_container_width=True, config={'displayModeBar': False})
+        else:
+            st.info("Nenhuma movimentação para exibir no gráfico de área.")
+
         st.write("")
         st.write("**🍩 Visão Geral de Despesas: Conta Corrente + Fatura do Cartão**")
         df_saidas_manuais = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída'][['Categoria', 'Valor']].copy()
@@ -385,7 +402,6 @@ else:
         
         if not df_gastos_totais.empty:
             df_gastos_agrupado = df_gastos_totais.groupby('Categoria')['Valor'].sum().reset_index()
-            # Formata a legenda para o gráfico
             df_gastos_agrupado['Label'] = df_gastos_agrupado['Valor'].apply(formata_br)
             
             fig_bar_manual = px.bar(df_gastos_agrupado.sort_values('Valor', ascending=True), 
@@ -494,7 +510,6 @@ else:
         col_graf1, col_graf2 = st.columns([1.2, 1])
         with col_graf1:
             st.subheader("📈 Fluxo de Caixa Diário (Últimos 10 dias)")
-            # Adicionando Rótulos na linha de área
             df_agrupado['Label'] = df_agrupado['Saldo_R$'].apply(formata_br)
             fig_area = px.area(df_agrupado, x="Data_Curta", y="Saldo_R$", text='Label', title="", markers=True, line_shape="spline", color_discrete_sequence=["#2ECC71"])
             fig_area.update_traces(textposition="top center", mode="lines+markers+text")
@@ -503,7 +518,6 @@ else:
             
         with col_graf2:
             st.subheader("🍩 Concentração de Gastos")
-            # Adicionando Rótulos nas barras
             df_pizza_real['Label'] = df_pizza_real['Valor'].apply(formata_br)
             fig_bar = px.bar(df_pizza_real.sort_values('Valor', ascending=True), 
                              x='Valor', y='Categoria', orientation='h', text='Label', color_discrete_sequence=["#E74C3C"])
@@ -697,7 +711,6 @@ else:
             st.subheader(f"📉 Gastos por Categoria {texto_filtro_cc}")
             
             if not df_cartao_filtro.empty: 
-                # NOVO: Trocando de st.bar_chart para px.bar para ter a legenda de dados!
                 df_cartao_agrupado = df_cartao_filtro.groupby('Categoria')['Valor'].sum().reset_index()
                 df_cartao_agrupado['Label'] = df_cartao_agrupado['Valor'].apply(formata_br)
                 fig_cartao = px.bar(df_cartao_agrupado, x='Categoria', y='Valor', text='Label', color_discrete_sequence=["#9B59B6"])
@@ -800,7 +813,6 @@ else:
                     dados_tabela.append({"Ano": str(ano), "Rendimento no Ano (R$)": rendimento_do_ano, "Patrimônio Acumulado (R$)": valor_acumulado})
                 
                 df_projecao = pd.DataFrame(dados_tabela)
-                # NOVO: Trocando para px.bar para ter rótulos de dados
                 df_projecao['Label'] = df_projecao['Patrimônio Acumulado (R$)'].apply(formata_br)
                 fig_inv = px.bar(df_projecao, x='Ano', y='Patrimônio Acumulado (R$)', text='Label', color_discrete_sequence=["#3498DB"])
                 fig_inv.update_traces(textposition='outside')
