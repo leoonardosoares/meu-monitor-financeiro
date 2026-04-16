@@ -253,7 +253,6 @@ else:
             st.error(f"Erro no motor de extração: {e}")
             return None, None
 
-    # Função Auxiliar para Rótulos (Legendas) nos gráficos no padrão BR
     def formata_br(valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -353,7 +352,6 @@ else:
             st.write("**Despesas Variáveis (Pizza)**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
             
-            # NOVO: Filtro para ignorar as categorias de gastos grandes da pizza
             categorias_ignoradas = ['Aluguel', 'Condomínio', 'Cartão de Crédito']
             df_saidas_grafico = df_saidas_grafico[~df_saidas_grafico['Categoria'].isin(categorias_ignoradas)]
             
@@ -378,7 +376,7 @@ else:
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-        # --- NOVO GRÁFICO: ÁREA DE RECEITAS E DESPESAS ---
+        # --- GRÁFICO DE ÁREA CORRIGIDO (SEM EMPILHAMENTO) ---
         st.write("")
         st.write("**🌊 Volume de Receitas e Despesas (Área)**")
         if not df_dados_filtro.empty:
@@ -388,7 +386,8 @@ else:
             df_area['Label'] = df_area['Valor'].apply(formata_br)
             
             fig_area_manual = px.area(df_area, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
-            fig_area_manual.update_traces(textposition="top center")
+            # AQUI ESTÁ A MÁGICA: stackgroup=None impede que os valores sejam somados um em cima do outro
+            fig_area_manual.update_traces(textposition="top center", stackgroup=None, fill='tozeroy')
             fig_area_manual.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
             st.plotly_chart(fig_area_manual, use_container_width=True, config={'displayModeBar': False})
         else:
@@ -414,7 +413,6 @@ else:
             st.info("Nenhuma despesa ou compra de cartão registrada neste período.")
 
 
-    # --- TELA: DASHBOARD AUTOMÁTICO PROFISSIONAL E LINDO ---
     elif menu == "Dashboard Automático 🤖":
         col_tit1, col_tit2 = st.columns([2, 1])
         with col_tit1: st.header("🤖 Inteligência Financeira (Sincronização)")
@@ -527,7 +525,6 @@ else:
             
         st.divider()
 
-        # --- BLOCO: CONEXÃO COM O BANCO ---
         st.subheader("🔗 Gerenciar Conexões Bancárias")
         modo_sandbox = st.checkbox("⚙️ Modo de Teste (Sandbox Ativado)", value=True, help="Desmarque esta opção APENAS quando a Pluggy aprovar seu acesso a dados reais.")
         
