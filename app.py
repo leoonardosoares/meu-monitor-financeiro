@@ -376,18 +376,18 @@ else:
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-        # --- GRÁFICO DE ÁREA CORRIGIDO (SEM EMPILHAMENTO) ---
+        # --- GRÁFICO DE ÁREA CORRIGIDO (ESTILO MACBOOK) ---
         st.write("")
         st.write("**🌊 Volume de Receitas e Despesas (Área)**")
         if not df_dados_filtro.empty:
             df_area = df_dados_filtro.copy()
             df_area['Data_Formatada'] = pd.to_datetime(df_area['Data'], errors='coerce').dt.strftime('%d/%m')
             df_area = df_area.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-            df_area['Label'] = df_area['Valor'].apply(formata_br)
             
-            fig_area_manual = px.area(df_area, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
-            # AQUI ESTÁ A MÁGICA: stackgroup=None impede que os valores sejam somados um em cima do outro
-            fig_area_manual.update_traces(textposition="top center", stackgroup=None, fill='tozeroy')
+            # Removido os marcadores (dots) e os textos (labels) para ficar limpo igual a foto
+            fig_area_manual = px.area(df_area, x='Data_Formatada', y='Valor', color='Tipo', line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+            # stackgroup=None impede de somar, e a opacity=0.6 cria a cor misturada na interseção!
+            fig_area_manual.update_traces(stackgroup=None, fill='tozeroy', opacity=0.6)
             fig_area_manual.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
             st.plotly_chart(fig_area_manual, use_container_width=True, config={'displayModeBar': False})
         else:
