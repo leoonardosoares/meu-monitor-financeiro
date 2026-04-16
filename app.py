@@ -345,13 +345,32 @@ else:
             
         st.divider()
         
+        # --- LÓGICA DE PREENCHIMENTO DE DATAS (PIVOTAMENTO) PARA GRÁFICOS CONTÍNUOS ---
+        df_evo = pd.DataFrame()
+        if not df_dados_filtro.empty:
+            df_evo = df_dados_filtro.copy()
+            df_evo['Data_DT'] = pd.to_datetime(df_evo['Data'], format='%d/%m/%Y', errors='coerce')
+            df_evo = df_evo.dropna(subset=['Data_DT'])
+            
+            # Forçando preenchimento de todos os dias com zero onde não houver dados
+            df_pivot = df_evo.pivot_table(index='Data_DT', columns='Tipo', values='Valor', aggfunc='sum', fill_value=0)
+            if 'Entrada' not in df_pivot.columns: df_pivot['Entrada'] = 0.0
+            if 'Saída' not in df_pivot.columns: df_pivot['Saída'] = 0.0
+            
+            df_pivot = df_pivot.reset_index().sort_values('Data_DT')
+            df_melted = df_pivot.melt(id_vars='Data_DT', value_vars=['Entrada', 'Saída'], var_name='Tipo', value_name='Valor')
+            df_melted['Data_Formatada'] = df_melted['Data_DT'].dt.strftime('%d/%m')
+            
+            # Legenda inteligente: Só mostra número se for maior que zero (para não poluir a base)
+            df_melted['Label'] = df_melted['Valor'].apply(lambda x: formata_br(x) if x > 0 else "")
+            df_evo = df_melted
+
         st.subheader("📉 Análise Gráfica do Período")
         col_dash1, col_dash2 = st.columns([1, 1.2])
         
         with col_dash1:
             st.write("**Despesas Variáveis (Pizza)**")
             df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
-            
             categorias_ignoradas = ['Aluguel', 'Condomínio', 'Cartão de Crédito']
             df_saidas_grafico = df_saidas_grafico[~df_saidas_grafico['Categoria'].isin(categorias_ignoradas)]
             
@@ -365,29 +384,20 @@ else:
                 
         with col_dash2:
             st.write("**Evolução de Entradas e Saídas (Linha)**")
-            if not df_dados_filtro.empty:
-                df_linha = df_dados_filtro.copy()
-                df_linha['Data_Formatada'] = pd.to_datetime(df_linha['Data'], errors='coerce').dt.strftime('%d/%m')
-                df_linha = df_linha.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-                df_linha['Label'] = df_linha['Valor'].apply(formata_br)
-                fig_linha = px.line(df_linha, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+            if not df_evo.empty:
+                fig_linha = px.line(df_evo, x='Data_Formatada', y='Valor', color='Tipo', text='Label', markers=True, line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
                 fig_linha.update_traces(textposition="top center", mode="lines+markers+text")
                 fig_linha.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-        # --- GRÁFICO DE ÁREA CORRIGIDO (ESTILO MACBOOK) ---
+        # --- GRÁFICO DE ÁREA CORRIGIDO (CONTÍNUO E SEM EMPILHAR) ---
         st.write("")
         st.write("**🌊 Volume de Receitas e Despesas (Área)**")
-        if not df_dados_filtro.empty:
-            df_area = df_dados_filtro.copy()
-            df_area['Data_Formatada'] = pd.to_datetime(df_area['Data'], errors='coerce').dt.strftime('%d/%m')
-            df_area = df_area.groupby(['Data_Formatada', 'Tipo'])['Valor'].sum().reset_index()
-            
-            # Removido os marcadores (dots) e os textos (labels) para ficar limpo igual a foto
-            fig_area_manual = px.area(df_area, x='Data_Formatada', y='Valor', color='Tipo', line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
-            # stackgroup=None impede de somar, e a opacity=0.6 cria a cor misturada na interseção!
-            fig_area_manual.update_traces(stackgroup=None, fill='tozeroy', opacity=0.6)
+        if not df_evo.empty:
+            fig_area_manual = px.area(df_evo, x='Data_Formatada', y='Valor', color='Tipo', text='Label', line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
+            # stackgroup=None evita que elas somem, mode="lines+text" adiciona as legendas
+            fig_area_manual.update_traces(stackgroup=None, fill='tozeroy', opacity=0.6, textposition="top center", mode="lines+markers+text")
             fig_area_manual.update_layout(xaxis_title="Dias", yaxis_title="R$", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
             st.plotly_chart(fig_area_manual, use_container_width=True, config={'displayModeBar': False})
         else:
