@@ -31,7 +31,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-SENHA_DO_APP = "admin123"
+SENHA_DO_APP = "leo123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -54,7 +54,7 @@ else:
         st.rerun()
         
     st.sidebar.divider()
-    st.title("💸 Meu Monitor Financeiro (Sincronizado ☁️)")
+    st.title("💸 Meu Monitor Financeiro")
 
     # --- 2. CONEXÃO COM O GOOGLE SHEETS OTIMIZADA ---
     @st.cache_resource 
