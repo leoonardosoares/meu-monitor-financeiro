@@ -31,7 +31,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-SENHA_DO_APP = "leo123"
+SENHA_DO_APP = "admin123"
 
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
@@ -54,7 +54,7 @@ else:
         st.rerun()
         
     st.sidebar.divider()
-    st.title("💸 Meu Monitor Financeiro")
+    st.title("💸 Meu Monitor Financeiro (Sincronizado ☁️)")
 
     # --- 2. CONEXÃO COM O GOOGLE SHEETS OTIMIZADA ---
     @st.cache_resource 
@@ -362,19 +362,16 @@ else:
                 min_date = df_pivot.index.min()
                 max_date = df_pivot.index.max()
                 
-                # Preenchemos todos os dias em branco no calendário com R$ 0,00
                 if pd.notna(min_date) and pd.notna(max_date):
                     idx = pd.date_range(min_date, max_date)
                     df_pivot = df_pivot.reindex(idx, fill_value=0.0)
                 
-                # 1. CRIANDO O DATAFRAME DIÁRIO (Sobe e desce)
                 df_pivot_diario = df_pivot.copy().reset_index().rename(columns={'index': 'Data_DT'})
                 df_diario = df_pivot_diario.melt(id_vars='Data_DT', value_vars=['Entrada', 'Saída'], var_name='Tipo', value_name='Valor')
                 df_diario['Data_Formatada'] = df_diario['Data_DT'].dt.strftime('%d/%m')
                 df_diario['Label'] = df_diario['Valor'].apply(lambda x: formata_br(x) if x > 0 else "")
                 df_diario = df_diario.sort_values('Data_DT')
                 
-                # 2. CRIANDO O DATAFRAME ACUMULADO (A onda contínua para a Área)
                 df_pivot_acumulado = df_pivot.copy()
                 df_pivot_acumulado['Entrada'] = df_pivot_acumulado['Entrada'].cumsum()
                 df_pivot_acumulado['Saída'] = df_pivot_acumulado['Saída'].cumsum()
@@ -389,16 +386,25 @@ else:
         
         with col_dash1:
             st.write("**Despesas Variáveis (Pizza)**")
-            df_saidas_grafico = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída']
+            
+            # NOVO: Unindo despesas da conta e do cartão de crédito para a pizza
+            df_saidas_manuais_pizza = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída'][['Categoria', 'Valor']].copy()
+            df_saidas_cartao_pizza = df_cartao_filtro[['Categoria', 'Valor']].copy()
+            df_saidas_grafico = pd.concat([df_saidas_manuais_pizza, df_saidas_cartao_pizza])
+            
             categorias_ignoradas = ['Aluguel', 'Condomínio', 'Cartão de Crédito']
             df_saidas_grafico = df_saidas_grafico[~df_saidas_grafico['Categoria'].isin(categorias_ignoradas)]
             
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
-                fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig_pizza.update_traces(textinfo='percent+label+value', textposition='inside')
-                fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-                st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
+                # Verifica novamente se ficou vazio após o group by
+                if df_pizza['Valor'].sum() > 0:
+                    fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig_pizza.update_traces(textinfo='percent+label+value', textposition='inside')
+                    fig_pizza.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+                    st.plotly_chart(fig_pizza, use_container_width=True, config={'displayModeBar': False})
+                else:
+                    st.info("Nenhuma despesa variável maior que zero para exibir.")
             else: st.info("Nenhuma despesa variável para exibir.")
                 
         with col_dash2:
@@ -410,12 +416,10 @@ else:
                 st.plotly_chart(fig_linha, use_container_width=True, config={'displayModeBar': False})
             else: st.info("Nenhuma movimentação para exibir.")
 
-        # --- GRÁFICO DE ÁREA (ACUMULADO/RUNNING TOTAL - ESTILO MACBOOK) ---
         st.write("")
         st.write("**🌊 Volume Acumulado no Mês: Receitas x Despesas (Área)**")
         if not df_acumulado.empty:
             fig_area_manual = px.area(df_acumulado, x='Data_Formatada', y='Valor', color='Tipo', line_shape='spline', color_discrete_map={"Entrada": "#2ECC71", "Saída": "#E74C3C"})
-            # Removido 'text' e 'markers' para ficar liso. Mantido stackgroup=None e opacity
             fig_area_manual.update_traces(stackgroup=None, fill='tozeroy', opacity=0.6, mode="lines")
             fig_area_manual.update_layout(xaxis_title="Dias", yaxis_title="R$ (Total Acumulado)", margin=dict(t=10, b=10, l=10, r=10), hovermode="x unified", legend_title_text="")
             st.plotly_chart(fig_area_manual, use_container_width=True, config={'displayModeBar': False})
