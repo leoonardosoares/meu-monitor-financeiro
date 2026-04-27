@@ -297,10 +297,15 @@ else:
         df_dados_filtro = df_dados
         df_cartao_filtro = df_cartao
 
+    # --- NOVO MOTOR DE CÁLCULO (INCLUI SAQUES DE INVESTIMENTO) ---
     total_entradas_global = df_dados[df_dados['Tipo'] == 'Entrada']['Valor'].sum() if not df_dados.empty else 0.0
     total_saidas_global = df_dados[df_dados['Tipo'] == 'Saída']['Valor'].sum() if not df_dados.empty else 0.0
     saldo_bancario_global = total_entradas_global - total_saidas_global
-    total_investido_global = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Saída')]['Valor'].sum() if not df_dados.empty else 0.0
+    
+    inv_aportes = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Saída')]['Valor'].sum() if not df_dados.empty else 0.0
+    inv_saques = df_dados[(df_dados['Categoria'] == 'Investimento') & (df_dados['Tipo'] == 'Entrada')]['Valor'].sum() if not df_dados.empty else 0.0
+    total_investido_global = inv_aportes - inv_saques
+    
     patrimonio_total = saldo_bancario_global + total_investido_global
 
     # --- 4. LÓGICA DAS TELAS ---
@@ -345,7 +350,6 @@ else:
             
         st.divider()
         
-        # --- A VERDADEIRA LÓGICA DE PREENCHIMENTO DE DATAS E CUMULATIVO ---
         df_diario = pd.DataFrame()
         df_acumulado = pd.DataFrame()
         
@@ -387,7 +391,6 @@ else:
         with col_dash1:
             st.write("**Despesas Variáveis (Pizza)**")
             
-            # NOVO: Unindo despesas da conta e do cartão de crédito para a pizza
             df_saidas_manuais_pizza = df_dados_filtro[df_dados_filtro['Tipo'] == 'Saída'][['Categoria', 'Valor']].copy()
             df_saidas_cartao_pizza = df_cartao_filtro[['Categoria', 'Valor']].copy()
             df_saidas_grafico = pd.concat([df_saidas_manuais_pizza, df_saidas_cartao_pizza])
@@ -397,7 +400,6 @@ else:
             
             if not df_saidas_grafico.empty:
                 df_pizza = df_saidas_grafico.groupby('Categoria')['Valor'].sum().reset_index()
-                # Verifica novamente se ficou vazio após o group by
                 if df_pizza['Valor'].sum() > 0:
                     fig_pizza = px.pie(df_pizza, values='Valor', names='Categoria', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                     fig_pizza.update_traces(textinfo='percent+label+value', textposition='inside')
@@ -818,15 +820,33 @@ else:
             if progresso == 1.0: st.success("Reserva completa! Novos aportes irão para 'Outros Investimentos'.")
                 
             st.divider()
-            st.subheader("💸 Realizar Novo Aporte")
-            with st.form("form_investimento", clear_on_submit=True):
-                data_aporte = st.date_input("Data do Aporte", format="DD/MM/YYYY")
-                valor_aporte = st.number_input("Valor a Investir (R$)", min_value=0.01, format="%.2f")
-                if st.form_submit_button("Investir Agora"):
-                    df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_aporte, 'Descrição': "Aporte de Investimento", 'Categoria': "Investimento", 'Valor': valor_aporte, 'Tipo': "Saída"}])], ignore_index=True)
-                    salvar_dados(df_dados)
-                    st.success("Aporte registrado na Nuvem!")
-                    st.rerun()
+            st.subheader("💸 Movimentar Investimentos")
+            col_aporte, col_saque = st.columns(2)
+            
+            with col_aporte:
+                with st.form("form_investimento", clear_on_submit=True):
+                    st.write("**Realizar Novo Aporte 🟢**")
+                    data_aporte = st.date_input("Data do Aporte", format="DD/MM/YYYY")
+                    valor_aporte = st.number_input("Valor a Investir (R$)", min_value=0.01, format="%.2f")
+                    if st.form_submit_button("Investir Agora"):
+                        df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_aporte, 'Descrição': "Aporte de Investimento", 'Categoria': "Investimento", 'Valor': valor_aporte, 'Tipo': "Saída"}])], ignore_index=True)
+                        salvar_dados(df_dados)
+                        st.success("Aporte registrado na Nuvem!")
+                        st.rerun()
+                        
+            with col_saque:
+                with st.form("form_saque_invest", clear_on_submit=True):
+                    st.write("**Resgatar / Sacar 🏧**")
+                    data_saque = st.date_input("Data do Resgate", format="DD/MM/YYYY")
+                    valor_saque = st.number_input("Valor a Sacar (R$)", min_value=0.01, format="%.2f")
+                    if st.form_submit_button("Sacar Agora"):
+                        if valor_saque > total_investido_global:
+                            st.error("Saldo insuficiente nos investimentos!")
+                        else:
+                            df_dados = pd.concat([df_dados, pd.DataFrame([{'Data': data_saque, 'Descrição': "Resgate de Investimento", 'Categoria': "Investimento", 'Valor': valor_saque, 'Tipo': "Entrada"}])], ignore_index=True)
+                            salvar_dados(df_dados)
+                            st.success("Saque realizado! Valor adicionado ao Saldo Bancário.")
+                            st.rerun()
 
         with aba2:
             st.subheader("Mágica dos Juros Compostos")
