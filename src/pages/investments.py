@@ -1,0 +1,113 @@
+"""Página: Investimentos (reserva, aportes/saques, simulador)."""
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+
+from src import components, repository
+from src.config import Colors, ConfigKeys
+from src.finance import compute_wealth
+from src.format import brl
+
+
+def render(*, df_transactions: pd.DataFrame) -> None:
+    components.page_header(
+        "📈 Meus Investimentos",
+        "Reserva de emergência, aportes/saques e simulador de juros compostos.",
+    )
+
+    tab_goals, tab_simulator = st.tabs(["🎯 Metas e Aportes", "🔮 Simulador"])
+
+    wealth = compute_wealth(df_transactions, df_transactions)
+    invested = wealth.invested
+
+    with tab_goals:
+        _goals_tab(df_transactions=df_transactions, invested=invested)
+
+    with tab_simulator:
+        _simulator_tab(invested=invested)
+
+
+def _goals_tab(*, df_transactions: pd.DataFrame, invested: float) -> None:
+    st.subheader("Reserva de Emergência")
+    current_goal = repository.load_config(ConfigKeys.META_RESERVA, 10000.0)
+    new_goal = st.number_input(
+        "Meta da reserva (R$):", min_value=100.0, value=current_goal, step=500.0,
+    )
+    if new_goal != current_goal:
+        repository.save_config(ConfigKeys.META_RESERVA, new_goal)
+
+    reserve = min(invested, new_goal)
+    extra = max(invested - new_goal, 0.0)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total investido", brl(invested))
+    c2.metric("Fundo de emergência", brl(reserve))
+    c3.metric("Outros investimentos", brl(extra))
+
+    progress = min(reserve / new_goal, 1.0) if new_goal > 0 else 0.0
+    st.write(f"**Progresso da reserva ({progress * 100:.1f}%)**")
+    st.progress(progress)
+    if progress >= 1.0:
+        st.success("Reserva completa. Novos aportes vão para 'Outros investimentos'.")
+
+    st.divider()
+    st.subheader("💸 Movimentar")
+
+    col_in, col_out = st.columns(2)
+    with col_in:
+        with st.form("invest_deposit", clear_on_submit=True):
+            st.markdown("**🟢 Novo aporte**")
+            d = st.date_input("Data", format="DD/MM/YYYY", key="dep_date")
+            v = st.number_input("Valor (R$)", min_value=0.01, format="%.2f", key="dep_v")
+            if st.form_submit_button("Investir"):
+                repository.append_transaction({
+                    "Data": d, "Descrição": "Aporte de Investimento",
+                    "Categoria": "Investimento", "Valor": v, "Tipo": "Saída",
+                })
+                st.success("Aporte registrado!")
+                st.rerun()
+
+    with col_out:
+        with st.form("invest_withdraw", clear_on_submit=True):
+            st.markdown("**🏧 Resgate / saque**")
+            d = st.date_input("Data", format="DD/MM/YYYY", key="wd_date")
+            v = st.number_input("Valor (R$)", min_value=0.01, format="%.2f", key="wd_v")
+            if st.form_submit_button("Sacar"):
+                if v > invested:
+                    st.error("Saldo insuficiente nos investimentos.")
+                else:
+                    repository.append_transaction({
+                        "Data": d, "Descrição": "Resgate de Investimento",
+                        "Categoria": "Investimento", "Valor": v, "Tipo": "Entrada",
+                    })
+                    st.success("Saque realizado.")
+                    st.rerun()
+
+
+def _simulator_tab(*, invested: float) -> None:
+    st.subheader("Mágica dos juros compostos")
+    c1, c2 = st.columns(2)
+    years = c1.slider("Tempo (anos):", min_value=1, max_value=30, value=5)
+    annual_rate = c2.number_input(
+        "Taxa anual estimada (%):", min_value=0.0, value=10.0, step=0.5,
+    )
+
+    if invested <= 0:
+        st.warning("Faça seu primeiro aporte para usar o simulador.")
+        return
+
+    rows = []
+    accumulated = invested
+    for year in range(1, years + 1):
+        gain = accumulated * (annual_rate / 100)
+        accumulated += gain
+        rows.append({
+            "Ano": str(year),
+            "Rendimento no Ano (R$)": gain,
+            "Patrimônio Acumulado (R$)": accumulated,
+        })
+    df_proj = pd.DataFrame(rows)
+    components.vertical_bar(
+        df_proj, x="Ano", y="Patrimônio Acumulado (R$)", color=Colors.PRIMARY,
+    )

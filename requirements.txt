@@ -1,6 +1,6 @@
-streamlit
-pandas
-gspread
-oauth2client
-plotly
-requests
+streamlit>=1.36,<2.0
+pandas>=2.2,<3.0
+plotly>=5.22,<6.0
+gspread>=6.1,<7.0
+oauth2client>=4.1,<5.0
+requests>=2.32,<3.0
