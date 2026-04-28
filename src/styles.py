@@ -54,6 +54,18 @@ _CSS = f"""
     }}
     div[data-testid="stMetricValue"] {{
         font-weight: 700;
+        font-size: 1.55rem;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        word-break: break-word;
+        line-height: 1.2;
+    }}
+    /* Caixa interna do valor: alguns temas aplicam ellipsis aqui também. */
+    div[data-testid="stMetricValue"] > div {{
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
     }}
 
     /* Tabs com mais respiro */
