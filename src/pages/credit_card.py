@@ -96,12 +96,13 @@ def _upcoming_invoices_section(df_credit_card: pd.DataFrame,
     upcoming = credit_card.upcoming_invoices(
         df_credit_card, today=today, closing_day=closing_day, months=6,
     )
-    columns = st.columns(6)
+    # Layout 3x2 evita truncar valores quando a sidebar está aberta.
+    rows = [st.columns(3), st.columns(3)]
     for i, (month, total) in enumerate(upcoming):
         suffix = ""
         if i == 0:
             suffix = f" ({credit_card.invoice_phase(today, closing_day, due_day)})"
-        columns[i].metric(f"Fatura {month}{suffix}", brl(total))
+        rows[i // 3][i % 3].metric(f"Fatura {month}{suffix}", brl(total))
 
 
 def _chart_and_form(*, df_credit_card: pd.DataFrame,
