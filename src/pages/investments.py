@@ -87,27 +87,66 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float) -> None:
 
 def _simulator_tab(*, invested: float) -> None:
     st.subheader("Mágica dos juros compostos")
+
     c1, c2 = st.columns(2)
     years = c1.slider("Tempo (anos):", min_value=1, max_value=30, value=5)
-    annual_rate = c2.number_input(
-        "Taxa anual estimada (%):", min_value=0.0, value=10.0, step=0.5,
+    monthly_contribution = c2.number_input(
+        "Aporte mensal (R$):", min_value=0.0, value=0.0, step=50.0,
+        help="Quanto você pretende investir todo mês durante o período.",
     )
 
-    if invested <= 0:
-        st.warning("Faça seu primeiro aporte para usar o simulador.")
+    c3, c4 = st.columns(2)
+    annual_rate = c3.number_input(
+        "Taxa anual bruta estimada (%):",
+        min_value=0.0, value=10.0, step=0.5,
+        help="Rendimento anual antes de descontar imposto.",
+    )
+    apply_ir = c4.checkbox(
+        "Descontar IR de 15% (renda fixa, +720 dias)",
+        value=True,
+        help="IR regressivo da Renda Fixa: 15% sobre o ganho para resgates "
+             "após 720 dias. Para LCI/LCA isentas, desmarque.",
+    )
+
+    if invested <= 0 and monthly_contribution <= 0:
+        st.warning(
+            "Faça seu primeiro aporte ou defina um aporte mensal para simular."
+        )
         return
 
+    # Converte taxa anual em mensal equivalente (juros compostos).
+    monthly_rate = (1 + annual_rate / 100) ** (1 / 12) - 1
+
     rows = []
-    accumulated = invested
+    balance = invested
+    invested_total = invested
     for year in range(1, years + 1):
-        gain = accumulated * (annual_rate / 100)
-        accumulated += gain
+        for _ in range(12):
+            # Rendimento aplicado primeiro, aporte ao fim do mês.
+            balance = balance * (1 + monthly_rate) + monthly_contribution
+            invested_total += monthly_contribution
+
+        gross_gain = max(balance - invested_total, 0.0)
+        ir = gross_gain * 0.15 if apply_ir else 0.0
+        net_balance = balance - ir
+
         rows.append({
             "Ano": str(year),
-            "Rendimento no Ano (R$)": gain,
-            "Patrimônio Acumulado (R$)": accumulated,
+            "Total Investido (R$)": invested_total,
+            "Patrimônio Bruto (R$)": balance,
+            "IR (R$)": ir,
+            "Patrimônio Líquido (R$)": net_balance,
         })
+
     df_proj = pd.DataFrame(rows)
+    final = df_proj.iloc[-1]
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total investido", brl(final["Total Investido (R$)"]))
+    m2.metric("Patrimônio bruto", brl(final["Patrimônio Bruto (R$)"]))
+    m3.metric("IR estimado", brl(final["IR (R$)"]))
+    m4.metric("Patrimônio líquido 💎", brl(final["Patrimônio Líquido (R$)"]))
+
     components.vertical_bar(
-        df_proj, x="Ano", y="Patrimônio Acumulado (R$)", color=Colors.PRIMARY,
+        df_proj, x="Ano", y="Patrimônio Líquido (R$)", color=Colors.PRIMARY,
     )
