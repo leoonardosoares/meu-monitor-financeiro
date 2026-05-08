@@ -9,14 +9,19 @@ import pandas as pd
 def invoice_month_for_purchase(purchase_date: date, closing_day: int) -> pd.Timestamp:
     """Retorna o Timestamp do MÊS de fatura em que a compra cai.
 
-    Compras feitas antes do `closing_day` entram na fatura do mês corrente
-    (que ainda está aberta). A partir do dia de fechamento, vão para o
-    próximo mês.
+    A "Fatura de [mês]" cobre o ciclo que abre no `closing_day` desse mês
+    e vai até o dia anterior ao `closing_day` do mês seguinte. Logo:
+
+    - Compras com `day >= closing_day` entram na fatura do mês corrente
+      (ex.: 08/06 com fechamento dia 8 → fatura de 06/2026).
+    - Compras com `day < closing_day` entram na fatura do mês anterior,
+      que ainda está aberta (ex.: 07/06 com fechamento dia 8 → fatura
+      de 05/2026).
     """
     dt = pd.Timestamp(purchase_date)
     if dt.day < closing_day:
-        return dt
-    return dt + pd.DateOffset(months=1)
+        return dt - pd.DateOffset(months=1)
+    return dt
 
 
 def installments_for_purchase(*, purchase_date: date, description: str,
