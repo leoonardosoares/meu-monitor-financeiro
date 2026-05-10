@@ -25,6 +25,7 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "extrato_bancario": [
         "Data", "Descrição", "Categoria", "Valor", "Tipo", "Conta",
     ],
+    "posicao_investimentos": ["Data", "Valor"],
 }
 
 # Categorias automáticas que sempre aparecem nos selects, mesmo que o

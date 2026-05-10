@@ -170,6 +170,29 @@ def save_fixed_costs(df: pd.DataFrame) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Posições de investimento (snapshots manuais do saldo bruto na corretora)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_investment_positions() -> pd.DataFrame:
+    df = _to_numeric(_read("posicao_investimentos"), ["Valor"])
+    df["Data_DT"] = pd.to_datetime(df.get("Data"), errors="coerce")
+    return df
+
+
+def save_investment_positions(df: pd.DataFrame) -> None:
+    df = df.drop(columns=[c for c in ("Data_DT",) if c in df.columns])
+    _overwrite("posicao_investimentos", df)
+    load_investment_positions.clear()
+
+
+def append_investment_position(row: dict) -> None:
+    df = load_investment_positions().drop(columns=["Data_DT"], errors="ignore")
+    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    save_investment_positions(df)
+
+
+# ---------------------------------------------------------------------------
 # Backup do extrato bancário (Pluggy)
 # ---------------------------------------------------------------------------
 
