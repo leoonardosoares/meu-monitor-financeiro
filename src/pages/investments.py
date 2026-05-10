@@ -1,5 +1,7 @@
-"""Página: Investimentos (reserva, aportes/saques, simulador)."""
+"""Página: Investimentos (reserva, aportes/saques, posição atual, simulador)."""
 from __future__ import annotations
+
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -13,16 +15,23 @@ from src.format import brl
 def render(*, df_transactions: pd.DataFrame) -> None:
     components.page_header(
         "📈 Meus Investimentos",
-        "Reserva de emergência, aportes/saques e simulador de juros compostos.",
+        "Reserva de emergência, aportes/saques, rendimento real e simulador.",
     )
 
-    tab_goals, tab_simulator = st.tabs(["🎯 Metas e Aportes", "🔮 Simulador"])
+    tab_goals, tab_position, tab_simulator = st.tabs([
+        "🎯 Metas e Aportes",
+        "💎 Posição Atual",
+        "🔮 Simulador",
+    ])
 
     wealth = compute_wealth(df_transactions, df_transactions)
     invested = wealth.invested
 
     with tab_goals:
         _goals_tab(df_transactions=df_transactions, invested=invested)
+
+    with tab_position:
+        _position_tab(invested=invested)
 
     with tab_simulator:
         _simulator_tab(invested=invested)
@@ -150,3 +159,92 @@ def _simulator_tab(*, invested: float) -> None:
     components.vertical_bar(
         df_proj, x="Ano", y="Patrimônio Líquido (R$)", color=Colors.PRIMARY,
     )
+
+
+def _position_tab(*, invested: float) -> None:
+    st.subheader("Rendimento real dos investimentos")
+    st.caption(
+        "Atualize aqui o saldo bruto que está hoje na sua corretora ou banco. "
+        "O app compara com o total que você aportou e mostra quanto rendeu."
+    )
+
+    with st.form("new_position", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        position_date = c1.date_input(
+            "Data da posição", value=date.today(), format="DD/MM/YYYY",
+        )
+        position_value = c2.number_input(
+            "Valor atual (R$)", min_value=0.0, format="%.2f",
+            help="Soma de todos os seus investimentos hoje, do jeito que "
+                 "aparece no extrato da corretora/banco.",
+        )
+        if st.form_submit_button("💾 Registrar posição"):
+            repository.append_investment_position({
+                "Data": position_date,
+                "Valor": position_value,
+            })
+            st.success("Posição registrada!")
+            st.rerun()
+
+    df_positions = repository.load_investment_positions()
+    if df_positions.empty:
+        st.info(
+            "Registre sua primeira posição para começar a acompanhar o rendimento."
+        )
+        return
+
+    df_sorted = df_positions.dropna(subset=["Data_DT"]).sort_values("Data_DT")
+    if df_sorted.empty:
+        st.warning("Datas inválidas no histórico — verifique a tabela abaixo.")
+    else:
+        latest = df_sorted.iloc[-1]
+        current_value = float(latest["Valor"])
+        latest_date = latest["Data_DT"].strftime("%d/%m/%Y")
+        returns = current_value - invested
+        returns_pct = (returns / invested * 100) if invested > 0 else 0.0
+        delta_color = "normal" if returns >= 0 else "inverse"
+
+        st.divider()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total aportado", brl(invested))
+        c2.metric(f"Valor atual ({latest_date})", brl(current_value))
+        c3.metric(
+            "Rendimento (R$)", brl(returns),
+            delta=brl(returns), delta_color=delta_color,
+        )
+        if invested > 0:
+            c4.metric(
+                "Rendimento (%)", f"{returns_pct:.2f}%",
+                delta=f"{returns_pct:.2f}%", delta_color=delta_color,
+            )
+        else:
+            c4.metric("Rendimento (%)", "—",
+                      help="Necessário ter aportes registrados.")
+
+        if len(df_sorted) >= 2:
+            st.divider()
+            st.markdown("**📈 Evolução da posição**")
+            df_chart = df_sorted.assign(
+                Data_Formatada=lambda d: d["Data_DT"].dt.strftime("%d/%m/%y")
+            )
+            components.area_balance(
+                df_chart, x="Data_Formatada", y="Valor", color=Colors.PRIMARY,
+            )
+
+    st.divider()
+    st.markdown("**🗂️ Histórico de posições**")
+    st.caption("Edite, corrija ou apague registros antigos.")
+    editable = df_positions.drop(
+        columns=[c for c in ("Data_DT",) if c in df_positions.columns]
+    )
+    with st.form("edit_positions"):
+        edited = st.data_editor(
+            editable, num_rows="dynamic", use_container_width=True,
+        )
+        if st.form_submit_button("💾 Salvar alterações"):
+            if not editable.equals(edited):
+                repository.save_investment_positions(edited)
+                st.success("Histórico salvo.")
+                st.rerun()
+            else:
+                st.info("Nada a salvar — sem alterações.")
