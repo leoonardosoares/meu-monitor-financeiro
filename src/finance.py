@@ -309,7 +309,8 @@ def sankey_data(df_transactions_period: pd.DataFrame,
 
     Estrutura: cada categoria de Entrada alimenta o nó central "Receitas",
     que por sua vez se distribui entre cada categoria de Saída (banco +
-    cartão). Se sobrar dinheiro, vai pro nó "Não Gasto".
+    cartão). Se sobrar dinheiro, vai pro nó "Não Gasto". Categorias são
+    ordenadas pelo valor (maiores primeiro) pra leitura ficar agradável.
 
     Retorna `None` se não houver dados.
     """
@@ -328,19 +329,21 @@ def sankey_data(df_transactions_period: pd.DataFrame,
         card = df_credit_card_period.groupby("Categoria")["Valor"].sum()
         expense_by_cat = expense_by_cat.add(card, fill_value=0)
 
-    total_income = float(income_by_cat.sum())
-    total_expense = float(expense_by_cat.sum())
+    incomes = income_by_cat[income_by_cat > 0].sort_values(ascending=False)
+    expenses = expense_by_cat[expense_by_cat > 0].sort_values(ascending=False)
+    total_income = float(incomes.sum())
+    total_expense = float(expenses.sum())
     if total_income == 0 and total_expense == 0:
         return None
 
-    incomes = income_by_cat[income_by_cat > 0]
-    expenses = expense_by_cat[expense_by_cat > 0]
-
     central = "Receitas Totais"
-    nodes: list[str] = [*incomes.index.tolist(), central, *expenses.index.tolist()]
+    node_labels = list(incomes.index) + [central] + list(expenses.index)
+    node_values = list(incomes.values) + [total_income] + list(expenses.values)
+
     surplus = total_income - total_expense
     if surplus > 0:
-        nodes.append("Não Gasto")
+        node_labels.append("Não Gasto")
+        node_values.append(surplus)
 
     central_idx = len(incomes)
     sources: list[int] = []
@@ -351,17 +354,18 @@ def sankey_data(df_transactions_period: pd.DataFrame,
         sources.append(i)
         targets.append(central_idx)
         values.append(float(value))
-    for j, (_, value) in enumerate(expenses.items()):
+    for j, value in enumerate(expenses.values):
         sources.append(central_idx)
         targets.append(central_idx + 1 + j)
         values.append(float(value))
     if surplus > 0:
         sources.append(central_idx)
-        targets.append(len(nodes) - 1)
+        targets.append(len(node_labels) - 1)
         values.append(float(surplus))
 
     return {
-        "nodes": nodes,
+        "nodes": node_labels,
+        "node_values": node_values,
         "sources": sources,
         "targets": targets,
         "values": values,
