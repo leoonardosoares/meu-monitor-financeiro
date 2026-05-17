@@ -16,7 +16,7 @@ from src import auth, repository, sidebar, styles
 from src.config import APP_ICON, APP_TITLE, SYSTEM_CATEGORIES
 from src.finance import filter_by_month, list_months
 from src.pages import (
-    auto_dashboard, credit_card, dashboard, investments, settings, transactions,
+    credit_card, dashboard, investments, settings, transactions,
 )
 from src.sidebar import PAGES
 
@@ -43,7 +43,7 @@ def main() -> None:
         return
 
     st.title(f"{APP_ICON} {APP_TITLE}")
-    st.caption("Sincronizado com Google Sheets ☁️")
+    st.caption("Controle financeiro pessoal — dados sincronizados no Google Sheets.")
 
     # Carregamento único por rerun (cacheado em repository).
     df_transactions = repository.load_transactions()
@@ -68,30 +68,30 @@ def main() -> None:
             df_transactions_period=df_transactions_period,
             df_credit_card_period=df_credit_card_period,
             df_fixed_costs=df_fixed_costs,
+            df_budgets=df_budgets,
             selected_month=state.selected_month,
         )
-    elif page == PAGES[1]:  # Dashboard Automático 🤖
-        auto_dashboard.render(df_credit_card=df_credit_card)
-    elif page == PAGES[2]:  # Entradas e Saídas
+    elif page == PAGES[1]:  # Entradas e Saídas
         transactions.render(
             df_transactions=df_transactions, categories=categories,
         )
-    elif page == PAGES[3]:  # Cartão de Crédito
+    elif page == PAGES[2]:  # Cartão de Crédito
         credit_card.render(
             df_credit_card=df_credit_card,
             df_credit_card_period=df_credit_card_period,
             categories=categories,
             selected_month=state.selected_month,
         )
-    elif page == PAGES[4]:  # Investimentos
+    elif page == PAGES[3]:  # Investimentos
         investments.render(df_transactions=df_transactions)
-    elif page == PAGES[5]:  # Configurações e Orçamento
+    elif page == PAGES[4]:  # Configurações e Orçamento
         settings.render(
             df_categories=df_categories,
             df_budgets=df_budgets,
             df_fixed_costs=df_fixed_costs,
             df_transactions_period=df_transactions_period,
             df_credit_card_period=df_credit_card_period,
+            categories=categories,
             selected_month=state.selected_month,
         )
 

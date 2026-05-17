@@ -161,7 +161,16 @@ def save_budgets(df: pd.DataFrame) -> None:
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def load_fixed_costs() -> pd.DataFrame:
-    return _to_numeric(_read("custos_fixos"), ["Valor"])
+    df = _to_numeric(_read("custos_fixos"), ["Valor"])
+    # Migração suave: planilhas antigas não tinham Categoria.
+    if "Categoria" not in df.columns:
+        df["Categoria"] = "Outros"
+    # Garante ordem das colunas esperada pelo editor.
+    columns = ["Descrição", "Categoria", "Valor"]
+    for col in columns:
+        if col not in df.columns:
+            df[col] = "" if col != "Valor" else 0.0
+    return df[columns]
 
 
 def save_fixed_costs(df: pd.DataFrame) -> None:
@@ -193,8 +202,16 @@ def append_investment_position(row: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backup do extrato bancário (Pluggy)
+# Alocação de investimentos por classe
 # ---------------------------------------------------------------------------
 
-def save_bank_extract(df: pd.DataFrame) -> None:
-    _overwrite("extrato_bancario", df)
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_investment_allocation() -> pd.DataFrame:
+    return _to_numeric(
+        _read("alocacao_investimentos"), ["Valor", "Meta (%)"],
+    )
+
+
+def save_investment_allocation(df: pd.DataFrame) -> None:
+    _overwrite("alocacao_investimentos", df)
+    load_investment_allocation.clear()

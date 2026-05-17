@@ -21,11 +21,9 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "configuracoes": ["chave", "valor"],
     "categorias": ["Categoria"],
     "orcamentos": ["Categoria", "Limite"],
-    "custos_fixos": ["Descrição", "Valor"],
-    "extrato_bancario": [
-        "Data", "Descrição", "Categoria", "Valor", "Tipo", "Conta",
-    ],
+    "custos_fixos": ["Descrição", "Categoria", "Valor"],
     "posicao_investimentos": ["Data", "Valor"],
+    "alocacao_investimentos": ["Classe", "Valor", "Meta (%)"],
 }
 
 # Categorias automáticas que sempre aparecem nos selects, mesmo que o

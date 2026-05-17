@@ -11,7 +11,6 @@ ALL_MONTHS = "Todos os Meses"
 
 PAGES = [
     "Dashboard",
-    "Dashboard Automático 🤖",
     "Entradas e Saídas",
     "Cartão de Crédito",
     "Investimentos",
