@@ -1,9 +1,10 @@
-"""Página: Investimentos (reserva, aportes/saques, posição atual, simulador)."""
+"""Página: Investimentos (reserva, aportes/saques, posição, carteira, simulador)."""
 from __future__ import annotations
 
 from datetime import date
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from src import components, repository
@@ -14,26 +15,28 @@ from src.format import brl
 
 def render(*, df_transactions: pd.DataFrame) -> None:
     components.page_header(
-        "📈 Meus Investimentos",
-        "Reserva de emergência, aportes/saques, rendimento real e simulador.",
+        "Meus Investimentos",
+        "Reserva de emergência, aportes/saques, rendimento real, carteira "
+        "por classe de ativo e simulador de juros compostos.",
     )
 
-    tab_goals, tab_position, tab_simulator = st.tabs([
+    tabs = st.tabs([
         "🎯 Metas e Aportes",
         "💎 Posição Atual",
+        "🧩 Carteira por Classe",
         "🔮 Simulador",
     ])
 
     wealth = compute_wealth(df_transactions, df_transactions)
     invested = wealth.invested
 
-    with tab_goals:
+    with tabs[0]:
         _goals_tab(df_transactions=df_transactions, invested=invested)
-
-    with tab_position:
+    with tabs[1]:
         _position_tab(invested=invested)
-
-    with tab_simulator:
+    with tabs[2]:
+        _portfolio_tab()
+    with tabs[3]:
         _simulator_tab(invested=invested)
 
 
@@ -248,3 +251,114 @@ def _position_tab(*, invested: float) -> None:
                 st.rerun()
             else:
                 st.info("Nada a salvar — sem alterações.")
+
+
+def _portfolio_tab() -> None:
+    st.subheader("Alocação por classe de ativo")
+    st.caption(
+        "Distribua seus investimentos entre classes (Renda Fixa, Ações, FIIs, "
+        "Cripto, etc.) e defina uma meta de alocação ideal. O app calcula o "
+        "desvio entre real e meta e avisa quando algo está fora do alvo."
+    )
+
+    df_alloc = repository.load_investment_allocation()
+    default_classes = ["Renda Fixa", "Ações", "FIIs", "Cripto", "Internacional"]
+    if df_alloc.empty:
+        df_alloc = pd.DataFrame(
+            {"Classe": default_classes,
+             "Valor": [0.0] * len(default_classes),
+             "Meta (%)": [0.0] * len(default_classes)}
+        )
+
+    with st.form("edit_allocation"):
+        edited = st.data_editor(
+            df_alloc, num_rows="dynamic", use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Valor": st.column_config.NumberColumn(
+                    "Valor (R$)", min_value=0.0, format="%.2f",
+                ),
+                "Meta (%)": st.column_config.NumberColumn(
+                    "Meta (%)", min_value=0.0, max_value=100.0, format="%.0f",
+                ),
+            },
+        )
+        if st.form_submit_button("💾 Salvar carteira"):
+            repository.save_investment_allocation(edited)
+            st.success("Carteira salva.")
+            st.rerun()
+
+    clean = edited.dropna(subset=["Classe"]).copy() if not edited.empty else edited
+    clean = clean[clean["Classe"].astype(str).str.strip() != ""] if not clean.empty else clean
+    clean["Valor"] = pd.to_numeric(clean.get("Valor"), errors="coerce").fillna(0)
+    clean["Meta (%)"] = pd.to_numeric(clean.get("Meta (%)"), errors="coerce").fillna(0)
+
+    total = float(clean["Valor"].sum())
+    meta_total = float(clean["Meta (%)"].sum())
+
+    if total <= 0:
+        st.info("Preencha os valores de cada classe para ver gráficos e alertas.")
+        return
+
+    st.divider()
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.markdown("**Distribuição atual**")
+        fig = px.pie(
+            clean[clean["Valor"] > 0], values="Valor", names="Classe", hole=0.45,
+            color_discrete_sequence=px.colors.qualitative.Set2,
+        )
+        fig.update_traces(textinfo="percent+label", textposition="inside")
+        fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    with c2:
+        st.markdown("**Atual × Meta**")
+        clean["% Atual"] = clean["Valor"] / total * 100
+        comparison = clean.melt(
+            id_vars="Classe", value_vars=["% Atual", "Meta (%)"],
+            var_name="Tipo", value_name="Percentual",
+        )
+        fig2 = px.bar(
+            comparison, x="Percentual", y="Classe", color="Tipo", barmode="group",
+            orientation="h",
+            color_discrete_map={"% Atual": Colors.PRIMARY, "Meta (%)": Colors.NEUTRAL},
+        )
+        fig2.update_layout(
+            margin=dict(t=10, b=10, l=10, r=10),
+            legend_title_text="",
+            xaxis_title="%", yaxis_title="",
+        )
+        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
+    # Alertas de desvio (só se a meta total bate 100%)
+    if abs(meta_total - 100) > 1:
+        st.warning(
+            f"As metas somam **{meta_total:.0f}%** — ajuste para somar 100% "
+            "para receber recomendações de rebalanceamento."
+        )
+        return
+
+    st.markdown("**Recomendações de rebalanceamento**")
+    deviations = []
+    for _, row in clean.iterrows():
+        target_value = total * row["Meta (%)"] / 100
+        diff = row["Valor"] - target_value
+        if abs(diff) < total * 0.02:  # ignora desvios menores que 2%
+            continue
+        deviations.append((row["Classe"], diff))
+
+    if not deviations:
+        st.success("✅ Sua carteira está dentro do alvo. Mantenha o ritmo.")
+        return
+    for classe, diff in sorted(deviations, key=lambda x: -abs(x[1])):
+        if diff > 0:
+            st.warning(
+                f"📉 **{classe}**: {brl(diff)} acima da meta. "
+                "Considere direcionar próximos aportes para outras classes."
+            )
+        else:
+            st.info(
+                f"📈 **{classe}**: {brl(abs(diff))} abaixo da meta. "
+                "Vale aportar mais nessa classe."
+            )
