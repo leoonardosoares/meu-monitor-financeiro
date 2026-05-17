@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 import streamlit as st
 
@@ -35,7 +36,13 @@ def render(months: list[str]) -> SidebarState:
 
     st.sidebar.divider()
     st.sidebar.subheader("Filtro de mês")
-    month = st.sidebar.selectbox("Período:", [ALL_MONTHS, *months], index=0)
+    current_month = date.today().strftime("%m/%Y")
+    # Garante que o mês atual sempre apareça no select, mesmo que ainda
+    # não haja lançamentos.
+    available = sorted(set(months) | {current_month}, reverse=True)
+    options = [ALL_MONTHS, *available]
+    default_idx = options.index(current_month)
+    month = st.sidebar.selectbox("Período:", options, index=default_idx)
 
     st.sidebar.divider()
     st.sidebar.subheader("Navegação")
