@@ -1,6 +1,8 @@
 """Página: Configurações e Orçamento."""
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
@@ -14,14 +16,15 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
            df_fixed_costs: pd.DataFrame,
            df_transactions_period: pd.DataFrame,
            df_credit_card_period: pd.DataFrame,
+           categories: list[str],
            selected_month: str) -> None:
     components.page_header(
-        "⚙️ Configurações e Orçamento",
-        "Personalize categorias, orçamentos, regras do cartão e projeções.",
+        "Configurações e Orçamento",
+        "Personalize categorias, orçamentos, regras do cartão e custos fixos.",
     )
 
     tabs = st.tabs([
-        "🏷️ Categorias", "🎯 Orçamento", "💳 Regras do Cartão", "🔮 Projeção Fixa",
+        "Categorias", "Orçamento", "Regras do Cartão", "Custos Fixos",
     ])
 
     with tabs[0]:
@@ -36,7 +39,7 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
     with tabs[2]:
         _card_rules_tab()
     with tabs[3]:
-        _projection_tab(df_fixed_costs)
+        _fixed_costs_tab(df_fixed_costs, categories=categories)
 
 
 def _categories_tab(df_categories: pd.DataFrame) -> None:
@@ -45,6 +48,7 @@ def _categories_tab(df_categories: pd.DataFrame) -> None:
     with st.form("edit_categories"):
         edited = st.data_editor(
             df_categories, num_rows="dynamic", use_container_width=True,
+            hide_index=True,
         )
         if st.form_submit_button("💾 Salvar categorias"):
             if not df_categories.equals(edited):
@@ -66,6 +70,7 @@ def _budgets_tab(*, df_budgets: pd.DataFrame,
         with st.form("edit_budgets"):
             edited = st.data_editor(
                 df_budgets, num_rows="dynamic", use_container_width=True,
+                hide_index=True,
             )
             if st.form_submit_button("💾 Salvar orçamentos"):
                 if not df_budgets.equals(edited):
@@ -77,7 +82,7 @@ def _budgets_tab(*, df_budgets: pd.DataFrame,
         if selected_month == ALL_MONTHS:
             st.info("Selecione um mês na sidebar para ver o progresso do orçamento.")
             return
-        st.subheader(f"📊 Progresso em {selected_month}")
+        st.subheader(f"Progresso em {selected_month}")
         _render_budget_progress(
             df_budgets=df_budgets,
             df_transactions_period=df_transactions_period,
@@ -118,7 +123,7 @@ def _render_budget_progress(*, df_budgets: pd.DataFrame,
             st.warning(f"⚠️ {line} (quase lá)")
             st.progress(ratio)
         else:
-            st.success(f"✅ {line} (tranquilo)")
+            st.success(f"{line} (tranquilo)")
             st.progress(ratio)
 
     if not has_valid_budget:
@@ -152,7 +157,8 @@ def _card_rules_tab() -> None:
         st.rerun()
 
 
-def _projection_tab(df_fixed_costs: pd.DataFrame) -> None:
+def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,
+                      categories: list[str]) -> None:
     st.subheader("Receita base mensal")
     current = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
     new_income = st.number_input(
@@ -166,10 +172,23 @@ def _projection_tab(df_fixed_costs: pd.DataFrame) -> None:
 
     st.divider()
     st.subheader("Custos fixos mensais")
-    st.caption("Adicione ou edite custos e clique em salvar.")
+    st.caption(
+        "Cadastre suas despesas recorrentes. Depois use o botão "
+        "**Gerar lançamentos do mês** para criar todas as transações de uma vez."
+    )
+
     with st.form("edit_fixed_costs"):
         edited = st.data_editor(
             df_fixed_costs, num_rows="dynamic", use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria", options=categories, required=False,
+                ),
+                "Valor": st.column_config.NumberColumn(
+                    "Valor", format="%.2f", min_value=0.0,
+                ),
+            },
         )
         if st.form_submit_button("💾 Salvar custos fixos"):
             if not df_fixed_costs.equals(edited):
@@ -183,3 +202,59 @@ def _projection_tab(df_fixed_costs: pd.DataFrame) -> None:
                         st.code(exc.response.text)
                     else:
                         st.error(str(exc))
+
+    st.divider()
+    _generate_fixed_costs_section(df_fixed_costs)
+
+
+def _generate_fixed_costs_section(df_fixed_costs: pd.DataFrame) -> None:
+    st.subheader("Gerar lançamentos automáticos do mês")
+    st.caption(
+        "Cria uma transação de Saída em cada custo fixo cadastrado. "
+        "Útil pra automatizar aluguel, condomínio, assinaturas, etc."
+    )
+
+    valid_costs = df_fixed_costs[
+        (df_fixed_costs["Valor"].fillna(0) > 0) &
+        (df_fixed_costs["Descrição"].fillna("").astype(str).str.strip() != "")
+    ]
+    if valid_costs.empty:
+        st.info("Cadastre custos fixos acima primeiro.")
+        return
+
+    c1, c2 = st.columns([1, 2])
+    lancamento_data = c1.date_input(
+        "Data dos lançamentos", value=date.today(), format="DD/MM/YYYY",
+    )
+    total = float(valid_costs["Valor"].sum())
+    c2.metric(
+        f"Total a lançar ({len(valid_costs)} itens)", brl(total),
+    )
+
+    with st.expander("Pré-visualizar lançamentos"):
+        preview = valid_costs.copy()
+        preview["Valor (R$)"] = preview["Valor"].apply(brl)
+        st.dataframe(
+            preview[["Descrição", "Categoria", "Valor (R$)"]],
+            use_container_width=True, hide_index=True,
+        )
+
+    if st.button("🚀 Gerar lançamentos agora", type="primary"):
+        df_current = repository.load_transactions().drop(
+            columns=["Data_DT", "Mes_Ano"], errors="ignore",
+        )
+        new_rows = []
+        for _, row in valid_costs.iterrows():
+            new_rows.append({
+                "Data": lancamento_data,
+                "Descrição": str(row["Descrição"]).strip(),
+                "Categoria": row.get("Categoria") or "Outros",
+                "Valor": float(row["Valor"]),
+                "Tipo": "Saída",
+            })
+        merged = pd.concat(
+            [df_current, pd.DataFrame(new_rows)], ignore_index=True,
+        )
+        repository.save_transactions(merged)
+        st.success(f"{len(new_rows)} lançamentos criados em {lancamento_data:%d/%m/%Y}.")
+        st.rerun()

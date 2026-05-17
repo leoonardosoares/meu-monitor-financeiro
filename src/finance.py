@@ -6,7 +6,9 @@ contexto.
 """
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
+from datetime import date
 
 import pandas as pd
 
@@ -149,3 +151,243 @@ def filter_by_month(df_transactions: pd.DataFrame,
     df_c = df_credit_card[df_credit_card["Mês da Fatura"] == month] \
         if not df_credit_card.empty else df_credit_card
     return df_t, df_c
+
+
+# ---------------------------------------------------------------------------
+# Indicadores de saúde financeira
+# ---------------------------------------------------------------------------
+
+def savings_rate(income: float, expense: float) -> float:
+    """Taxa de poupança em %: quanto da renda sobrou.
+
+    Ex.: income=5000, expense=3500 -> 30.0
+    Retorna 0.0 se a renda for zero (evita divisão por zero).
+    """
+    if income <= 0:
+        return 0.0
+    return (income - expense) / income * 100
+
+
+def avg_monthly_expense(df_transactions: pd.DataFrame, *, months: int = 6) -> float:
+    """Despesa mensal média dos últimos N meses (com data válida)."""
+    if df_transactions.empty:
+        return 0.0
+    df = df_transactions[df_transactions["Tipo"] == "Saída"].copy()
+    if df.empty:
+        return 0.0
+    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df = df.dropna(subset=["Data_DT"])
+    if df.empty:
+        return 0.0
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+    recent = df[df["Data_DT"] >= cutoff]
+    if recent.empty:
+        return 0.0
+    return float(recent["Valor"].sum()) / months
+
+
+def financial_independence_months(emergency_fund: float,
+                                  avg_monthly_expense_value: float) -> float:
+    """Quantos meses o fundo de emergência cobre as despesas médias."""
+    if avg_monthly_expense_value <= 0:
+        return 0.0
+    return emergency_fund / avg_monthly_expense_value
+
+
+# ---------------------------------------------------------------------------
+# Comparação mês-a-mês
+# ---------------------------------------------------------------------------
+
+def previous_month(month_str: str) -> str:
+    """'05/2026' -> '04/2026'. Funciona com virada de ano."""
+    dt = pd.to_datetime(month_str, format="%m/%Y")
+    prev = dt - pd.DateOffset(months=1)
+    return prev.strftime("%m/%Y")
+
+
+def pct_change(current: float, previous: float) -> float | None:
+    """Variação percentual. Retorna None se o anterior for zero ou negativo."""
+    if previous is None or previous <= 0:
+        return None
+    return (current - previous) / previous * 100
+
+
+# ---------------------------------------------------------------------------
+# Velocidade de gasto do mês corrente
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SpendingVelocity:
+    days_passed: int
+    days_in_month: int
+    spent_so_far: float
+    daily_avg: float
+    projected_month_end: float
+
+
+def spending_velocity(df_transactions_period: pd.DataFrame, *,
+                      today: date | None = None) -> SpendingVelocity | None:
+    """Análise de ritmo de gastos do mês corrente.
+
+    Retorna `None` se não houver transações suficientes ou se o período
+    selecionado não for o mês atual.
+    """
+    if df_transactions_period.empty:
+        return None
+
+    today = today or date.today()
+    df = df_transactions_period[df_transactions_period["Tipo"] == "Saída"].copy()
+    if df.empty:
+        return None
+    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df = df.dropna(subset=["Data_DT"])
+    if df.empty:
+        return None
+
+    # Só faz sentido projetar se o período é o mês atual.
+    if not (df["Data_DT"].dt.month == today.month).any() or \
+       not (df["Data_DT"].dt.year == today.year).any():
+        return None
+
+    days_in_month = calendar.monthrange(today.year, today.month)[1]
+    days_passed = max(today.day, 1)
+    spent = float(df["Valor"].sum())
+    daily_avg = spent / days_passed
+    projected = daily_avg * days_in_month
+
+    return SpendingVelocity(
+        days_passed=days_passed,
+        days_in_month=days_in_month,
+        spent_so_far=spent,
+        daily_avg=daily_avg,
+        projected_month_end=projected,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Visão anual (últimos 12 meses)
+# ---------------------------------------------------------------------------
+
+def monthly_summary(df_transactions: pd.DataFrame, *,
+                    months: int = 12,
+                    today: date | None = None) -> pd.DataFrame:
+    """Receitas e despesas agregadas dos últimos N meses.
+
+    Inclui meses sem movimentação (preenche com zero). Útil pro gráfico
+    de barras anuais.
+    """
+    today = today or date.today()
+    anchor = pd.Timestamp(year=today.year, month=today.month, day=1)
+    month_starts = [
+        (anchor - pd.DateOffset(months=i)).strftime("%m/%Y")
+        for i in range(months)
+    ][::-1]
+
+    rows = []
+    if df_transactions.empty or "Mes_Ano" not in df_transactions.columns:
+        for m in month_starts:
+            rows.append({"Mes_Ano": m, "Receitas": 0.0, "Despesas": 0.0})
+        return pd.DataFrame(rows)
+
+    grouped = (
+        df_transactions.groupby(["Mes_Ano", "Tipo"])["Valor"].sum().unstack(fill_value=0)
+    )
+    for m in month_starts:
+        income = float(grouped.at[m, "Entrada"]) if (m in grouped.index and "Entrada" in grouped.columns) else 0.0
+        expense = float(grouped.at[m, "Saída"]) if (m in grouped.index and "Saída" in grouped.columns) else 0.0
+        rows.append({"Mes_Ano": m, "Receitas": income, "Despesas": expense})
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Sankey: fontes de renda -> categorias de despesa
+# ---------------------------------------------------------------------------
+
+def sankey_data(df_transactions_period: pd.DataFrame,
+                df_credit_card_period: pd.DataFrame) -> dict | None:
+    """Monta dados para o gráfico Sankey (Plotly go.Sankey).
+
+    Estrutura: cada categoria de Entrada alimenta o nó central "Receitas",
+    que por sua vez se distribui entre cada categoria de Saída (banco +
+    cartão). Se sobrar dinheiro, vai pro nó "Não Gasto".
+
+    Retorna `None` se não houver dados.
+    """
+    if df_transactions_period.empty:
+        return None
+
+    income_by_cat = (
+        df_transactions_period[df_transactions_period["Tipo"] == "Entrada"]
+        .groupby("Categoria")["Valor"].sum()
+    )
+    expense_by_cat = (
+        df_transactions_period[df_transactions_period["Tipo"] == "Saída"]
+        .groupby("Categoria")["Valor"].sum()
+    )
+    if not df_credit_card_period.empty:
+        card = df_credit_card_period.groupby("Categoria")["Valor"].sum()
+        expense_by_cat = expense_by_cat.add(card, fill_value=0)
+
+    total_income = float(income_by_cat.sum())
+    total_expense = float(expense_by_cat.sum())
+    if total_income == 0 and total_expense == 0:
+        return None
+
+    incomes = income_by_cat[income_by_cat > 0]
+    expenses = expense_by_cat[expense_by_cat > 0]
+
+    central = "Receitas Totais"
+    nodes: list[str] = [*incomes.index.tolist(), central, *expenses.index.tolist()]
+    surplus = total_income - total_expense
+    if surplus > 0:
+        nodes.append("Não Gasto")
+
+    central_idx = len(incomes)
+    sources: list[int] = []
+    targets: list[int] = []
+    values: list[float] = []
+
+    for i, value in enumerate(incomes.values):
+        sources.append(i)
+        targets.append(central_idx)
+        values.append(float(value))
+    for j, (_, value) in enumerate(expenses.items()):
+        sources.append(central_idx)
+        targets.append(central_idx + 1 + j)
+        values.append(float(value))
+    if surplus > 0:
+        sources.append(central_idx)
+        targets.append(len(nodes) - 1)
+        values.append(float(surplus))
+
+    return {
+        "nodes": nodes,
+        "sources": sources,
+        "targets": targets,
+        "values": values,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auto-sugestão de categoria
+# ---------------------------------------------------------------------------
+
+def suggest_category(description: str, df_transactions: pd.DataFrame) -> str | None:
+    """Sugere uma categoria baseada no histórico de descrições parecidas.
+
+    Estratégia simples (e suficientemente útil): procura por descrições que
+    contenham o trecho digitado (case-insensitive). Se achar, retorna a
+    categoria mais frequente entre os matches. Sem match → None.
+    """
+    if not description or df_transactions.empty:
+        return None
+    needle = description.strip().lower()
+    if len(needle) < 3:
+        return None
+    if "Descrição" not in df_transactions.columns:
+        return None
+    descs = df_transactions["Descrição"].fillna("").astype(str).str.lower()
+    matches = df_transactions[descs.str.contains(needle, na=False)]
+    if matches.empty:
+        return None
+    return matches["Categoria"].mode().iloc[0] if not matches["Categoria"].mode().empty else None

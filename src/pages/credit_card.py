@@ -15,7 +15,7 @@ from src.sidebar import ALL_MONTHS
 def render(*, df_credit_card: pd.DataFrame, df_credit_card_period: pd.DataFrame,
            categories: list[str], selected_month: str) -> None:
     components.page_header(
-        "💳 Cartão de Crédito",
+        "Cartão de Crédito",
         "Acompanhe parcelas, faturas e limite disponível.",
     )
 
@@ -59,11 +59,11 @@ def _limit_section(df_credit_card: pd.DataFrame) -> None:
 
 
 def _pay_invoice_section(df_credit_card: pd.DataFrame) -> None:
-    st.subheader("💲 Pagar Fatura")
+    st.subheader("Pagar fatura")
     pending_months = credit_card.pending_invoices(df_credit_card)
 
     if not pending_months:
-        st.success("🎉 Nenhuma fatura pendente.")
+        st.success("Nenhuma fatura pendente.")
         return
 
     c1, c2, c3 = st.columns([2, 2, 2])
@@ -91,7 +91,7 @@ def _pay_invoice_section(df_credit_card: pd.DataFrame) -> None:
 
 def _upcoming_invoices_section(df_credit_card: pd.DataFrame,
                                 closing_day: int, due_day: int) -> None:
-    st.subheader("🗓️ Próximas faturas")
+    st.subheader("Próximas faturas")
     today = pd.Timestamp(date.today())
     upcoming = credit_card.upcoming_invoices(
         df_credit_card, today=today, closing_day=closing_day, months=6,
@@ -113,7 +113,7 @@ def _chart_and_form(*, df_credit_card: pd.DataFrame,
 
     with left:
         period_label = f" ({selected_month})" if selected_month != ALL_MONTHS else ""
-        st.subheader(f"📊 Gastos por categoria{period_label}")
+        st.subheader(f"Gastos por categoria{period_label}")
         if df_credit_card_period.empty:
             st.info("Nenhuma compra de cartão neste período.")
         else:
@@ -125,7 +125,7 @@ def _chart_and_form(*, df_credit_card: pd.DataFrame,
             )
 
     with right:
-        st.subheader("🛒 Lançar compra")
+        st.subheader("Lançar compra")
         with st.form("new_card_purchase", clear_on_submit=True):
             purchase_date = st.date_input("Data da compra", format="DD/MM/YYYY")
             description = st.text_input("Descrição")
@@ -154,7 +154,7 @@ def _chart_and_form(*, df_credit_card: pd.DataFrame,
 
 
 def _editor_section(df_credit_card: pd.DataFrame) -> None:
-    st.subheader("🧾 Extrato completo do cartão")
+    st.subheader("Extrato completo do cartão")
     st.caption("Edite as linhas livremente e clique em salvar.")
     with st.form("edit_credit_card"):
         edited = st.data_editor(
