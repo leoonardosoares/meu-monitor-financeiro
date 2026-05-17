@@ -6,10 +6,12 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src import components, repository
+from src import components, insights, repository
 from src.config import FIXED_EXPENSE_CATEGORIES, ConfigKeys
 from src.finance import (
-    compute_wealth, daily_flow, expenses_by_category,
+    avg_monthly_expense, compute_wealth, daily_flow, expenses_by_category,
+    financial_independence_months, monthly_summary, pct_change,
+    previous_month, sankey_data, savings_rate, spending_velocity,
 )
 from src.format import brl
 from src.sidebar import ALL_MONTHS
@@ -19,24 +21,46 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
            df_transactions_period: pd.DataFrame,
            df_credit_card_period: pd.DataFrame,
            df_fixed_costs: pd.DataFrame,
+           df_budgets: pd.DataFrame,
            selected_month: str) -> None:
     period_label = (f"({selected_month})" if selected_month != ALL_MONTHS
-                    else "(Todo o Período)")
+                    else "(todo o período)")
     components.page_header(
-        f"📊 Resumo {period_label}",
-        "Visão consolidada do seu mês e do patrimônio acumulado.",
+        f"Resumo {period_label}",
+        "Visão consolidada do mês, comparação com o mês anterior e "
+        "projeção do próximo período.",
     )
 
-    wealth = compute_wealth(df_transactions, df_transactions_period)
+    # ── Insights automáticos ────────────────────────────────────────────────
+    auto_insights = insights.generate(
+        df_transactions=df_transactions,
+        df_credit_card=df_credit_card,
+        df_budgets=df_budgets,
+        selected_month=selected_month,
+    )
+    if auto_insights:
+        components.insight_chips(auto_insights)
+        st.write("")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Receitas do Período", brl(wealth.total_income))
-    c2.metric("Despesas do Período", brl(wealth.total_expense))
-    c3.metric("Saldo Bancário Total", brl(wealth.bank_balance))
-    c4.metric("Patrimônio Total 💎", brl(wealth.net_worth))
+    # ── Velocidade de gasto (só se o mês corrente está selecionado) ────────
+    _spending_velocity_section(df_transactions_period, df_budgets)
+
+    # ── KPIs principais com delta MoM ──────────────────────────────────────
+    _kpi_section(df_transactions, df_transactions_period, selected_month)
+
+    # ── Indicadores de saúde financeira ────────────────────────────────────
+    _health_section(df_transactions, df_transactions_period)
 
     st.divider()
 
+    # ── Visão anual: últimos 12 meses ──────────────────────────────────────
+    st.subheader("Visão anual (últimos 12 meses)")
+    df_annual = monthly_summary(df_transactions, months=12)
+    components.annual_bars(df_annual)
+
+    st.divider()
+
+    # ── Projeção próximo mês ───────────────────────────────────────────────
     _projection_section(
         df_credit_card=df_credit_card,
         df_fixed_costs=df_fixed_costs,
@@ -44,35 +68,154 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
     )
 
     st.divider()
-    st.subheader("📉 Análise Gráfica do Período")
 
+    # ── Sankey: fluxo financeiro ───────────────────────────────────────────
+    st.subheader("Fluxo financeiro do período")
+    st.caption("De onde o dinheiro vem e para onde vai.")
+    components.sankey_flow(
+        sankey_data(df_transactions_period, df_credit_card_period),
+    )
+
+    st.divider()
+
+    # ── Análises gráficas do período ───────────────────────────────────────
+    st.subheader("Análise gráfica do período")
     df_daily, df_cumulative = daily_flow(df_transactions_period)
     col1, col2 = st.columns([1, 1.2])
     with col1:
-        st.markdown("**Despesas variáveis (rosca)**")
+        st.markdown("**Despesas variáveis**")
         df_pie = expenses_by_category(
             df_transactions_period, df_credit_card_period,
             exclude=FIXED_EXPENSE_CATEGORIES,
         )
         components.donut_by_category(
-            df_pie, empty_msg="Nenhuma despesa variável neste período.",
+            df_pie, empty_msg="Sem despesas variáveis neste período.",
         )
     with col2:
-        st.markdown("**Evolução diária de entradas e saídas**")
+        st.markdown("**Evolução diária**")
         components.line_income_vs_expense(df_daily)
 
-    st.markdown("**🌊 Volume acumulado: receitas × despesas**")
+    st.markdown("**Volume acumulado: receitas × despesas**")
     components.area_cumulative(df_cumulative)
 
-    st.markdown("**🍩 Despesas por categoria (banco + cartão)**")
+    st.markdown("**Despesas por categoria (banco + cartão)**")
     df_total = expenses_by_category(df_transactions_period, df_credit_card_period)
     components.horizontal_bar_expenses(df_total)
+
+
+# ---------------------------------------------------------------------------
+# Seções internas
+# ---------------------------------------------------------------------------
+
+def _spending_velocity_section(df_period: pd.DataFrame, df_budgets: pd.DataFrame) -> None:
+    velocity = spending_velocity(df_period)
+    if velocity is None:
+        return
+    days_remaining = max(velocity.days_in_month - velocity.days_passed, 0)
+    total_budget = float(df_budgets["Limite"].fillna(0).sum()) if not df_budgets.empty else 0.0
+    over_budget = velocity.projected_month_end - total_budget if total_budget > 0 else None
+
+    with st.container(border=True):
+        cols = st.columns([3, 2, 2])
+        with cols[0]:
+            st.markdown("**⏱️ Ritmo do mês**")
+            st.caption(
+                f"{velocity.days_passed} de {velocity.days_in_month} dias passados — "
+                f"restam {days_remaining} dias."
+            )
+        cols[1].metric("Gasto até hoje", brl(velocity.spent_so_far),
+                       delta=f"{brl(velocity.daily_avg)}/dia",
+                       delta_color="off")
+        if over_budget is not None and over_budget > 0:
+            cols[2].metric("Projeção de fim do mês",
+                           brl(velocity.projected_month_end),
+                           delta=f"+{brl(over_budget)} acima do orçamento",
+                           delta_color="inverse")
+        else:
+            cols[2].metric("Projeção de fim do mês",
+                           brl(velocity.projected_month_end))
+
+
+def _kpi_section(df_all: pd.DataFrame, df_period: pd.DataFrame,
+                  selected_month: str) -> None:
+    wealth_current = compute_wealth(df_all, df_period)
+
+    # Comparação com mês anterior (só se um mês específico está selecionado)
+    if selected_month != ALL_MONTHS:
+        prev = previous_month(selected_month)
+        df_prev = df_all[df_all["Mes_Ano"] == prev]
+        wealth_prev = compute_wealth(df_all, df_prev)
+        prev_income = wealth_prev.total_income
+        prev_expense = wealth_prev.total_expense
+    else:
+        prev_income = None
+        prev_expense = None
+
+    c1, c2, c3, c4 = st.columns(4)
+    components.metric_with_delta(
+        c1, label="Receitas do período",
+        value=wealth_current.total_income, previous=prev_income,
+        higher_is_better=True,
+    )
+    components.metric_with_delta(
+        c2, label="Despesas do período",
+        value=wealth_current.total_expense, previous=prev_expense,
+        higher_is_better=False,
+    )
+    c3.metric("Saldo bancário", brl(wealth_current.bank_balance))
+    c4.metric("Patrimônio total 💎", brl(wealth_current.net_worth))
+
+
+def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
+    income = df_period.loc[df_period["Tipo"] == "Entrada", "Valor"].sum() if not df_period.empty else 0.0
+    expense = df_period.loc[df_period["Tipo"] == "Saída", "Valor"].sum() if not df_period.empty else 0.0
+    rate = savings_rate(float(income), float(expense))
+
+    avg_expense = avg_monthly_expense(df_all, months=6)
+    # Reserva de emergência: aportes na meta da reserva, limitado pela meta
+    wealth = compute_wealth(df_all, df_all)
+    reserve_goal = repository.load_config(ConfigKeys.META_RESERVA, 10000.0)
+    reserve_value = min(wealth.invested, reserve_goal)
+    fi_months = financial_independence_months(reserve_value, avg_expense)
+
+    # Comprometimento da renda (despesas / receitas globais)
+    income_global = df_all.loc[df_all["Tipo"] == "Entrada", "Valor"].sum() if not df_all.empty else 0.0
+    expense_global = df_all.loc[df_all["Tipo"] == "Saída", "Valor"].sum() if not df_all.empty else 0.0
+    commitment = (expense_global / income_global * 100) if income_global > 0 else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(
+        "Taxa de poupança",
+        f"{rate:.0f}%",
+        delta=("Ideal ≥ 20%" if rate >= 20 else
+               ("Abaixo do ideal" if rate >= 0 else "Déficit")),
+        delta_color="normal" if rate >= 20 else "inverse",
+    )
+    c2.metric(
+        "Independência financeira",
+        f"{fi_months:.1f} meses" if avg_expense > 0 else "—",
+        delta="Quanto sua reserva cobre",
+        delta_color="off",
+        help="Reserva atual ÷ despesa mensal média (últimos 6 meses).",
+    )
+    c3.metric(
+        "Fluxo líquido do período",
+        brl(float(income) - float(expense)),
+        delta=("Sobrou" if float(income) >= float(expense) else "Faltou"),
+        delta_color="normal" if float(income) >= float(expense) else "inverse",
+    )
+    c4.metric(
+        "Comprometimento da renda",
+        f"{commitment:.0f}%",
+        delta="< 50% recomendado",
+        delta_color="normal" if commitment < 50 else "inverse",
+    )
 
 
 def _projection_section(*, df_credit_card: pd.DataFrame,
                         df_fixed_costs: pd.DataFrame,
                         selected_month: str) -> None:
-    st.subheader("🔮 Visão do Próximo Mês")
+    st.subheader("Visão do próximo mês")
 
     if selected_month != ALL_MONTHS:
         anchor = pd.to_datetime(selected_month, format="%m/%Y")
@@ -98,8 +241,9 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     )
 
     p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Receita Prevista (+)", brl(expected_income))
-    p2.metric("Custos Fixos (−)", brl(fixed_total))
-    p3.metric("Fatura do Cartão (−)", brl(invoice_total))
-    label = "💰 Saldo Livre" if projected >= 0 else "⚠️ Saldo Livre"
-    p4.metric(label, brl(projected))
+    p1.metric("Receita prevista (+)", brl(expected_income))
+    p2.metric("Custos fixos (−)", brl(fixed_total))
+    p3.metric("Fatura do cartão (−)", brl(invoice_total))
+    label = "Saldo livre" if projected >= 0 else "Saldo livre (negativo)"
+    p4.metric(label, brl(projected),
+              delta_color="normal" if projected >= 0 else "inverse")

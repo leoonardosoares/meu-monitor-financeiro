@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from src.config import Colors
 from src.format import brl
+from src.insights import Insight
 
 
 # ---------------------------------------------------------------------------
@@ -125,3 +127,102 @@ def area_balance(df: pd.DataFrame, x: str, y: str, *,
     fig.update_traces(textposition="top center", mode="lines+markers+text")
     _apply_layout(fig, x_title="Dia", y_title="Saldo (R$)")
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+
+
+def annual_bars(df_monthly: pd.DataFrame, *,
+                empty_msg: str = "Sem histórico para o período.") -> None:
+    """Barras agrupadas: receitas vs despesas por mês."""
+    if df_monthly.empty:
+        st.info(empty_msg)
+        return
+    df_long = df_monthly.melt(
+        id_vars="Mes_Ano", value_vars=["Receitas", "Despesas"],
+        var_name="Tipo", value_name="Valor",
+    )
+    fig = px.bar(
+        df_long, x="Mes_Ano", y="Valor", color="Tipo", barmode="group",
+        color_discrete_map={"Receitas": Colors.INCOME, "Despesas": Colors.EXPENSE},
+    )
+    fig.update_traces(hovertemplate="%{x}<br>%{y:,.2f}")
+    _apply_layout(fig, x_title="", y_title="R$")
+    fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+
+
+def sankey_flow(sankey: dict, *,
+                empty_msg: str = "Sem fluxo para exibir.") -> None:
+    """Diagrama de Sankey: receitas → despesas (estilo Mobills/YNAB)."""
+    if not sankey or not sankey.get("nodes"):
+        st.info(empty_msg)
+        return
+    nodes = sankey["nodes"]
+    color_map = []
+    for label in nodes:
+        if label == "Receitas Totais":
+            color_map.append(Colors.PRIMARY)
+        elif label == "Não Gasto":
+            color_map.append(Colors.INCOME)
+        elif nodes.index(label) < nodes.index("Receitas Totais"):
+            color_map.append(Colors.INCOME)
+        else:
+            color_map.append(Colors.EXPENSE)
+
+    fig = go.Figure(go.Sankey(
+        arrangement="snap",
+        node=dict(
+            pad=18, thickness=18,
+            line=dict(color="#FFFFFF", width=0.5),
+            label=nodes, color=color_map,
+            hovertemplate="%{label}<br>R$ %{value:,.2f}<extra></extra>",
+        ),
+        link=dict(
+            source=sankey["sources"],
+            target=sankey["targets"],
+            value=sankey["values"],
+            color="rgba(148,163,184,0.35)",
+            hovertemplate="%{source.label} → %{target.label}<br>R$ %{value:,.2f}<extra></extra>",
+        ),
+    ))
+    fig.update_layout(
+        margin=dict(t=10, b=10, l=10, r=10),
+        height=420, font=dict(size=12),
+    )
+    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+
+
+# ---------------------------------------------------------------------------
+# Insights e métricas com delta MoM
+# ---------------------------------------------------------------------------
+
+def insight_chips(insights: list[Insight]) -> None:
+    """Renderiza insights como linhas com ícone + mensagem."""
+    if not insights:
+        return
+    for insight in insights:
+        if insight.severity == "critico":
+            st.error(f"{insight.icon} {insight.message}")
+        elif insight.severity == "alerta":
+            st.warning(f"{insight.icon} {insight.message}")
+        elif insight.severity == "positivo":
+            st.success(f"{insight.icon} {insight.message}")
+        else:
+            st.info(f"{insight.icon} {insight.message}")
+
+
+def metric_with_delta(container, *, label: str, value: float,
+                      previous: float | None,
+                      higher_is_better: bool = True,
+                      format_fn=brl) -> None:
+    """Card de métrica com delta percentual e cor semântica."""
+    delta_str = None
+    delta_color = "off"
+    if previous is not None and previous > 0:
+        pct = (value - previous) / previous * 100
+        delta_str = f"{pct:+.1f}% vs mês anterior"
+        if abs(pct) < 1:
+            delta_color = "off"
+        elif (pct > 0) == higher_is_better:
+            delta_color = "normal"
+        else:
+            delta_color = "inverse"
+    container.metric(label, format_fn(value), delta=delta_str, delta_color=delta_color)
