@@ -31,11 +31,19 @@ def _new_transaction_form(df_transactions: pd.DataFrame,
                            categories: list[str]) -> None:
     st.subheader("Novo lançamento")
 
+    # Streamlit não permite resetar o valor de um widget via session_state
+    # depois que ele foi renderizado. Pra limpar o campo de descrição após
+    # salvar, mantemos um contador que faz parte da `key` do widget — ao
+    # incrementar, a próxima renderização cria um widget novo (vazio).
+    if "_tx_form_gen" not in st.session_state:
+        st.session_state["_tx_form_gen"] = 0
+    gen = st.session_state["_tx_form_gen"]
+
     # Auto-sugestão é renderizada FORA do form porque depende da descrição
     # digitada e queremos atualizar a categoria sugerida em tempo real.
     description = st.text_input(
         "Descrição",
-        key="new_tx_description",
+        key=f"new_tx_description_{gen}",
         placeholder="Ex.: Mercado, Uber, Salário...",
     )
     suggestion = suggest_category(description, df_transactions)
@@ -65,9 +73,10 @@ def _new_transaction_form(df_transactions: pd.DataFrame,
                 "Valor": amount,
                 "Tipo": kind,
             })
+            # Incrementa o contador pra que o text_input seja recriado vazio
+            # na próxima renderização (não é um widget — pode ser alterado).
+            st.session_state["_tx_form_gen"] = gen + 1
             st.success("Lançamento salvo na nuvem.")
-            # Limpa o campo de descrição depois de salvar.
-            st.session_state["new_tx_description"] = ""
             st.rerun()
 
 
