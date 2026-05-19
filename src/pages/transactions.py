@@ -62,12 +62,16 @@ def _new_transaction_form(df_transactions: pd.DataFrame,
         "Tipo": kind,
     })
 
-    msg = "Lançamento salvo na nuvem."
+    st.success("Lançamento salvo na nuvem.")
     suggested = suggest_category(description, df_transactions)
     if suggested and suggested in categories and suggested != category:
-        msg += f" 💡 Dica: '{description}' costuma ser categorizado como '{suggested}'."
-    st.toast(msg, icon="✅")
-    st.rerun()
+        st.info(
+            f"💡 Dica: '{description}' costuma ser categorizado como "
+            f"**{suggested}**. Ajuste no histórico se quiser."
+        )
+    # Sem st.rerun() / st.toast — em algumas combinações Streamlit/Python 3.14
+    # eles disparam StreamlitAPIException. A tabela abaixo atualiza no próximo
+    # clique do usuário (o cache já foi invalidado por save_transactions).
 
 
 # ---------------------------------------------------------------------------
