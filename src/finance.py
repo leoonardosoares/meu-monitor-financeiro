@@ -395,3 +395,23 @@ def suggest_category(description: str, df_transactions: pd.DataFrame) -> str | N
     if matches.empty:
         return None
     return matches["Categoria"].mode().iloc[0] if not matches["Categoria"].mode().empty else None
+
+
+def cumulative_invested_at(df_transactions: pd.DataFrame,
+                           until: pd.Timestamp) -> float:
+    """Aportes − saques de investimento até `until` (inclusive).
+
+    Usado para calcular o rendimento real em cada snapshot da posição:
+    rendimento = valor_atual_no_dia − total_aportado_até_o_dia.
+    """
+    if df_transactions.empty:
+        return 0.0
+    df = df_transactions[df_transactions["Categoria"] == "Investimento"].copy()
+    if df.empty:
+        return 0.0
+    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df = df.dropna(subset=["Data_DT"])
+    df = df[df["Data_DT"] <= until]
+    aportes = float(df.loc[df["Tipo"] == "Saída", "Valor"].sum() or 0)
+    saques = float(df.loc[df["Tipo"] == "Entrada", "Valor"].sum() or 0)
+    return aportes - saques

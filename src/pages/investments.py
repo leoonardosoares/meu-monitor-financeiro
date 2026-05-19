@@ -9,7 +9,7 @@ import streamlit as st
 
 from src import components, repository
 from src.config import Colors, ConfigKeys
-from src.finance import compute_wealth
+from src.finance import compute_wealth, cumulative_invested_at
 from src.format import brl
 
 
@@ -33,7 +33,7 @@ def render(*, df_transactions: pd.DataFrame) -> None:
     with tabs[0]:
         _goals_tab(df_transactions=df_transactions, invested=invested)
     with tabs[1]:
-        _position_tab(invested=invested)
+        _position_tab(invested=invested, df_transactions=df_transactions)
     with tabs[2]:
         _portfolio_tab()
     with tabs[3]:
@@ -164,7 +164,7 @@ def _simulator_tab(*, invested: float) -> None:
     )
 
 
-def _position_tab(*, invested: float) -> None:
+def _position_tab(*, invested: float, df_transactions: pd.DataFrame) -> None:
     st.subheader("Rendimento real dos investimentos")
     st.caption(
         "Atualize aqui o saldo bruto que está hoje na sua corretora ou banco. "
@@ -226,13 +226,70 @@ def _position_tab(*, invested: float) -> None:
 
         if len(df_sorted) >= 2:
             st.divider()
-            st.markdown("**📈 Evolução da posição**")
-            df_chart = df_sorted.assign(
-                Data_Formatada=lambda d: d["Data_DT"].dt.strftime("%d/%m/%y")
+            st.markdown("**📈 Evolução**")
+
+            chart_mode = st.radio(
+                "Visualizar:",
+                ["Posição total", "Rendimento acumulado", "Comparar (posição × aportes)"],
+                horizontal=True,
+                key="position_chart_mode",
             )
-            components.area_balance(
-                df_chart, x="Data_Formatada", y="Valor", color=Colors.PRIMARY,
+
+            df_chart = df_sorted.copy()
+            df_chart["Aportado"] = df_chart["Data_DT"].apply(
+                lambda d: cumulative_invested_at(df_transactions, d)
             )
+            df_chart["Rendimento"] = df_chart["Valor"] - df_chart["Aportado"]
+            df_chart["Data_Formatada"] = df_chart["Data_DT"].dt.strftime("%d/%m/%y")
+
+            if chart_mode == "Posição total":
+                components.area_balance(
+                    df_chart, x="Data_Formatada", y="Valor",
+                    color=Colors.PRIMARY, y_title="Valor atual (R$)",
+                )
+            elif chart_mode == "Rendimento acumulado":
+                latest_return = float(df_chart["Rendimento"].iloc[-1])
+                color = Colors.INCOME if latest_return >= 0 else Colors.EXPENSE
+                components.area_balance(
+                    df_chart, x="Data_Formatada", y="Rendimento",
+                    color=color, y_title="Rendimento (R$)",
+                )
+                st.caption(
+                    "Rendimento = valor atual no dia − total aportado até o dia. "
+                    "Pode ser negativo se a posição estiver abaixo do que foi aportado."
+                )
+            else:  # Comparar
+                df_long = df_chart.melt(
+                    id_vars=["Data_Formatada"],
+                    value_vars=["Valor", "Aportado"],
+                    var_name="Série", value_name="R$",
+                )
+                df_long["Série"] = df_long["Série"].map({
+                    "Valor": "Posição (real)",
+                    "Aportado": "Total aportado",
+                })
+                fig = px.line(
+                    df_long, x="Data_Formatada", y="R$", color="Série",
+                    markers=True, line_shape="spline",
+                    color_discrete_map={
+                        "Posição (real)": Colors.PRIMARY,
+                        "Total aportado": Colors.NEUTRAL,
+                    },
+                )
+                fig.update_layout(
+                    margin=dict(t=10, b=10, l=10, r=10),
+                    xaxis_title="Dia", yaxis_title="R$",
+                    legend_title_text="", hovermode="x unified",
+                )
+                fig.update_yaxes(tickprefix="R$ ")
+                st.plotly_chart(
+                    fig, use_container_width=True,
+                    config={"displayModeBar": False},
+                )
+                st.caption(
+                    "O espaço entre as duas linhas é o **rendimento** "
+                    "acumulado em cada data."
+                )
 
     st.divider()
     st.markdown("**🗂️ Histórico de posições**")
