@@ -30,54 +30,44 @@ def render(*, df_transactions: pd.DataFrame, categories: list[str]) -> None:
 def _new_transaction_form(df_transactions: pd.DataFrame,
                            categories: list[str]) -> None:
     st.subheader("Novo lançamento")
-
-    # Streamlit não permite resetar o valor de um widget via session_state
-    # depois que ele foi renderizado. Pra limpar o campo de descrição após
-    # salvar, mantemos um contador que faz parte da `key` do widget — ao
-    # incrementar, a próxima renderização cria um widget novo (vazio).
-    if "_tx_form_gen" not in st.session_state:
-        st.session_state["_tx_form_gen"] = 0
-    gen = st.session_state["_tx_form_gen"]
-
-    # Auto-sugestão é renderizada FORA do form porque depende da descrição
-    # digitada e queremos atualizar a categoria sugerida em tempo real.
-    description = st.text_input(
-        "Descrição",
-        key=f"new_tx_description_{gen}",
-        placeholder="Ex.: Mercado, Uber, Salário...",
+    st.caption(
+        "Após salvar, se sua descrição combinar com lançamentos anteriores "
+        "categorizados de outra forma, o app te dá uma dica."
     )
-    suggestion = suggest_category(description, df_transactions)
-    default_idx = 0
-    if suggestion and suggestion in categories:
-        default_idx = categories.index(suggestion)
-        st.caption(
-            f"💡 Sugestão automática: **{suggestion}** "
-            f"(baseada em lançamentos parecidos)."
-        )
 
     with st.form("new_transaction", clear_on_submit=True):
+        description = st.text_input(
+            "Descrição",
+            placeholder="Ex.: Mercado, Uber, Salário...",
+        )
         c1, c2 = st.columns(2)
         date_value = c1.date_input("Data", format="DD/MM/YYYY")
         kind = c2.selectbox("Tipo", ["Saída", "Entrada"])
         c3, c4 = st.columns(2)
-        category = c3.selectbox("Categoria", categories, index=default_idx)
+        category = c3.selectbox("Categoria", categories)
         amount = c4.number_input("Valor (R$)", min_value=0.01, format="%.2f")
-        if st.form_submit_button("Salvar lançamento"):
-            if not description.strip():
-                st.error("Informe uma descrição.")
-                return
-            repository.append_transaction({
-                "Data": date_value,
-                "Descrição": description.strip(),
-                "Categoria": category,
-                "Valor": amount,
-                "Tipo": kind,
-            })
-            # Incrementa o contador pra que o text_input seja recriado vazio
-            # na próxima renderização (não é um widget — pode ser alterado).
-            st.session_state["_tx_form_gen"] = gen + 1
-            st.success("Lançamento salvo na nuvem.")
-            st.rerun()
+        submitted = st.form_submit_button("Salvar lançamento")
+
+    if not submitted:
+        return
+    if not description.strip():
+        st.error("Informe uma descrição.")
+        return
+
+    repository.append_transaction({
+        "Data": date_value,
+        "Descrição": description.strip(),
+        "Categoria": category,
+        "Valor": amount,
+        "Tipo": kind,
+    })
+
+    msg = "Lançamento salvo na nuvem."
+    suggested = suggest_category(description, df_transactions)
+    if suggested and suggested in categories and suggested != category:
+        msg += f" 💡 Dica: '{description}' costuma ser categorizado como '{suggested}'."
+    st.toast(msg, icon="✅")
+    st.rerun()
 
 
 # ---------------------------------------------------------------------------
