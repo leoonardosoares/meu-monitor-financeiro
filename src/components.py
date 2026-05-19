@@ -119,13 +119,14 @@ def vertical_bar(df: pd.DataFrame, x: str, y: str, *,
 
 
 def area_balance(df: pd.DataFrame, x: str, y: str, *,
-                 color: str = Colors.INCOME) -> None:
+                 color: str = Colors.INCOME,
+                 y_title: str = "Saldo (R$)") -> None:
     df = df.copy()
     df["Label"] = df[y].apply(brl)
     fig = px.area(df, x=x, y=y, text="Label", markers=True,
                   line_shape="spline", color_discrete_sequence=[color])
     fig.update_traces(textposition="top center", mode="lines+markers+text")
-    _apply_layout(fig, x_title="Dia", y_title="Saldo (R$)")
+    _apply_layout(fig, x_title="Dia", y_title=y_title)
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
