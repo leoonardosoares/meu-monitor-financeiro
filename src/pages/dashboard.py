@@ -11,7 +11,7 @@ from src.config import FIXED_EXPENSE_CATEGORIES, ConfigKeys
 from src.finance import (
     avg_monthly_expense, compute_wealth, daily_flow, expenses_by_category,
     financial_independence_months, monthly_summary, pct_change,
-    previous_month, sankey_data, savings_rate, spending_velocity,
+    previous_month, savings_rate, spending_velocity,
 )
 from src.format import brl
 from src.sidebar import ALL_MONTHS
@@ -65,15 +65,6 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         df_credit_card=df_credit_card,
         df_fixed_costs=df_fixed_costs,
         selected_month=selected_month,
-    )
-
-    st.divider()
-
-    # ── Sankey: fluxo financeiro ───────────────────────────────────────────
-    st.subheader("Fluxo financeiro do período")
-    st.caption("De onde o dinheiro vem e para onde vai.")
-    components.sankey_flow(
-        sankey_data(df_transactions_period, df_credit_card_period),
     )
 
     st.divider()
