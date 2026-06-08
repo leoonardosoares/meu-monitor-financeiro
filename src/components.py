@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from src.config import Colors
@@ -150,62 +149,6 @@ def annual_bars(df_monthly: pd.DataFrame, *,
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
-def sankey_flow(sankey: dict, *,
-                empty_msg: str = "Sem fluxo para exibir.") -> None:
-    """Diagrama de Sankey: receitas → despesas (estilo Mobills/YNAB).
-
-    Cada nó vem com o valor em R$ no label, ordenado do maior pro menor,
-    altura proporcional ao número de categorias.
-    """
-    if not sankey or not sankey.get("nodes"):
-        st.info(empty_msg)
-        return
-    nodes = sankey["nodes"]
-    node_values = sankey.get("node_values", [None] * len(nodes))
-    central_idx = nodes.index("Receitas Totais") if "Receitas Totais" in nodes else -1
-
-    color_map: list[str] = []
-    labels: list[str] = []
-    for i, (name, value) in enumerate(zip(nodes, node_values)):
-        if name == "Receitas Totais":
-            color_map.append(Colors.PRIMARY)
-        elif name == "Não Gasto":
-            color_map.append(Colors.INCOME)
-        elif central_idx >= 0 and i < central_idx:
-            color_map.append(Colors.INCOME)
-        else:
-            color_map.append(Colors.EXPENSE)
-        if value is not None and value > 0:
-            labels.append(f"{name}<br><b>{brl(float(value))}</b>")
-        else:
-            labels.append(name)
-
-    fig = go.Figure(go.Sankey(
-        arrangement="snap",
-        node=dict(
-            pad=24,
-            thickness=18,
-            line=dict(color="white", width=1),
-            label=labels,
-            color=color_map,
-            hovertemplate="%{label}<extra></extra>",
-        ),
-        link=dict(
-            source=sankey["sources"],
-            target=sankey["targets"],
-            value=sankey["values"],
-            color="rgba(148, 163, 184, 0.32)",
-            hovertemplate="%{source.label} → %{target.label}"
-                          "<br>R$ %{value:,.2f}<extra></extra>",
-        ),
-    ))
-    height = max(450, 38 * len(nodes))
-    fig.update_layout(
-        margin=dict(t=20, b=20, l=10, r=10),
-        height=height,
-        font=dict(size=13, color="#0F172A", family="Inter, Segoe UI, sans-serif"),
-    )
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
 # ---------------------------------------------------------------------------
