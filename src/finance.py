@@ -12,6 +12,8 @@ from datetime import date
 
 import pandas as pd
 
+from src.config import TRANSFER_CATEGORIES
+
 
 @dataclass(frozen=True)
 class WealthSummary:
@@ -24,7 +26,8 @@ class WealthSummary:
 
 
 def _sum_by(df: pd.DataFrame, *, tipo: str | None = None,
-            categoria: str | None = None) -> float:
+            categoria: str | None = None,
+            exclude_categorias: list[str] | None = None) -> float:
     if df.empty:
         return 0.0
     mask = pd.Series(True, index=df.index)
@@ -32,8 +35,17 @@ def _sum_by(df: pd.DataFrame, *, tipo: str | None = None,
         mask &= df["Tipo"] == tipo
     if categoria is not None:
         mask &= df["Categoria"] == categoria
+    if exclude_categorias:
+        mask &= ~df["Categoria"].isin(exclude_categorias)
     valor = df.loc[mask, "Valor"]
     return float(valor.sum()) if not valor.empty else 0.0
+
+
+def _drop_transfers(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove movimentações de transferência (aporte/saque de investimento)."""
+    if df.empty or "Categoria" not in df.columns:
+        return df
+    return df[~df["Categoria"].isin(TRANSFER_CATEGORIES)]
 
 
 def compute_wealth(df_all: pd.DataFrame, df_period: pd.DataFrame) -> WealthSummary:
@@ -42,6 +54,12 @@ def compute_wealth(df_all: pd.DataFrame, df_period: pd.DataFrame) -> WealthSumma
     `df_all` = histórico completo (usado para saldo bancário e investido).
     `df_period` = subset filtrado pelo mês selecionado (usado para
     receitas/despesas do período).
+
+    Aporte / saque de investimento NÃO são receita ou despesa de verdade:
+    é dinheiro indo de um bucket pra outro do mesmo dono. Por isso, são
+    excluídos dos KPIs `total_income` e `total_expense` do período.
+    O `bank_balance` continua somando tudo (incluindo aportes/saques)
+    porque eles afetam o saldo da conta corrente.
     """
     income_global = _sum_by(df_all, tipo="Entrada")
     expense_global = _sum_by(df_all, tipo="Saída")
@@ -52,8 +70,12 @@ def compute_wealth(df_all: pd.DataFrame, df_period: pd.DataFrame) -> WealthSumma
     invested = aportes - saques
 
     return WealthSummary(
-        total_income=_sum_by(df_period, tipo="Entrada"),
-        total_expense=_sum_by(df_period, tipo="Saída"),
+        total_income=_sum_by(
+            df_period, tipo="Entrada", exclude_categorias=TRANSFER_CATEGORIES,
+        ),
+        total_expense=_sum_by(
+            df_period, tipo="Saída", exclude_categorias=TRANSFER_CATEGORIES,
+        ),
         bank_balance=bank_balance,
         invested=invested,
         net_worth=bank_balance + invested,
@@ -69,7 +91,7 @@ def daily_flow(df_period: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df_period.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    df = df_period.copy()
+    df = _drop_transfers(df_period).copy()
     df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
     df = df.dropna(subset=["Data_DT"])
     if df.empty:
@@ -111,7 +133,12 @@ def daily_flow(df_period: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 def expenses_by_category(df_transactions: pd.DataFrame,
                          df_credit_card: pd.DataFrame,
                          *, exclude: list[str] | None = None) -> pd.DataFrame:
-    """Soma despesas (banco + cartão) agrupadas por categoria."""
+    """Soma despesas (banco + cartão) agrupadas por categoria.
+
+    Sempre exclui categorias de transferência (Investimento), porque
+    aportes não são despesas reais. `exclude` adicional pode ser passado
+    para casos como "Despesas Variáveis" (ignora fixos como Aluguel).
+    """
     expenses_bank = (
         df_transactions[df_transactions["Tipo"] == "Saída"][["Categoria", "Valor"]]
         if not df_transactions.empty else pd.DataFrame(columns=["Categoria", "Valor"])
@@ -121,8 +148,8 @@ def expenses_by_category(df_transactions: pd.DataFrame,
         if not df_credit_card.empty else pd.DataFrame(columns=["Categoria", "Valor"])
     )
     combined = pd.concat([expenses_bank, expenses_card])
-    if exclude:
-        combined = combined[~combined["Categoria"].isin(exclude)]
+    all_exclude = list(TRANSFER_CATEGORIES) + list(exclude or [])
+    combined = combined[~combined["Categoria"].isin(all_exclude)]
     if combined.empty:
         return combined
     return combined.groupby("Categoria")["Valor"].sum().reset_index()
@@ -169,10 +196,14 @@ def savings_rate(income: float, expense: float) -> float:
 
 
 def avg_monthly_expense(df_transactions: pd.DataFrame, *, months: int = 6) -> float:
-    """Despesa mensal média dos últimos N meses (com data válida)."""
+    """Despesa mensal média dos últimos N meses (com data válida).
+
+    Aportes/saques de investimento NÃO entram (são transferências).
+    """
     if df_transactions.empty:
         return 0.0
-    df = df_transactions[df_transactions["Tipo"] == "Saída"].copy()
+    df = _drop_transfers(df_transactions)
+    df = df[df["Tipo"] == "Saída"].copy()
     if df.empty:
         return 0.0
     df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
@@ -236,7 +267,8 @@ def spending_velocity(df_transactions_period: pd.DataFrame, *,
         return None
 
     today = today or date.today()
-    df = df_transactions_period[df_transactions_period["Tipo"] == "Saída"].copy()
+    df = _drop_transfers(df_transactions_period)
+    df = df[df["Tipo"] == "Saída"].copy()
     if df.empty:
         return None
     df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
@@ -290,7 +322,8 @@ def monthly_summary(df_transactions: pd.DataFrame, *,
         return pd.DataFrame(rows)
 
     grouped = (
-        df_transactions.groupby(["Mes_Ano", "Tipo"])["Valor"].sum().unstack(fill_value=0)
+        _drop_transfers(df_transactions)
+        .groupby(["Mes_Ano", "Tipo"])["Valor"].sum().unstack(fill_value=0)
     )
     for m in month_starts:
         income = float(grouped.at[m, "Entrada"]) if (m in grouped.index and "Entrada" in grouped.columns) else 0.0

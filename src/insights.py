@@ -11,8 +11,15 @@ from typing import Literal
 
 import pandas as pd
 
+from src.config import TRANSFER_CATEGORIES
 from src.finance import pct_change, previous_month
 from src.format import brl
+
+
+def _without_transfers(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty or "Categoria" not in df.columns:
+        return df
+    return df[~df["Categoria"].isin(TRANSFER_CATEGORIES)]
 
 
 Severity = Literal["positivo", "alerta", "critico", "neutro"]
@@ -34,18 +41,21 @@ class Insight:
 
 
 def _expense_total(df: pd.DataFrame) -> float:
+    df = _without_transfers(df)
     if df.empty:
         return 0.0
     return float(df.loc[df["Tipo"] == "Saída", "Valor"].sum())
 
 
 def _income_total(df: pd.DataFrame) -> float:
+    df = _without_transfers(df)
     if df.empty:
         return 0.0
     return float(df.loc[df["Tipo"] == "Entrada", "Valor"].sum())
 
 
 def _expense_by_category(df: pd.DataFrame) -> pd.Series:
+    df = _without_transfers(df)
     if df.empty:
         return pd.Series(dtype=float)
     return df[df["Tipo"] == "Saída"].groupby("Categoria")["Valor"].sum()
