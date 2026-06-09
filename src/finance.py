@@ -82,54 +82,6 @@ def compute_wealth(df_all: pd.DataFrame, df_period: pd.DataFrame) -> WealthSumma
     )
 
 
-def daily_flow(df_period: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Constrói os DataFrames diário e acumulado para os gráficos.
-
-    Retorna (df_daily, df_cumulative). Cada linha tem Data_DT, Tipo
-    (Entrada/Saída), Valor e Data_Formatada (%d/%m).
-    """
-    if df_period.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    df = _drop_transfers(df_period).copy()
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.dropna(subset=["Data_DT"])
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    pivot = df.pivot_table(
-        index="Data_DT", columns="Tipo", values="Valor",
-        aggfunc="sum", fill_value=0,
-    )
-    for col in ("Entrada", "Saída"):
-        if col not in pivot.columns:
-            pivot[col] = 0.0
-
-    full_idx = pd.date_range(pivot.index.min(), pivot.index.max())
-    pivot = pivot.reindex(full_idx, fill_value=0.0)
-
-    daily = (
-        pivot.reset_index()
-        .rename(columns={"index": "Data_DT"})
-        .melt(id_vars="Data_DT", value_vars=["Entrada", "Saída"],
-              var_name="Tipo", value_name="Valor")
-        .assign(Data_Formatada=lambda d: d["Data_DT"].dt.strftime("%d/%m"))
-        .sort_values("Data_DT")
-    )
-
-    cumulative_pivot = pivot.cumsum()
-    cumulative = (
-        cumulative_pivot.reset_index()
-        .rename(columns={"index": "Data_DT"})
-        .melt(id_vars="Data_DT", value_vars=["Entrada", "Saída"],
-              var_name="Tipo", value_name="Valor")
-        .assign(Data_Formatada=lambda d: d["Data_DT"].dt.strftime("%d/%m"))
-        .sort_values("Data_DT")
-    )
-
-    return daily, cumulative
-
-
 def expenses_by_category(df_transactions: pd.DataFrame,
                          df_credit_card: pd.DataFrame,
                          *, exclude: list[str] | None = None) -> pd.DataFrame:

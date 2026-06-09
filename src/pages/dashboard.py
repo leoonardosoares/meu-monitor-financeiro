@@ -7,9 +7,9 @@ import pandas as pd
 import streamlit as st
 
 from src import components, insights, repository
-from src.config import FIXED_EXPENSE_CATEGORIES, ConfigKeys
+from src.config import ConfigKeys
 from src.finance import (
-    avg_monthly_expense, compute_wealth, daily_flow, expenses_by_category,
+    avg_monthly_expense, compute_wealth, expenses_by_category,
     financial_independence_months, monthly_summary, pct_change,
     previous_month, savings_rate, spending_velocity,
 )
@@ -69,27 +69,9 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
 
     st.divider()
 
-    # ── Análises gráficas do período ───────────────────────────────────────
-    st.subheader("Análise gráfica do período")
-    df_daily, df_cumulative = daily_flow(df_transactions_period)
-    col1, col2 = st.columns([1, 1.2])
-    with col1:
-        st.markdown("**Despesas variáveis**")
-        df_pie = expenses_by_category(
-            df_transactions_period, df_credit_card_period,
-            exclude=FIXED_EXPENSE_CATEGORIES,
-        )
-        components.donut_by_category(
-            df_pie, empty_msg="Sem despesas variáveis neste período.",
-        )
-    with col2:
-        st.markdown("**Evolução diária**")
-        components.line_income_vs_expense(df_daily)
-
-    st.markdown("**Volume acumulado: receitas × despesas**")
-    components.area_cumulative(df_cumulative)
-
-    st.markdown("**Despesas por categoria (banco + cartão)**")
+    # ── Despesas por categoria (banco + cartão) ────────────────────────────
+    st.subheader("Despesas por categoria")
+    st.caption("Soma das saídas do banco com o cartão, agrupadas por categoria.")
     df_total = expenses_by_category(df_transactions_period, df_credit_card_period)
     components.horizontal_bar_expenses(df_total)
 

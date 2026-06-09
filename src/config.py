@@ -39,9 +39,6 @@ DEFAULT_USER_CATEGORIES = [
     "Aluguel", "Supermercado", "Lazer", "Saúde", "Outros", "Condomínio",
 ]
 
-# Categorias ignoradas no gráfico de "Despesas Variáveis" (são fixas).
-FIXED_EXPENSE_CATEGORIES = ["Aluguel", "Condomínio", "Cartão de Crédito"]
-
 # Categorias que NÃO entram nas Receitas/Despesas do período — são
 # transferências entre contas (conta corrente ↔ conta de investimento)
 # e não afetam o patrimônio, só o local onde o dinheiro está parado.

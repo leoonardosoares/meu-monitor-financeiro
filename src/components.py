@@ -27,7 +27,6 @@ def page_header(title: str, subtitle: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 _PLOT_CONFIG = {"displayModeBar": False}
-_TIPO_COLORS = {"Entrada": Colors.INCOME, "Saída": Colors.EXPENSE}
 
 
 def _apply_layout(fig, *, x_title: str = "", y_title: str = "") -> None:
@@ -38,51 +37,6 @@ def _apply_layout(fig, *, x_title: str = "", y_title: str = "") -> None:
         legend_title_text="",
         hovermode="x unified",
     )
-
-
-def donut_by_category(df: pd.DataFrame, *, empty_msg: str = "Sem dados.") -> None:
-    """Gráfico de rosca: Categoria x Valor."""
-    if df.empty or df["Valor"].sum() <= 0:
-        st.info(empty_msg)
-        return
-    fig = px.pie(
-        df, values="Valor", names="Categoria", hole=0.45,
-        color_discrete_sequence=px.colors.qualitative.Pastel,
-    )
-    fig.update_traces(textinfo="percent+label", textposition="inside")
-    fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
-
-
-def line_income_vs_expense(df_daily: pd.DataFrame, *,
-                           empty_msg: str = "Sem movimentações.") -> None:
-    if df_daily.empty:
-        st.info(empty_msg)
-        return
-    df = df_daily.copy()
-    df["Label"] = df["Valor"].apply(lambda v: brl(v) if v > 0 else "")
-    fig = px.line(
-        df, x="Data_Formatada", y="Valor", color="Tipo",
-        text="Label", markers=True, line_shape="spline",
-        color_discrete_map=_TIPO_COLORS,
-    )
-    fig.update_traces(textposition="top center", mode="lines+markers+text")
-    _apply_layout(fig, x_title="Dia", y_title="R$")
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
-
-
-def area_cumulative(df_cumulative: pd.DataFrame, *,
-                    empty_msg: str = "Sem movimentações.") -> None:
-    if df_cumulative.empty:
-        st.info(empty_msg)
-        return
-    fig = px.area(
-        df_cumulative, x="Data_Formatada", y="Valor", color="Tipo",
-        line_shape="spline", color_discrete_map=_TIPO_COLORS,
-    )
-    fig.update_traces(stackgroup=None, fill="tozeroy", opacity=0.55, mode="lines")
-    _apply_layout(fig, x_title="Dia", y_title="R$ (acumulado)")
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
 def horizontal_bar_expenses(df: pd.DataFrame, *,
