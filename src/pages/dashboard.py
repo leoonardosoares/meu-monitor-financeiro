@@ -140,21 +140,26 @@ def _kpi_section(df_all: pd.DataFrame, df_period: pd.DataFrame,
 
 
 def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
-    income = df_period.loc[df_period["Tipo"] == "Entrada", "Valor"].sum() if not df_period.empty else 0.0
-    expense = df_period.loc[df_period["Tipo"] == "Saída", "Valor"].sum() if not df_period.empty else 0.0
-    rate = savings_rate(float(income), float(expense))
+    # compute_wealth já exclui transferências (aportes/saques de
+    # investimento) de total_income/total_expense — reusar aqui garante
+    # que todos os KPIs do dashboard contem a mesma história.
+    wealth_period = compute_wealth(df_all, df_period)
+    income = wealth_period.total_income
+    expense = wealth_period.total_expense
+    rate = savings_rate(income, expense)
 
     avg_expense = avg_monthly_expense(df_all, months=6)
     # Reserva de emergência: aportes na meta da reserva, limitado pela meta
-    wealth = compute_wealth(df_all, df_all)
     reserve_goal = repository.load_config(ConfigKeys.META_RESERVA, 10000.0)
-    reserve_value = min(wealth.invested, reserve_goal)
+    reserve_value = min(wealth_period.invested, reserve_goal)
     fi_months = financial_independence_months(reserve_value, avg_expense)
 
-    # Comprometimento da renda (despesas / receitas globais)
-    income_global = df_all.loc[df_all["Tipo"] == "Entrada", "Valor"].sum() if not df_all.empty else 0.0
-    expense_global = df_all.loc[df_all["Tipo"] == "Saída", "Valor"].sum() if not df_all.empty else 0.0
-    commitment = (expense_global / income_global * 100) if income_global > 0 else 0.0
+    # Comprometimento da renda (despesas / receitas globais, sem transferências)
+    wealth_global = compute_wealth(df_all, df_all)
+    commitment = (
+        wealth_global.total_expense / wealth_global.total_income * 100
+        if wealth_global.total_income > 0 else 0.0
+    )
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric(
