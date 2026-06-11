@@ -97,12 +97,6 @@ def _render_budget_progress(*, df_budgets: pd.DataFrame,
         (df_transactions_period["Tipo"] == "Saída") &
         (df_transactions_period["Categoria"] != "Cartão de Crédito")
     ]
-    bank_grouped = bank_expenses.groupby("Categoria")["Valor"].sum()
-    card_grouped = (
-        df_credit_card_period.groupby("Categoria")["Valor"].sum()
-        if not df_credit_card_period.empty else pd.Series(dtype=float)
-    )
-
     has_valid_budget = False
     for _, row in df_budgets.iterrows():
         category = row["Categoria"]
@@ -111,23 +105,84 @@ def _render_budget_progress(*, df_budgets: pd.DataFrame,
             continue
         has_valid_budget = True
 
-        spent = float(bank_grouped.get(category, 0.0)) + \
-                float(card_grouped.get(category, 0.0))
+        bank_in_cat = bank_expenses[bank_expenses["Categoria"] == category]
+        if df_credit_card_period.empty:
+            card_in_cat = pd.DataFrame()
+        else:
+            card_in_cat = df_credit_card_period[
+                df_credit_card_period["Categoria"] == category
+            ]
+
+        bank_total = float(bank_in_cat["Valor"].sum()) if not bank_in_cat.empty else 0.0
+        card_total = float(card_in_cat["Valor"].sum()) if not card_in_cat.empty else 0.0
+        spent = bank_total + card_total
         ratio = spent / limit
-        line = f"**{category}**: {brl(spent)} / {brl(limit)}"
 
         if ratio >= 1.0:
-            st.error(f"🚨 {line} (estourou)")
-            st.progress(1.0)
+            status_emoji, status_text = "🚨", "estourou"
+            progress_value = 1.0
         elif ratio >= 0.8:
-            st.warning(f"⚠️ {line} (quase lá)")
-            st.progress(ratio)
+            status_emoji, status_text = "⚠️", "quase lá"
+            progress_value = ratio
         else:
-            st.success(f"{line} (tranquilo)")
-            st.progress(ratio)
+            status_emoji, status_text = "✅", "tranquilo"
+            progress_value = ratio
+
+        header = (
+            f"{status_emoji}  {category}  —  {brl(spent)} / {brl(limit)}  "
+            f"({ratio * 100:.0f}% · {status_text})"
+        )
+
+        with st.expander(header):
+            st.progress(progress_value)
+            _render_category_transactions(
+                category=category,
+                bank_in_cat=bank_in_cat,
+                card_in_cat=card_in_cat,
+                bank_total=bank_total,
+                card_total=card_total,
+            )
 
     if not has_valid_budget:
         st.write("Adicione categorias e limites maiores que zero ao lado.")
+
+
+def _render_category_transactions(*, category: str,
+                                   bank_in_cat: pd.DataFrame,
+                                   card_in_cat: pd.DataFrame,
+                                   bank_total: float,
+                                   card_total: float) -> None:
+    """Lista os lançamentos de uma categoria, separados por origem."""
+    if bank_in_cat.empty and card_in_cat.empty:
+        st.caption(f"Nenhum lançamento em **{category}** neste período.")
+        return
+
+    if not bank_in_cat.empty:
+        st.markdown(
+            f"**Banco** · {len(bank_in_cat)} lançamento(s) · "
+            f"total {brl(bank_total)}"
+        )
+        df = bank_in_cat[["Data", "Descrição", "Valor"]].copy()
+        if "Data_DT" in bank_in_cat.columns:
+            df = df.assign(_ord=bank_in_cat["Data_DT"]).sort_values(
+                "_ord", ascending=False,
+            ).drop(columns="_ord")
+        df["Valor"] = df["Valor"].apply(brl)
+        st.dataframe(df, hide_index=True, use_container_width=True)
+
+    if not card_in_cat.empty:
+        st.markdown(
+            f"**Cartão** · {len(card_in_cat)} lançamento(s) · "
+            f"total {brl(card_total)}"
+        )
+        cols = [c for c in (
+            "Data Compra", "Descrição", "Parcela", "Valor", "Status"
+        ) if c in card_in_cat.columns]
+        df = card_in_cat[cols].copy()
+        if "Data Compra" in df.columns:
+            df = df.sort_values("Data Compra", ascending=False)
+        df["Valor"] = df["Valor"].apply(brl)
+        st.dataframe(df, hide_index=True, use_container_width=True)
 
 
 def _card_rules_tab() -> None:
