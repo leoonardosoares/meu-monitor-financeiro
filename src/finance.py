@@ -309,6 +309,65 @@ def suggest_category(description: str, df_transactions: pd.DataFrame) -> str | N
     return matches["Categoria"].mode().iloc[0] if not matches["Categoria"].mode().empty else None
 
 
+def budget_status(df_budgets: pd.DataFrame,
+                  df_transactions_period: pd.DataFrame,
+                  df_credit_card_period: pd.DataFrame) -> pd.DataFrame:
+    """Para cada categoria com Limite > 0, devolve gasto, limite e %.
+
+    Retorna DataFrame ordenado por % desc com:
+    Categoria, Gasto, Limite, Pct, Status ("ok" | "alerta" | "estourado").
+    Categorias com Limite <= 0 ou NaN são ignoradas.
+    """
+    if df_budgets.empty:
+        return pd.DataFrame(columns=["Categoria", "Gasto", "Limite", "Pct", "Status"])
+
+    if df_transactions_period.empty:
+        bank_by_cat = pd.Series(dtype=float)
+    else:
+        bank = df_transactions_period[
+            (df_transactions_period["Tipo"] == "Saída") &
+            (df_transactions_period["Categoria"] != "Cartão de Crédito")
+        ]
+        bank_by_cat = (
+            bank.groupby("Categoria")["Valor"].sum() if not bank.empty
+            else pd.Series(dtype=float)
+        )
+
+    if df_credit_card_period.empty:
+        card_by_cat = pd.Series(dtype=float)
+    else:
+        card_by_cat = df_credit_card_period.groupby("Categoria")["Valor"].sum()
+
+    rows = []
+    for _, row in df_budgets.iterrows():
+        category = row.get("Categoria")
+        limit_raw = row.get("Limite")
+        try:
+            limit = float(limit_raw) if pd.notna(limit_raw) else 0.0
+        except (TypeError, ValueError):
+            continue
+        if limit <= 0 or not isinstance(category, str) or not category.strip():
+            continue
+        spent = float(bank_by_cat.get(category, 0.0)) + \
+                float(card_by_cat.get(category, 0.0))
+        pct = (spent / limit) * 100
+        if pct >= 100:
+            status = "estourado"
+        elif pct >= 80:
+            status = "alerta"
+        else:
+            status = "ok"
+        rows.append({
+            "Categoria": category, "Gasto": spent, "Limite": limit,
+            "Pct": pct, "Status": status,
+        })
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Pct", ascending=False).reset_index(drop=True)
+    return df
+
+
 def cumulative_invested_at(df_transactions: pd.DataFrame,
                            until: pd.Timestamp) -> float:
     """Aportes − saques de investimento até `until` (inclusive).

@@ -61,14 +61,18 @@ DEFAULTS = {
     ConfigKeys.RECEITA_PREVISTA: 0.0,
 }
 
-# Paleta de cores usada nos gráficos e KPIs.
+# Paleta de cores — verde "carteira premium" (gradiente do mais claro
+# pro mais escuro). Verdes funcionais (income) e cores semânticas
+# (vermelho pra despesa, âmbar pra alerta) ficam intactas.
 class Colors:
-    PRIMARY = "#2563EB"      # azul confiança
-    INCOME = "#10B981"       # verde esmeralda
-    EXPENSE = "#EF4444"      # vermelho
-    INVESTMENT = "#8B5CF6"   # roxo
-    WARNING = "#F59E0B"      # âmbar
-    NEUTRAL = "#64748B"      # cinza
+    PRIMARY = "#317256"        # verde profundo — botões, KPIs principais
+    PRIMARY_HOVER = "#398564"  # tom acima — hover dos botões
+    PRIMARY_SOFT = "#52bf90"   # tom mais claro — acentos suaves
+    INCOME = "#49ab81"         # verde vibrante — receitas, "positivo"
+    INVESTMENT = "#419873"     # verde médio — investimentos
+    EXPENSE = "#EF4444"        # vermelho — despesas / "negativo"
+    WARNING = "#F59E0B"        # âmbar — alertas, "atenção"
+    NEUTRAL = "#64748B"        # cinza — texto secundário
 
 # TTL (segundos) do cache de leitura. Reduz chamadas à API do Google
 # mas garante atualização razoável quando outro usuário edita a planilha.

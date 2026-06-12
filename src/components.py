@@ -83,6 +83,58 @@ def area_balance(df: pd.DataFrame, x: str, y: str, *,
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
+def budget_overview(df_status: pd.DataFrame, *,
+                    empty_msg: str = "Defina orçamentos em Configurações para acompanhar aqui.") -> None:
+    """Barras horizontais: % de cada orçamento consumido, com cor por status."""
+    if df_status.empty:
+        st.info(empty_msg)
+        return
+
+    color_map = {
+        "ok": Colors.INCOME,
+        "alerta": Colors.WARNING,
+        "estourado": Colors.EXPENSE,
+    }
+    legend_map = {
+        "ok": "Tranquilo (< 80%)",
+        "alerta": "Quase no limite (80-100%)",
+        "estourado": "Estourou (> 100%)",
+    }
+
+    df = df_status.copy()
+    df["Status_Label"] = df["Status"].map(legend_map)
+    df["Label"] = df.apply(
+        lambda r: f"{brl(r['Gasto'])} de {brl(r['Limite'])}  ·  {r['Pct']:.0f}%",
+        axis=1,
+    )
+    df = df.sort_values("Pct", ascending=True)
+    df["Pct_capped"] = df["Pct"].clip(upper=130)
+
+    fig = px.bar(
+        df, x="Pct_capped", y="Categoria", orientation="h",
+        color="Status_Label", text="Label",
+        color_discrete_map={legend_map[k]: v for k, v in color_map.items()},
+        category_orders={"Status_Label": list(legend_map.values())},
+    )
+    fig.update_traces(
+        textposition="outside",
+        cliponaxis=False,
+        hovertemplate="<b>%{y}</b><br>%{text}<extra></extra>",
+    )
+    fig.add_vline(
+        x=100, line_dash="dash", line_color=Colors.NEUTRAL, opacity=0.55,
+        annotation_text="Limite", annotation_position="top",
+    )
+    fig.update_layout(
+        margin=dict(t=10, b=10, l=10, r=10),
+        xaxis_title="% do orçamento consumido", yaxis_title="",
+        legend_title_text="", legend=dict(orientation="h", y=-0.18),
+        bargap=0.35,
+    )
+    fig.update_xaxes(ticksuffix="%", range=[0, max(140, df["Pct_capped"].max() * 1.05)])
+    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+
+
 def annual_bars(df_monthly: pd.DataFrame, *,
                 empty_msg: str = "Sem histórico para o período.") -> None:
     """Barras agrupadas: receitas vs despesas por mês."""
