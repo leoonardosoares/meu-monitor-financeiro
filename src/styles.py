@@ -11,9 +11,28 @@ _CSS = f"""
     /* ────── Tipografia ────── */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    html, body, [class*="css"], [class*="st-"], [class*="stApp"] {{
-        font-family: 'Inter', 'Segoe UI', sans-serif !important;
+    html, body, .stApp {{
+        font-family: 'Inter', 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
+    }}
+    /* CRÍTICO: preserva a fonte de ícones do Streamlit (Material Symbols).
+       Sem isso, os chevrons do expander e a seta de colapso da sidebar
+       viram texto literal ("arrow_right", "keyboard_double_arrow_left"). */
+    [class*="material-symbols"],
+    [class*="material-icons"],
+    .material-symbols-outlined,
+    .material-symbols-rounded,
+    .material-icons,
+    span.icon,
+    [data-testid="stIconMaterial"],
+    [data-testid="stExpanderIcon"],
+    [data-testid="stExpanderToggleIcon"],
+    button[data-testid="stBaseButton-headerNoPadding"] svg,
+    button[data-testid="stBaseButton-headerNoPadding"] span {{
+        font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
+                     'Material Icons', sans-serif !important;
+        font-feature-settings: 'liga' !important;
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
     }}
     h1, h2, h3 {{
         font-weight: 700;
@@ -133,39 +152,56 @@ _CSS = f"""
 
     /* Nav cards — estiliza os radio buttons da sidebar como menu */
     section[data-testid="stSidebar"] div[role="radiogroup"] {{
-        gap: 0.35rem;
+        gap: 0.4rem;
         display: flex;
         flex-direction: column;
+        width: 100%;
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label {{
-        background: rgba(255, 255, 255, 0.65);
-        border: 1px solid rgba(49, 114, 86, 0.12);
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label {{
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid rgba(49, 114, 86, 0.15);
         border-radius: 10px;
-        padding: 0.7rem 0.85rem !important;
+        padding: 0 0.95rem !important;
         cursor: pointer;
         transition: all 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
         margin: 0 !important;
         font-weight: 500;
         color: #0F172A;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        min-height: 46px !important;
+        height: 46px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        line-height: 1 !important;
+        overflow: hidden;
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
-        background: rgba(82, 191, 144, 0.12);
-        border-color: rgba(49, 114, 86, 0.25);
+    /* Container interno do label (texto do item) — sem padding extra */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div {{
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: 1.2 !important;
+    }}
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover {{
+        background: rgba(82, 191, 144, 0.14);
+        border-color: rgba(49, 114, 86, 0.32);
         transform: translateX(2px);
     }}
-    /* Esconde o círculo do radio */
-    section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {{
-        display: none;
+    /* Esconde o círculo do radio (mantém só o texto) */
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label > div:first-child {{
+        display: none !important;
     }}
     /* Item ativo (radio checado) — verde forte */
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {{
         background: linear-gradient(135deg, {Colors.PRIMARY_HOVER} 0%, {Colors.PRIMARY} 100%) !important;
         border-color: {Colors.PRIMARY} !important;
         color: #FFFFFF !important;
         box-shadow: 0 4px 12px rgba(49, 114, 86, 0.28);
         font-weight: 600;
+        transform: none !important;  /* sem deslizar quando ativo */
     }}
-    section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) * {{
+    section[data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) * {{
         color: #FFFFFF !important;
     }}
 
