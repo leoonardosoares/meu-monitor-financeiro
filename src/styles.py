@@ -30,28 +30,43 @@ _CSS = f"""
         max-width: 1400px;
     }}
 
-    /* ────── Botões ────── */
+    /* ────── Botões (gradiente verde, sombra suave, hover com lift) ────── */
     div.stButton > button:first-child,
     div.stForm button[kind="secondaryFormSubmit"],
     div.stForm button[kind="primaryFormSubmit"] {{
-        background-color: {Colors.PRIMARY} !important;
+        background: linear-gradient(180deg, {Colors.PRIMARY_HOVER} 0%, {Colors.PRIMARY} 100%) !important;
         color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
+        border: 1px solid rgba(49, 114, 86, 0.4) !important;
+        border-radius: 10px !important;
         font-weight: 600 !important;
-        padding: 0.55rem 1.1rem !important;
-        transition: all 0.2s ease !important;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+        letter-spacing: 0.01em !important;
+        padding: 0.62rem 1.3rem !important;
+        transition: all 0.18s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+        box-shadow:
+            0 1px 2px rgba(49, 114, 86, 0.18),
+            inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
     }}
     div.stButton > button:first-child:hover,
     div.stForm button[kind="secondaryFormSubmit"]:hover,
     div.stForm button[kind="primaryFormSubmit"]:hover {{
-        filter: brightness(0.93);
+        background: linear-gradient(180deg, {Colors.INCOME} 0%, {Colors.PRIMARY_HOVER} 100%) !important;
         transform: translateY(-1px);
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12);
+        box-shadow:
+            0 6px 14px rgba(49, 114, 86, 0.28),
+            inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
     }}
-    div.stButton > button:first-child:active {{
+    div.stButton > button:first-child:active,
+    div.stForm button[kind="secondaryFormSubmit"]:active,
+    div.stForm button[kind="primaryFormSubmit"]:active {{
         transform: translateY(0);
+        background: linear-gradient(180deg, {Colors.PRIMARY} 0%, #2a624a 100%) !important;
+        box-shadow:
+            0 1px 2px rgba(49, 114, 86, 0.15),
+            inset 0 2px 4px rgba(0, 0, 0, 0.12) !important;
+    }}
+    div.stButton > button:first-child:focus-visible {{
+        outline: 2px solid {Colors.PRIMARY_SOFT};
+        outline-offset: 2px;
     }}
 
     /* ────── Cards de métrica ────── */
@@ -110,7 +125,7 @@ _CSS = f"""
     }}
     div[data-testid="stDataFrame"] table tbody tr:hover,
     div[data-testid="stDataEditor"] table tbody tr:hover {{
-        background: rgba(37, 99, 235, 0.05);
+        background: rgba(82, 191, 144, 0.08);
     }}
 
     /* ────── Sidebar ────── */

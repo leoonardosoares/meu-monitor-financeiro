@@ -9,7 +9,7 @@ import streamlit as st
 from src import components, insights, repository
 from src.config import ConfigKeys
 from src.finance import (
-    avg_monthly_expense, compute_wealth, expenses_by_category,
+    avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
     financial_independence_months, monthly_summary, pct_change,
     previous_month, savings_rate, spending_velocity,
 )
@@ -66,6 +66,22 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         df_fixed_costs=df_fixed_costs,
         selected_month=selected_month,
     )
+
+    st.divider()
+
+    # ── Status do orçamento por categoria ──────────────────────────────────
+    st.subheader("Status do orçamento")
+    period_label = (
+        selected_month if selected_month != ALL_MONTHS else "todo o período"
+    )
+    st.caption(
+        f"Quanto cada categoria já consumiu do limite definido em "
+        f"Configurações ({period_label}). A linha tracejada marca os 100%."
+    )
+    df_budget_status = budget_status(
+        df_budgets, df_transactions_period, df_credit_card_period,
+    )
+    components.budget_overview(df_budget_status)
 
     st.divider()
 
