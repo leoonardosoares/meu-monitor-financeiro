@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from src.config import Colors
@@ -85,53 +86,92 @@ def area_balance(df: pd.DataFrame, x: str, y: str, *,
 
 def budget_overview(df_status: pd.DataFrame, *,
                     empty_msg: str = "Defina orçamentos em Configurações para acompanhar aqui.") -> None:
-    """Barras horizontais: % de cada orçamento consumido, com cor por status."""
+    """Barras horizontais "trilha + preenchimento": cada categoria tem uma
+    pista cinza (0–100%) e por cima a barra colorida que indica o quanto
+    foi consumido. Espaçamento generoso para não esmagar as barras.
+    """
     if df_status.empty:
         st.info(empty_msg)
         return
 
-    color_map = {
+    df = df_status.copy().sort_values("Pct", ascending=True).reset_index(drop=True)
+    df["Pct_capped"] = df["Pct"].clip(upper=130)
+
+    status_color = {
         "ok": Colors.INCOME,
         "alerta": Colors.WARNING,
         "estourado": Colors.EXPENSE,
     }
-    legend_map = {
-        "ok": "Tranquilo (< 80%)",
-        "alerta": "Quase no limite (80-100%)",
-        "estourado": "Estourou (> 100%)",
-    }
+    bar_colors = [status_color[s] for s in df["Status"]]
+    labels = [
+        f"R$ {g:,.0f} / R$ {l:,.0f}  ·  {p:.0f}%".replace(",", ".")
+        for g, l, p in zip(df["Gasto"], df["Limite"], df["Pct"])
+    ]
 
-    df = df_status.copy()
-    df["Status_Label"] = df["Status"].map(legend_map)
-    df["Label"] = df.apply(
-        lambda r: f"{brl(r['Gasto'])} de {brl(r['Limite'])}  ·  {r['Pct']:.0f}%",
-        axis=1,
-    )
-    df = df.sort_values("Pct", ascending=True)
-    df["Pct_capped"] = df["Pct"].clip(upper=130)
+    fig = go.Figure()
 
-    fig = px.bar(
-        df, x="Pct_capped", y="Categoria", orientation="h",
-        color="Status_Label", text="Label",
-        color_discrete_map={legend_map[k]: v for k, v in color_map.items()},
-        category_orders={"Status_Label": list(legend_map.values())},
-    )
-    fig.update_traces(
-        textposition="outside",
-        cliponaxis=False,
+    # Trilha: barra cinza clara representando 0–100% como referência
+    fig.add_trace(go.Bar(
+        x=[100] * len(df), y=df["Categoria"], orientation="h",
+        marker=dict(color="rgba(226, 232, 240, 0.55)", line=dict(width=0)),
+        hoverinfo="skip", showlegend=False, width=0.55,
+    ))
+
+    # Barra principal: gasto real, colorida por status
+    fig.add_trace(go.Bar(
+        x=df["Pct_capped"], y=df["Categoria"], orientation="h",
+        marker=dict(color=bar_colors, line=dict(width=0)),
+        text=labels, textposition="outside",
+        textfont=dict(size=13, color="#0F172A", family="Inter, sans-serif"),
         hovertemplate="<b>%{y}</b><br>%{text}<extra></extra>",
-    )
+        cliponaxis=False, showlegend=False, width=0.55,
+    ))
+
+    # Legenda manual (3 entradas fixas via traces invisíveis)
+    legend_items = [
+        ("Tranquilo (< 80%)", Colors.INCOME),
+        ("Quase no limite (80–100%)", Colors.WARNING),
+        ("Estourou (> 100%)", Colors.EXPENSE),
+    ]
+    for name, color in legend_items:
+        fig.add_trace(go.Bar(
+            x=[None], y=[None], name=name,
+            marker=dict(color=color, line=dict(width=0)),
+            showlegend=True,
+        ))
+
+    # Linha pontilhada no 100% como referência visual
     fig.add_vline(
-        x=100, line_dash="dash", line_color=Colors.NEUTRAL, opacity=0.55,
-        annotation_text="Limite", annotation_position="top",
+        x=100, line_dash="dash", line_color=Colors.NEUTRAL, opacity=0.5,
     )
+
+    n = len(df)
+    height = max(360, 56 * n + 110)  # 56px por categoria + margens
+
     fig.update_layout(
-        margin=dict(t=10, b=10, l=10, r=10),
-        xaxis_title="% do orçamento consumido", yaxis_title="",
-        legend_title_text="", legend=dict(orientation="h", y=-0.18),
-        bargap=0.35,
+        barmode="overlay",
+        height=height,
+        margin=dict(t=20, b=80, l=10, r=80),
+        plot_bgcolor="white",
+        xaxis=dict(
+            title=dict(text="% do orçamento consumido",
+                       font=dict(size=12, color=Colors.NEUTRAL)),
+            ticksuffix="%",
+            range=[0, max(145, df["Pct_capped"].max() * 1.12)],
+            tickfont=dict(size=12, color=Colors.NEUTRAL),
+            gridcolor="rgba(226, 232, 240, 0.7)", showgrid=True, zeroline=False,
+        ),
+        yaxis=dict(
+            tickfont=dict(size=13, color="#0F172A", family="Inter, sans-serif"),
+            showgrid=False, zeroline=False,
+        ),
+        legend=dict(
+            orientation="h", y=-0.22 if n > 4 else -0.32,
+            x=0.5, xanchor="center",
+            font=dict(size=12, color=Colors.NEUTRAL),
+            bgcolor="rgba(0,0,0,0)",
+        ),
     )
-    fig.update_xaxes(ticksuffix="%", range=[0, max(140, df["Pct_capped"].max() * 1.05)])
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
