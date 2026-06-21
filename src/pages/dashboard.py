@@ -10,8 +10,9 @@ from src import components, insights, repository
 from src.config import ConfigKeys
 from src.finance import (
     avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
-    financial_independence_months, monthly_summary, pct_change,
-    previous_month, savings_rate, spending_velocity,
+    financial_independence_months, monthly_investment_contributions,
+    monthly_summary, pct_change, previous_month, savings_rate,
+    spending_velocity,
 )
 from src.format import brl
 from src.sidebar import ALL_MONTHS
@@ -82,6 +83,16 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         df_budgets, df_transactions_period, df_credit_card_period,
     )
     components.budget_overview(df_budget_status)
+
+    st.divider()
+
+    # ── Aportes mensais em investimento (12 meses) ─────────────────────────
+    st.subheader("Aportes em investimento")
+    st.caption(
+        "Quanto entrou na sua conta de investimento por mês nos últimos 12 meses."
+    )
+    df_contrib = monthly_investment_contributions(df_transactions, months=12)
+    components.monthly_contributions_bars(df_contrib)
 
     st.divider()
 

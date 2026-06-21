@@ -9,7 +9,9 @@ import streamlit as st
 
 from src import components, repository
 from src.config import Colors, ConfigKeys
-from src.finance import compute_wealth, cumulative_invested_at
+from src.finance import (
+    compute_wealth, cumulative_invested_at, monthly_investment_contributions,
+)
 from src.format import brl
 
 
@@ -95,6 +97,15 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float) -> None:
                     })
                     st.success("Saque realizado.")
                     st.rerun()
+
+    st.divider()
+    st.subheader("📅 Aportes mensais (últimos 12 meses)")
+    st.caption(
+        "Visualize quanto você depositou na sua carteira de investimento mês "
+        "a mês. Saques aparecem como barra vermelha apenas se existirem."
+    )
+    df_contrib = monthly_investment_contributions(df_transactions, months=12)
+    components.monthly_contributions_bars(df_contrib)
 
 
 def _simulator_tab(*, invested: float) -> None:

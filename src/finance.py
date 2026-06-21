@@ -284,6 +284,45 @@ def monthly_summary(df_transactions: pd.DataFrame, *,
     return pd.DataFrame(rows)
 
 
+def monthly_investment_contributions(df_transactions: pd.DataFrame, *,
+                                      months: int = 12,
+                                      today: date | None = None) -> pd.DataFrame:
+    """Aportes (Tipo=Saída) e saques (Tipo=Entrada) de Investimento por mês.
+
+    Retorna DataFrame com Mes_Ano, Aportes, Saques, Liquido (Aportes − Saques).
+    Inclui os últimos N meses, preenchendo com zero os meses sem movimentação.
+    """
+    today = today or date.today()
+    anchor = pd.Timestamp(year=today.year, month=today.month, day=1)
+    month_starts = [
+        (anchor - pd.DateOffset(months=i)).strftime("%m/%Y")
+        for i in range(months)
+    ][::-1]
+
+    empty = pd.DataFrame([
+        {"Mes_Ano": m, "Aportes": 0.0, "Saques": 0.0, "Liquido": 0.0}
+        for m in month_starts
+    ])
+    if df_transactions.empty or "Mes_Ano" not in df_transactions.columns:
+        return empty
+    inv = df_transactions[df_transactions["Categoria"] == "Investimento"]
+    if inv.empty:
+        return empty
+
+    grouped = inv.groupby(["Mes_Ano", "Tipo"])["Valor"].sum().unstack(fill_value=0)
+    rows = []
+    for m in month_starts:
+        aportes = float(grouped.at[m, "Saída"]) \
+            if m in grouped.index and "Saída" in grouped.columns else 0.0
+        saques = float(grouped.at[m, "Entrada"]) \
+            if m in grouped.index and "Entrada" in grouped.columns else 0.0
+        rows.append({
+            "Mes_Ano": m, "Aportes": aportes, "Saques": saques,
+            "Liquido": aportes - saques,
+        })
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------------------
 # Auto-sugestão de categoria
 # ---------------------------------------------------------------------------

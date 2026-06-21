@@ -195,6 +195,66 @@ def annual_bars(df_monthly: pd.DataFrame, *,
     st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
 
 
+def monthly_contributions_bars(df_monthly: pd.DataFrame, *,
+                                show_summary: bool = True,
+                                empty_msg: str = "Nenhum aporte registrado nos últimos meses.") -> None:
+    """Aportes (verde) e saques (vermelho) de investimento por mês.
+
+    Se não houver nenhum saque no período, mostra só a série de aportes
+    pra deixar a leitura mais limpa.
+    """
+    if df_monthly.empty or df_monthly["Aportes"].sum() == 0 and df_monthly["Saques"].sum() == 0:
+        st.info(empty_msg)
+        return
+
+    has_saques = bool((df_monthly["Saques"] > 0).any())
+
+    if has_saques:
+        df_long = df_monthly.melt(
+            id_vars="Mes_Ano", value_vars=["Aportes", "Saques"],
+            var_name="Tipo", value_name="Valor",
+        )
+        fig = px.bar(
+            df_long, x="Mes_Ano", y="Valor", color="Tipo", barmode="group",
+            color_discrete_map={
+                "Aportes": Colors.INVESTMENT, "Saques": Colors.EXPENSE,
+            },
+        )
+        fig.update_traces(hovertemplate="%{x}<br>R$ %{y:,.2f}<extra></extra>")
+    else:
+        df = df_monthly.copy()
+        df["Label"] = df["Aportes"].apply(lambda v: brl(v) if v > 0 else "")
+        fig = px.bar(
+            df, x="Mes_Ano", y="Aportes", text="Label",
+            color_discrete_sequence=[Colors.INVESTMENT],
+        )
+        fig.update_traces(
+            textposition="outside", cliponaxis=False,
+            hovertemplate="%{x}<br>R$ %{y:,.2f}<extra></extra>",
+        )
+
+    _apply_layout(fig, x_title="", y_title="R$")
+    fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+
+    if show_summary:
+        total_aportes = float(df_monthly["Aportes"].sum())
+        total_saques = float(df_monthly["Saques"].sum())
+        meses_com_aporte = int((df_monthly["Aportes"] > 0).sum())
+        media = total_aportes / meses_com_aporte if meses_com_aporte else 0.0
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total aportado", brl(total_aportes))
+        c2.metric(
+            "Média por mês com aporte",
+            brl(media) if meses_com_aporte else "—",
+            delta=f"{meses_com_aporte} mês(es) com aporte",
+            delta_color="off",
+        )
+        c3.metric(
+            "Saques no período", brl(total_saques),
+            delta_color="off" if total_saques == 0 else "inverse",
+        )
 
 
 # ---------------------------------------------------------------------------
