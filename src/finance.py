@@ -48,6 +48,19 @@ def _drop_transfers(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df["Categoria"].isin(TRANSFER_CATEGORIES)]
 
 
+def _with_dates(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante a coluna Data_DT, reusando-a se o repositório já a criou.
+
+    `load_transactions` já converte Data → Data_DT uma única vez; re-parsear
+    a cada função de cálculo desperdiça CPU em todo rerun do Streamlit.
+    """
+    if "Data_DT" in df.columns:
+        return df.dropna(subset=["Data_DT"])
+    df = df.copy()
+    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    return df.dropna(subset=["Data_DT"])
+
+
 def compute_wealth(df_all: pd.DataFrame, df_period: pd.DataFrame) -> WealthSummary:
     """Calcula KPIs principais.
 
@@ -155,11 +168,10 @@ def avg_monthly_expense(df_transactions: pd.DataFrame, *, months: int = 6) -> fl
     if df_transactions.empty:
         return 0.0
     df = _drop_transfers(df_transactions)
-    df = df[df["Tipo"] == "Saída"].copy()
+    df = df[df["Tipo"] == "Saída"]
     if df.empty:
         return 0.0
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.dropna(subset=["Data_DT"])
+    df = _with_dates(df)
     if df.empty:
         return 0.0
     cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
@@ -220,11 +232,10 @@ def spending_velocity(df_transactions_period: pd.DataFrame, *,
 
     today = today or date.today()
     df = _drop_transfers(df_transactions_period)
-    df = df[df["Tipo"] == "Saída"].copy()
+    df = df[df["Tipo"] == "Saída"]
     if df.empty:
         return None
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.dropna(subset=["Data_DT"])
+    df = _with_dates(df)
     if df.empty:
         return None
 
@@ -416,11 +427,10 @@ def cumulative_invested_at(df_transactions: pd.DataFrame,
     """
     if df_transactions.empty:
         return 0.0
-    df = df_transactions[df_transactions["Categoria"] == "Investimento"].copy()
+    df = df_transactions[df_transactions["Categoria"] == "Investimento"]
     if df.empty:
         return 0.0
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.dropna(subset=["Data_DT"])
+    df = _with_dates(df)
     df = df[df["Data_DT"] <= until]
     aportes = float(df.loc[df["Tipo"] == "Saída", "Valor"].sum() or 0)
     saques = float(df.loc[df["Tipo"] == "Entrada", "Valor"].sum() or 0)
