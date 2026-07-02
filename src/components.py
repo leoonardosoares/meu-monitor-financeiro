@@ -4,11 +4,47 @@ from __future__ import annotations
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
 
 from src.config import Colors
 from src.format import brl
 from src.insights import Insight
+
+
+# ---------------------------------------------------------------------------
+# Template global do Plotly — todo gráfico do app herda tipografia Inter,
+# fundo transparente (integra com o wash verde da página), grid discreto
+# e o colorway da paleta da marca. Registrado uma vez na importação.
+# ---------------------------------------------------------------------------
+
+_brand_template = go.layout.Template(
+    layout=go.Layout(
+        font=dict(
+            family="Inter, 'Segoe UI', sans-serif",
+            size=13,
+            color="#0F172A",
+        ),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        colorway=[
+            Colors.PRIMARY, Colors.INCOME, Colors.INVESTMENT,
+            Colors.WARNING, Colors.EXPENSE, Colors.NEUTRAL,
+        ],
+        hoverlabel=dict(
+            bgcolor="#FFFFFF",
+            bordercolor="rgba(49, 114, 86, 0.25)",
+            font=dict(family="Inter, 'Segoe UI', sans-serif", size=13,
+                      color="#0F172A"),
+        ),
+        xaxis=dict(gridcolor="rgba(226, 232, 240, 0.6)", zeroline=False),
+        yaxis=dict(gridcolor="rgba(226, 232, 240, 0.6)", zeroline=False),
+        legend=dict(font=dict(size=12)),
+        margin=dict(t=10, b=10, l=10, r=10),
+    )
+)
+pio.templates["monitor"] = _brand_template
+pio.templates.default = "plotly_white+monitor"
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +188,7 @@ def budget_overview(df_status: pd.DataFrame, *,
         barmode="overlay",
         height=height,
         margin=dict(t=20, b=80, l=10, r=80),
-        plot_bgcolor="white",
+        plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
             title=dict(text="% do orçamento consumido",
                        font=dict(size=12, color=Colors.NEUTRAL)),

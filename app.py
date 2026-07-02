@@ -7,6 +7,11 @@ Este arquivo intencionalmente contém apenas o mínimo:
     4. roteamento entre as páginas em `src/pages/`
 
 Toda a lógica de negócio mora em `src/`.
+
+Estratégia de carregamento: transações e cartão são sempre lidos (o
+filtro de mês da sidebar precisa deles); o restante (categorias,
+orçamentos, custos fixos) é lido sob demanda pela página ativa. Cada
+leitura evitada é uma ida a menos à API do Google Sheets.
 """
 from __future__ import annotations
 
@@ -21,9 +26,10 @@ from src.pages import (
 from src.sidebar import PAGES
 
 
-def _bootstrap_categories(categories_df) -> list[str]:
+def _bootstrap_categories() -> list[str]:
     """Lista usada nos selects: categorias do usuário + as do sistema."""
-    user_categories = categories_df["Categoria"].dropna().unique().tolist()
+    df_categories = repository.load_categories()
+    user_categories = df_categories["Categoria"].dropna().unique().tolist()
     return user_categories + [
         c for c in SYSTEM_CATEGORIES if c not in user_categories
     ]
@@ -45,12 +51,9 @@ def main() -> None:
     st.title(f"{APP_ICON} {APP_TITLE}")
     st.caption("Controle financeiro pessoal — dados sincronizados no Google Sheets.")
 
-    # Carregamento único por rerun (cacheado em repository).
+    # Sempre carregados: o filtro de mês da sidebar depende dos dois.
     df_transactions = repository.load_transactions()
     df_credit_card = repository.load_credit_card()
-    df_categories = repository.load_categories()
-    df_budgets = repository.load_budgets()
-    df_fixed_costs = repository.load_fixed_costs()
 
     months = list_months(df_transactions, df_credit_card)
     state = sidebar.render(months)
@@ -58,8 +61,8 @@ def main() -> None:
     df_transactions_period, df_credit_card_period = filter_by_month(
         df_transactions, df_credit_card, state.selected_month,
     )
-    categories = _bootstrap_categories(df_categories)
 
+    # Daqui pra baixo, cada página carrega apenas o que usa.
     page = state.selected_page
     if page == PAGES[0]:  # Dashboard
         dashboard.render(
@@ -67,31 +70,32 @@ def main() -> None:
             df_credit_card=df_credit_card,
             df_transactions_period=df_transactions_period,
             df_credit_card_period=df_credit_card_period,
-            df_fixed_costs=df_fixed_costs,
-            df_budgets=df_budgets,
+            df_fixed_costs=repository.load_fixed_costs(),
+            df_budgets=repository.load_budgets(),
             selected_month=state.selected_month,
         )
     elif page == PAGES[1]:  # Entradas e Saídas
         transactions.render(
-            df_transactions=df_transactions, categories=categories,
+            df_transactions=df_transactions,
+            categories=_bootstrap_categories(),
         )
     elif page == PAGES[2]:  # Cartão de Crédito
         credit_card.render(
             df_credit_card=df_credit_card,
             df_credit_card_period=df_credit_card_period,
-            categories=categories,
+            categories=_bootstrap_categories(),
             selected_month=state.selected_month,
         )
     elif page == PAGES[3]:  # Investimentos
         investments.render(df_transactions=df_transactions)
     elif page == PAGES[4]:  # Configurações e Orçamento
         settings.render(
-            df_categories=df_categories,
-            df_budgets=df_budgets,
-            df_fixed_costs=df_fixed_costs,
+            df_categories=repository.load_categories(),
+            df_budgets=repository.load_budgets(),
+            df_fixed_costs=repository.load_fixed_costs(),
             df_transactions_period=df_transactions_period,
             df_credit_card_period=df_credit_card_period,
-            categories=categories,
+            categories=_bootstrap_categories(),
             selected_month=state.selected_month,
         )
 
