@@ -107,6 +107,64 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float) -> None:
     df_contrib = monthly_investment_contributions(df_transactions, months=12)
     components.monthly_contributions_bars(df_contrib)
 
+    st.divider()
+    _investment_history_section(df_transactions)
+
+
+def _investment_history_section(df_transactions: pd.DataFrame) -> None:
+    """Histórico editável de aportes e saques.
+
+    É uma visão filtrada da planilha `financeiro` (Categoria=Investimento).
+    Edições, exclusões e novas linhas são mescladas de volta ao histórico
+    completo sem tocar nas demais transações.
+    """
+    st.subheader("🗂️ Histórico de aportes e saques")
+    st.caption(
+        "Edite datas e valores, apague registros errados ou adicione "
+        "lançamentos antigos. **Tipo**: `Saída` = aporte (dinheiro foi para o "
+        "investimento) · `Entrada` = saque/resgate."
+    )
+
+    full = df_transactions.drop(columns=["Data_DT", "Mes_Ano"], errors="ignore")
+    inv_mask = full["Categoria"] == "Investimento"
+    display_cols = ["Data", "Descrição", "Valor", "Tipo"]
+    df_inv = full.loc[inv_mask, display_cols]
+
+    if df_inv.empty:
+        st.info("Nenhum aporte registrado ainda. Use o formulário acima.")
+        return
+
+    # Mais recentes primeiro (índice original preservado pro merge).
+    dt = pd.to_datetime(df_inv["Data"], errors="coerce")
+    df_inv = df_inv.loc[dt.sort_values(ascending=False).index]
+
+    with st.form("edit_investment_history"):
+        edited = st.data_editor(
+            df_inv, num_rows="dynamic", use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Valor": st.column_config.NumberColumn(
+                    "Valor (R$)", min_value=0.01, format="%.2f",
+                ),
+                "Tipo": st.column_config.SelectboxColumn(
+                    "Tipo", options=["Saída", "Entrada"], required=True,
+                    help="Saída = aporte · Entrada = saque",
+                ),
+            },
+        )
+        if st.form_submit_button("💾 Salvar histórico"):
+            if df_inv.equals(edited):
+                st.info("Nada a salvar — sem alterações.")
+                return
+            edited = edited.dropna(subset=["Valor"])
+            edited["Categoria"] = "Investimento"
+            edited = edited[["Data", "Descrição", "Categoria", "Valor", "Tipo"]]
+            untouched = full.drop(df_inv.index, errors="ignore")
+            merged = pd.concat([untouched, edited], ignore_index=True)
+            repository.save_transactions(merged)
+            st.success("Histórico de investimentos salvo.")
+            st.rerun()
+
 
 def _simulator_tab(*, invested: float) -> None:
     st.subheader("Mágica dos juros compostos")
