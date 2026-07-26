@@ -335,6 +335,115 @@ def monthly_investment_contributions(df_transactions: pd.DataFrame, *,
 
 
 # ---------------------------------------------------------------------------
+# Fluxo de caixa projetado + simulações
+# ---------------------------------------------------------------------------
+
+def card_pending_by_month(df_credit_card: pd.DataFrame) -> dict[str, float]:
+    """Total pendente da fatura por mês ({'07/2026': 350.0, ...})."""
+    if df_credit_card.empty:
+        return {}
+    pending = df_credit_card[df_credit_card["Status"] == "Pendente"]
+    if pending.empty:
+        return {}
+    return pending.groupby("Mês da Fatura")["Valor"].sum().to_dict()
+
+
+def estimate_variable_monthly(df_transactions: pd.DataFrame,
+                              fixed_total: float, *,
+                              months: int = 3) -> float:
+    """Estimativa de gastos variáveis mensais além dos custos fixos.
+
+    Média dos últimos N meses de saídas bancárias, excluindo:
+    - transferências (Investimento) — não são gasto;
+    - pagamentos de fatura (Categoria=Cartão de Crédito) — a fatura
+      futura já entra na projeção separadamente, senão contaria dobrado.
+
+    Do total médio, subtrai os custos fixos (que também já entram
+    separados na projeção). Nunca retorna negativo.
+    """
+    if df_transactions.empty:
+        return 0.0
+    df = _drop_transfers(df_transactions)
+    df = df[(df["Tipo"] == "Saída") & (df["Categoria"] != "Cartão de Crédito")]
+    if df.empty:
+        return 0.0
+    df = _with_dates(df)
+    if df.empty:
+        return 0.0
+    cutoff = pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
+    recent = df[df["Data_DT"] >= cutoff]
+    if recent.empty:
+        return 0.0
+    avg_total = float(recent["Valor"].sum()) / months
+    return max(avg_total - fixed_total, 0.0)
+
+
+def cash_flow_projection(*, months: int, start_balance: float,
+                         expected_income: float, fixed_total: float,
+                         card_pending: dict[str, float],
+                         variable_monthly: float = 0.0,
+                         extra_by_month: dict[str, float] | None = None,
+                         today: date | None = None) -> pd.DataFrame:
+    """Projeta o fluxo de caixa dos próximos N meses (mês corrente incluso).
+
+    Cada linha: Mes_Ano, Receita, Custos Fixos, Fatura Cartão, Variáveis,
+    Simulado, Liquido (sobra do mês) e Saldo Acumulado (caixa ao fim do mês).
+
+    `extra_by_month` são os gastos hipotéticos da simulação ({mes: valor}).
+    O modelo assume receita e custos fixos constantes — é uma projeção,
+    não uma promessa.
+    """
+    today = today or date.today()
+    anchor = pd.Timestamp(year=today.year, month=today.month, day=1)
+    extra_by_month = extra_by_month or {}
+
+    rows = []
+    balance = start_balance
+    for i in range(months):
+        m = (anchor + pd.DateOffset(months=i)).strftime("%m/%Y")
+        invoice = float(card_pending.get(m, 0.0))
+        extra = float(extra_by_month.get(m, 0.0))
+        net = expected_income - fixed_total - invoice - variable_monthly - extra
+        balance += net
+        rows.append({
+            "Mes_Ano": m,
+            "Receita": expected_income,
+            "Custos Fixos": fixed_total,
+            "Fatura Cartão": invoice,
+            "Variáveis": variable_monthly,
+            "Simulado": extra,
+            "Liquido": net,
+            "Saldo Acumulado": balance,
+        })
+    return pd.DataFrame(rows)
+
+
+def simulated_purchases_by_month(purchases: list[dict],
+                                 closing_day: int) -> dict[str, float]:
+    """Converte compras hipotéticas em gasto extra por mês.
+
+    Cada compra: {"descricao", "valor", "parcelas", "forma", "data"}.
+    - forma "Cartão de crédito": parcela cai na fatura conforme a regra
+      real de fechamento (invoice_month_for_purchase).
+    - forma "À vista / débito": valor inteiro no mês da compra.
+    """
+    from src.credit_card import invoice_month_for_purchase
+
+    extra: dict[str, float] = {}
+    for p in purchases:
+        if p["forma"] == "Cartão de crédito":
+            first = invoice_month_for_purchase(p["data"], closing_day)
+            per_installment = p["valor"] / p["parcelas"]
+            for i in range(int(p["parcelas"])):
+                m = (first + pd.DateOffset(months=i)).strftime("%m/%Y")
+                extra[m] = extra.get(m, 0.0) + per_installment
+        else:
+            m = pd.Timestamp(p["data"]).strftime("%m/%Y")
+            extra[m] = extra.get(m, 0.0) + float(p["valor"])
+    return extra
+
+
+# ---------------------------------------------------------------------------
 # Auto-sugestão de categoria
 # ---------------------------------------------------------------------------
 

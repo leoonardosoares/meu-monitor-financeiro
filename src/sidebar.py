@@ -12,6 +12,7 @@ ALL_MONTHS = "Todos os Meses"
 
 PAGES = [
     "Dashboard",
+    "Fluxo de Caixa",
     "Entradas e Saídas",
     "Cartão de Crédito",
     "Investimentos",
