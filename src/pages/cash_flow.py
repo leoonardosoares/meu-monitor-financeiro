@@ -15,7 +15,8 @@ from src import components, repository
 from src.config import Colors, ConfigKeys
 from src.finance import (
     card_pending_by_month, cash_flow_projection, compute_wealth,
-    estimate_variable_monthly, simulated_purchases_by_month,
+    estimate_variable_monthly, realized_month_flows,
+    simulated_purchases_by_month,
 )
 from src.format import brl
 
@@ -33,18 +34,29 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
     # ── Premissas (dados reais do app) ─────────────────────────────────────
     wealth = compute_wealth(df_transactions, df_transactions)
     expected_income = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
-    fixed_total = float(df_fixed_costs["Valor"].fillna(0).sum()) \
+    fixed_total_real = float(df_fixed_costs["Valor"].fillna(0).sum()) \
         if not df_fixed_costs.empty else 0.0
     closing_day = int(repository.load_config(ConfigKeys.DIA_FECHAMENTO, 8))
     card_pending = card_pending_by_month(df_credit_card)
-    variable_estimate = estimate_variable_monthly(df_transactions, fixed_total)
+
+    current_month = date.today().strftime("%m/%Y")
+    realized_income, realized_expenses = realized_month_flows(
+        df_transactions, current_month,
+    )
 
     st.subheader("Premissas da projeção")
     c1, c2, c3 = st.columns(3)
     c1.metric("Saldo bancário hoje", brl(wealth.bank_balance))
     c2.metric("Receita mensal prevista", brl(expected_income),
               delta="Configurações → Custos Fixos", delta_color="off")
-    c3.metric("Custos fixos mensais", brl(fixed_total))
+    c3.metric(
+        f"Já realizado em {current_month}",
+        brl(realized_expenses),
+        delta=f"+ {brl(realized_income)} recebidos", delta_color="off",
+        help="Despesas e receitas que já aconteceram neste mês. Elas já "
+             "estão dentro do saldo de hoje, então a projeção só conta o "
+             "que ainda falta acontecer no mês.",
+    )
 
     if expected_income <= 0:
         st.warning(
@@ -52,10 +64,21 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
             "Custos Fixos para a projeção fazer sentido."
         )
 
-    p1, p2 = st.columns(2)
+    p1, p2, p3 = st.columns(3)
     months = p1.slider("Horizonte da projeção (meses):",
                        min_value=3, max_value=12, value=6)
-    variable_monthly = p2.number_input(
+    fixed_total = p2.number_input(
+        "Custos fixos para a simulação (R$):",
+        min_value=0.0, value=round(fixed_total_real, 2), step=50.0,
+        help="Pré-preenchido com o total cadastrado em Configurações. "
+             "Ajuste aqui se aquele valor não representa seus meses futuros "
+             "— a alteração vale só para esta simulação, sem tocar no "
+             "cadastro.",
+    )
+    variable_estimate = estimate_variable_monthly(
+        df_transactions, fixed_total_real,
+    )
+    variable_monthly = p3.number_input(
         "Gastos variáveis estimados por mês (R$):",
         min_value=0.0, value=round(variable_estimate, 2), step=50.0,
         help="Pré-preenchido com a média dos últimos 3 meses de saídas "
@@ -124,6 +147,8 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         months=months, start_balance=wealth.bank_balance,
         expected_income=expected_income, fixed_total=fixed_total,
         card_pending=card_pending, variable_monthly=variable_monthly,
+        realized_income_current=realized_income,
+        realized_expenses_current=realized_expenses,
     )
     extra = simulated_purchases_by_month(purchases, closing_day)
     simulated = cash_flow_projection(
@@ -131,6 +156,8 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         expected_income=expected_income, fixed_total=fixed_total,
         card_pending=card_pending, variable_monthly=variable_monthly,
         extra_by_month=extra,
+        realized_income_current=realized_income,
+        realized_expenses_current=realized_expenses,
     )
 
     st.subheader("Projeção do saldo em conta")
@@ -144,9 +171,13 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
             detail[col] = detail[col].apply(brl)
         st.dataframe(detail, hide_index=True, use_container_width=True)
         st.caption(
-            "Modelo: saldo do mês = receita − custos fixos − fatura pendente "
-            "do cartão − variáveis estimados − compras simuladas. Receita e "
-            "custos fixos assumidos constantes."
+            "**Mês atual**: o que já foi recebido/pago está dentro do saldo "
+            "de hoje; a linha mostra apenas o que ainda falta — receita "
+            "restante (prevista − recebida), saídas restantes (fixos + "
+            "variáveis − já pagos, no mínimo zero), fatura pendente e "
+            "compras simuladas. **Meses futuros**: saldo do mês = receita − "
+            "custos fixos − fatura pendente − variáveis − simulados, com "
+            "receita e custos assumidos constantes."
         )
 
 

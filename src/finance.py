@@ -378,19 +378,47 @@ def estimate_variable_monthly(df_transactions: pd.DataFrame,
     return max(avg_total - fixed_total, 0.0)
 
 
+def realized_month_flows(df_transactions: pd.DataFrame,
+                         month_str: str) -> tuple[float, float]:
+    """(receitas, despesas) já realizadas em `month_str`.
+
+    Exclui transferências (Investimento) e pagamentos de fatura
+    (Categoria=Cartão de Crédito) — a fatura entra na projeção pela
+    coluna própria, senão contaria dobrado.
+    """
+    if df_transactions.empty or "Mes_Ano" not in df_transactions.columns:
+        return 0.0, 0.0
+    df = _drop_transfers(df_transactions)
+    df = df[df["Mes_Ano"] == month_str]
+    if df.empty:
+        return 0.0, 0.0
+    income = float(df.loc[df["Tipo"] == "Entrada", "Valor"].sum())
+    expenses = df[(df["Tipo"] == "Saída") &
+                  (df["Categoria"] != "Cartão de Crédito")]
+    return income, float(expenses["Valor"].sum())
+
+
 def cash_flow_projection(*, months: int, start_balance: float,
                          expected_income: float, fixed_total: float,
                          card_pending: dict[str, float],
                          variable_monthly: float = 0.0,
                          extra_by_month: dict[str, float] | None = None,
+                         realized_income_current: float = 0.0,
+                         realized_expenses_current: float = 0.0,
                          today: date | None = None) -> pd.DataFrame:
     """Projeta o fluxo de caixa dos próximos N meses (mês corrente incluso).
 
     Cada linha: Mes_Ano, Receita, Custos Fixos, Fatura Cartão, Variáveis,
     Simulado, Liquido (sobra do mês) e Saldo Acumulado (caixa ao fim do mês).
 
-    `extra_by_month` são os gastos hipotéticos da simulação ({mes: valor}).
-    O modelo assume receita e custos fixos constantes — é uma projeção,
+    Mês corrente: o que já foi realizado está dentro de `start_balance`,
+    então só entra O QUE FALTA acontecer —
+      receita restante  = max(receita prevista − receita já recebida, 0)
+      saída restante    = max(fixos + variáveis − despesas já pagas, 0)
+    além da fatura ainda pendente e das compras simuladas. Isso evita
+    cobrar duas vezes o aluguel que você já pagou ou o salário que já caiu.
+
+    Meses futuros: receita e custos assumidos constantes — é uma projeção,
     não uma promessa.
     """
     today = today or date.today()
@@ -403,18 +431,38 @@ def cash_flow_projection(*, months: int, start_balance: float,
         m = (anchor + pd.DateOffset(months=i)).strftime("%m/%Y")
         invoice = float(card_pending.get(m, 0.0))
         extra = float(extra_by_month.get(m, 0.0))
-        net = expected_income - fixed_total - invoice - variable_monthly - extra
-        balance += net
-        rows.append({
-            "Mes_Ano": m,
-            "Receita": expected_income,
-            "Custos Fixos": fixed_total,
-            "Fatura Cartão": invoice,
-            "Variáveis": variable_monthly,
-            "Simulado": extra,
-            "Liquido": net,
-            "Saldo Acumulado": balance,
-        })
+
+        if i == 0:
+            income = max(expected_income - realized_income_current, 0.0)
+            outgoing = max(
+                fixed_total + variable_monthly - realized_expenses_current, 0.0,
+            )
+            net = income - outgoing - invoice - extra
+            balance += net
+            rows.append({
+                "Mes_Ano": f"{m} (atual)",
+                "Receita": income,
+                "Custos Fixos": outgoing,
+                "Fatura Cartão": invoice,
+                "Variáveis": 0.0,
+                "Simulado": extra,
+                "Liquido": net,
+                "Saldo Acumulado": balance,
+            })
+        else:
+            net = (expected_income - fixed_total - invoice
+                   - variable_monthly - extra)
+            balance += net
+            rows.append({
+                "Mes_Ano": m,
+                "Receita": expected_income,
+                "Custos Fixos": fixed_total,
+                "Fatura Cartão": invoice,
+                "Variáveis": variable_monthly,
+                "Simulado": extra,
+                "Liquido": net,
+                "Saldo Acumulado": balance,
+            })
     return pd.DataFrame(rows)
 
 
