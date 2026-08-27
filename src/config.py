@@ -24,6 +24,15 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "custos_fixos": ["Descrição", "Categoria", "Valor"],
     "posicao_investimentos": ["Data", "Valor"],
     "alocacao_investimentos": ["Classe", "Valor", "Meta (%)"],
+    # Cadastro de cada ativo da carteira.
+    "investimentos": [
+        "Nome", "Instituição", "Classe", "Produto", "Indexador",
+        "Taxa", "Data Aplicação", "Vencimento", "Isento IR", "Observações",
+    ],
+    # Movimentações (aporte/resgate) por ativo cadastrado.
+    "investimento_movimentacoes": [
+        "Data", "Investimento", "Tipo", "Valor", "Observação",
+    ],
 }
 
 # Categorias automáticas que sempre aparecem nos selects, mesmo que o
@@ -51,6 +60,10 @@ class ConfigKeys:
     LIMITE_CARTAO = "limite_cartao"
     META_RESERVA = "meta_reserva"
     RECEITA_PREVISTA = "receita_prevista"
+    # Premissas de mercado usadas na projeção de investimentos (% a.a.).
+    TAXA_CDI = "taxa_cdi"
+    TAXA_SELIC = "taxa_selic"
+    TAXA_IPCA = "taxa_ipca"
 
 # Defaults para configurações.
 DEFAULTS = {
@@ -59,6 +72,9 @@ DEFAULTS = {
     ConfigKeys.LIMITE_CARTAO: 2000.0,
     ConfigKeys.META_RESERVA: 10000.0,
     ConfigKeys.RECEITA_PREVISTA: 0.0,
+    ConfigKeys.TAXA_CDI: 10.5,
+    ConfigKeys.TAXA_SELIC: 10.75,
+    ConfigKeys.TAXA_IPCA: 4.5,
 }
 
 # Paleta de cores — verde "carteira premium" (gradiente do mais claro

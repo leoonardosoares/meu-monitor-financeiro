@@ -202,6 +202,35 @@ def append_investment_position(row: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Carteira por ativo: cadastro + movimentações
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_assets() -> pd.DataFrame:
+    return _to_numeric(_read("investimentos"), ["Taxa"])
+
+
+def save_assets(df: pd.DataFrame) -> None:
+    _overwrite("investimentos", df)
+    load_assets.clear()
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_asset_moves() -> pd.DataFrame:
+    return _to_numeric(_read("investimento_movimentacoes"), ["Valor"])
+
+
+def save_asset_moves(df: pd.DataFrame) -> None:
+    _overwrite("investimento_movimentacoes", df)
+    load_asset_moves.clear()
+
+
+def append_asset_move(row: dict) -> None:
+    df = pd.concat([load_asset_moves(), pd.DataFrame([row])], ignore_index=True)
+    save_asset_moves(df)
+
+
+# ---------------------------------------------------------------------------
 # Alocação de investimentos por classe
 # ---------------------------------------------------------------------------
 
