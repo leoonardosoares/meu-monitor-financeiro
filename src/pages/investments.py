@@ -442,6 +442,23 @@ def _wallet_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
             "que a carteira fique correta."
         )
 
+    vencidos = [
+        p for p in positions
+        if p.days_to_maturity is not None and p.days_to_maturity < 0
+    ]
+    if vencidos:
+        linhas = "\n".join(
+            f"- **{p.name}** — venceu em "
+            f"{p.maturity.strftime('%d/%m/%Y')}, valor parado: {brl(p.net_today)}"
+            for p in vencidos
+        )
+        st.warning(
+            "⏰ **Papéis vencidos.** O emissor parou de pagar rendimento na "
+            "data de vencimento, então o valor abaixo está congelado e o "
+            "dinheiro está parado. Registre o resgate na aba "
+            "**Movimentações** para reinvestir.\n\n" + linhas
+        )
+
     if positions:
         _wallet_kpis(positions)
         st.divider()

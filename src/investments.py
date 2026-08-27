@@ -506,6 +506,18 @@ def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
     )
 
 
+def valuation_date(target: date, maturity: date | None) -> date:
+    """Data efetiva de avaliação: um papel não rende depois de vencer.
+
+    Quem paga o rendimento é o emissor, e ele para na data de vencimento —
+    o dinheiro fica parado até o resgate. Avaliar um papel vencido em
+    `today` faria a posição crescer para sempre.
+    """
+    if maturity is None:
+        return target
+    return min(target, maturity)
+
+
 def duplicate_asset_names(df_assets: pd.DataFrame) -> list[str]:
     """Nomes cadastrados mais de uma vez (comparação sem espaços extras).
 
@@ -565,7 +577,8 @@ def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
 
         bd = taxes_at(
             lots, indexador=indexador, taxa=taxa, rates=rates,
-            target=today, classe=classe, isento=isento, produto=produto,
+            target=valuation_date(today, maturity), classe=classe,
+            isento=isento, produto=produto,
         )
         positions.append(Position(
             name=name, classe=classe, produto=produto,
@@ -612,8 +625,11 @@ def projection_curve(position: Position, rates: MarketRates, *,
         })
 
     # Garante o ponto exato do vencimento, que raramente cai num aniversário
-    # mensal — é a data que mais interessa para decidir o resgate.
-    if position.maturity and position.maturity > today:
+    # mensal — é a data que mais interessa para decidir o resgate. Só entra
+    # se estiver DENTRO do horizonte pedido: anexá-lo de um vencimento em
+    # 2031 num gráfico de 6 meses criaria um salto sem sentido.
+    horizon_end = (pd.Timestamp(today) + pd.DateOffset(months=months)).date()
+    if position.maturity and today < position.maturity <= horizon_end:
         if not rows or rows[-1]["Data"] < position.maturity:
             bd = taxes_at(
                 position.lots, indexador=position.indexador,
@@ -647,9 +663,7 @@ def portfolio_curve(positions: list[Position], rates: MarketRates, *,
         target = (pd.Timestamp(today) + pd.DateOffset(months=i)).date()
         principal = gross = iof = ir = net = 0.0
         for p in positions:
-            # Após o vencimento, o dinheiro é considerado resgatado e parado
-            # (não continua rendendo à taxa do papel vencido).
-            effective = min(target, p.maturity) if p.maturity else target
+            effective = valuation_date(target, p.maturity)
             bd = taxes_at(
                 p.lots, indexador=p.indexador, taxa=p.taxa, rates=rates,
                 target=effective, classe=p.classe, isento=p.isento,
