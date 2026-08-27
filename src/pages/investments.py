@@ -19,9 +19,10 @@ from src.format import brl
 def _market_rates() -> inv.MarketRates:
     """Premissas de mercado salvas nas configurações."""
     return inv.MarketRates(
-        cdi=repository.load_config(ConfigKeys.TAXA_CDI, 10.5),
-        selic=repository.load_config(ConfigKeys.TAXA_SELIC, 10.75),
-        ipca=repository.load_config(ConfigKeys.TAXA_IPCA, 4.5),
+        cdi=repository.load_config(ConfigKeys.TAXA_CDI, 13.90),
+        selic=repository.load_config(ConfigKeys.TAXA_SELIC, 14.00),
+        ipca=repository.load_config(ConfigKeys.TAXA_IPCA, 4.44),
+        tr=repository.load_config(ConfigKeys.TAXA_TR, 0.1709),
     )
 
 
@@ -537,22 +538,34 @@ def _market_assumptions(rates: inv.MarketRates) -> None:
             "Estes índices alimentam a projeção dos papéis pós-fixados e "
             "indexados. Atualize quando o cenário mudar."
         )
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         cdi = c1.number_input("CDI (% a.a.)", min_value=0.0, max_value=100.0,
                               value=float(rates.cdi), step=0.25)
         selic = c2.number_input("Selic (% a.a.)", min_value=0.0, max_value=100.0,
                                 value=float(rates.selic), step=0.25)
         ipca = c3.number_input("IPCA (% a.a.)", min_value=0.0, max_value=100.0,
                                value=float(rates.ipca), step=0.25)
+        tr = c4.number_input("TR (% ao mês)", min_value=0.0, max_value=5.0,
+                             value=float(rates.tr), step=0.01, format="%.4f",
+                             help="Taxa Referencial — entra no cálculo da poupança.")
         if st.button("Salvar premissas"):
             repository.save_config(ConfigKeys.TAXA_CDI, cdi)
             repository.save_config(ConfigKeys.TAXA_SELIC, selic)
             repository.save_config(ConfigKeys.TAXA_IPCA, ipca)
+            repository.save_config(ConfigKeys.TAXA_TR, tr)
             st.success("Premissas atualizadas.")
             st.rerun()
         st.caption(
-            f"Poupança calculada pela regra vigente: "
-            f"{rates.poupanca_annual:.2f}% a.a."
+            f"Poupança pela regra da Lei 12.703/2012: "
+            f"**{rates.poupanca_annual:.2f}% a.a.** "
+            f"(Selic {'>' if rates.selic > 8.5 else '≤'} 8,5% → "
+            f"{'0,5% a.m.' if rates.selic > 8.5 else '70% da Selic'} + TR)."
+        )
+        st.caption(
+            "⚠️ A projeção mantém estes índices **constantes** por todo o "
+            "horizonte. Em projeções de vários anos isso tende a "
+            "superestimar papéis pós-fixados se o mercado espera queda de "
+            "juros — considere usar uma taxa média do período."
         )
 
 

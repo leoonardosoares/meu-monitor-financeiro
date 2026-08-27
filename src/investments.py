@@ -64,6 +64,11 @@ PRODUTOS = [
 # 15% (IN RFB 1.585/2015, art. 6º).
 PRODUTOS_CURTO_PRAZO = {"Fundo Curto Prazo"}
 
+# Papéis com carência legal mínima acima de 30 dias (Resolução CMN 5.119/2024
+# e alterações de 2025): o resgate antes de 30 dias é impossível, então o IOF
+# regressivo nunca chega a incidir. Poupança tem regra própria (aniversário).
+PRODUTOS_SEM_IOF = {"LCI", "LCA", "CRI", "CRA", "LIG", "Poupança"}
+
 # Classes de renda variável: IR incide sobre ganho de capital na venda,
 # com alíquota fixa (não regressiva por prazo) e sem IOF.
 CLASSES_RENDA_VARIAVEL = {"Ações", "FIIs", "Cripto", "Internacional"}
@@ -92,12 +97,17 @@ _IOF_TABLE = [
 ]
 
 
-def iof_rate(days: int, *, classe: str = "Renda Fixa") -> float:
+def iof_rate(days: int, *, classe: str = "Renda Fixa",
+             produto: str = "") -> float:
     """Alíquota de IOF sobre o rendimento, em fração (0.96 = 96%).
 
-    Renda variável (ações, FIIs, cripto) não paga IOF.
+    Não incide em: renda variável (ações, FIIs, cripto — alíquota zero do
+    IOF-TVM) nem em papéis com carência legal mínima superior a 30 dias
+    (LCI, LCA, CRI, CRA, LIG), onde o resgate antecipado é impossível.
     """
     if classe in CLASSES_RENDA_VARIAVEL:
+        return 0.0
+    if produto in PRODUTOS_SEM_IOF:
         return 0.0
     if days <= 0:
         return _IOF_TABLE[0] / 100
@@ -164,19 +174,32 @@ def business_days(days_corridos: int) -> float:
 
 @dataclass(frozen=True)
 class MarketRates:
-    """Premissas de mercado usadas na projeção (todas em % ao ano)."""
-    cdi: float = 10.5
-    selic: float = 10.75
-    ipca: float = 4.5
+    """Premissas de mercado usadas na projeção.
+
+    `cdi`, `selic` e `ipca` em % ao ano; `tr` em % ao mês (a TR é sempre
+    divulgada mensalizada). Defaults refletem o cenário de agosto/2026 e
+    são editáveis na tela.
+    """
+    cdi: float = 13.90      # BCB SGS 4389
+    selic: float = 14.00    # meta Copom, BCB SGS 432
+    ipca: float = 4.44      # acumulado 12 meses, BCB SGS 13522
+    tr: float = 0.1709      # % ao mês, BCB SGS 226
 
     @property
     def poupanca_annual(self) -> float:
-        """Regra vigente: Selic > 8,5% a.a. → 0,5% a.m. (+TR, ignorada aqui).
-        Caso contrário, 70% da Selic.
+        """Rendimento anual da poupança pela Lei 12.703/2012.
+
+        Selic > 8,5% a.a. → 0,5% ao mês + TR.
+        Selic <= 8,5% a.a. → 70% da Selic + TR.
+        A composição com a TR é multiplicativa, não soma.
         """
+        tr_m = self.tr / 100
         if self.selic > 8.5:
-            return ((1 + 0.005) ** 12 - 1) * 100
-        return self.selic * 0.70
+            monthly = (1 + 0.005) * (1 + tr_m) - 1
+        else:
+            base_monthly = (1 + 0.70 * self.selic / 100) ** (1 / 12) - 1
+            monthly = (1 + base_monthly) * (1 + tr_m) - 1
+        return ((1 + monthly) ** 12 - 1) * 100
 
 
 def annual_rate(indexador: str, taxa: float, rates: MarketRates) -> float:
@@ -254,7 +277,7 @@ def compute_taxes(*, principal: float, gross: float, days: int,
             iof=0.0, ir=0.0, net=gross, iof_pct=0.0, ir_pct=0.0, days=days,
         )
 
-    iof_pct = iof_rate(days, classe=classe)
+    iof_pct = iof_rate(days, classe=classe, produto=produto)
     iof_value = yield_gross * iof_pct
 
     taxable = yield_gross - iof_value
