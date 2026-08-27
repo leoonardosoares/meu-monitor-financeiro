@@ -1,13 +1,14 @@
-"""Página: Investimentos (reserva, aportes/saques, posição, carteira, simulador)."""
+"""Página: Investimentos — carteira por ativo, tributação, projeção e metas."""
 from __future__ import annotations
 
 from datetime import date
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-from src import components, repository
+from src import components, investments as inv, repository
 from src.config import Colors, ConfigKeys
 from src.finance import (
     compute_wealth, cumulative_invested_at, monthly_investment_contributions,
@@ -15,30 +16,50 @@ from src.finance import (
 from src.format import brl
 
 
+def _market_rates() -> inv.MarketRates:
+    """Premissas de mercado salvas nas configurações."""
+    return inv.MarketRates(
+        cdi=repository.load_config(ConfigKeys.TAXA_CDI, 10.5),
+        selic=repository.load_config(ConfigKeys.TAXA_SELIC, 10.75),
+        ipca=repository.load_config(ConfigKeys.TAXA_IPCA, 4.5),
+    )
+
+
 def render(*, df_transactions: pd.DataFrame) -> None:
     components.page_header(
         "Meus Investimentos",
-        "Reserva de emergência, aportes/saques, rendimento real, carteira "
-        "por classe de ativo e simulador de juros compostos.",
+        "Cadastre cada ativo, acompanhe a posição líquida de impostos e "
+        "projete o melhor momento para resgatar.",
     )
 
     tabs = st.tabs([
+        "🧾 Carteira",
+        "💸 Movimentações",
+        "🔮 Projeção e Resgate",
+        "💎 Posição Real",
         "🎯 Metas e Aportes",
-        "💎 Posição Atual",
-        "🧩 Carteira por Classe",
-        "🔮 Simulador",
+        "🧮 Simulador",
     ])
 
     wealth = compute_wealth(df_transactions, df_transactions)
     invested = wealth.invested
 
+    rates = _market_rates()
+    df_assets = repository.load_assets()
+    df_moves = repository.load_asset_moves()
+    positions = inv.build_positions(df_assets, df_moves, rates)
+
     with tabs[0]:
-        _goals_tab(df_transactions=df_transactions, invested=invested)
+        _wallet_tab(df_assets=df_assets, positions=positions, rates=rates)
     with tabs[1]:
-        _position_tab(invested=invested, df_transactions=df_transactions)
+        _moves_tab(df_assets=df_assets, df_moves=df_moves, positions=positions)
     with tabs[2]:
-        _portfolio_tab()
+        _projection_tab(positions=positions, rates=rates)
     with tabs[3]:
+        _position_tab(invested=invested, df_transactions=df_transactions)
+    with tabs[4]:
+        _goals_tab(df_transactions=df_transactions, invested=invested)
+    with tabs[5]:
         _simulator_tab(invested=invested)
 
 
@@ -379,112 +400,589 @@ def _position_tab(*, invested: float, df_transactions: pd.DataFrame) -> None:
                 st.info("Nada a salvar — sem alterações.")
 
 
-def _portfolio_tab() -> None:
-    st.subheader("Alocação por classe de ativo")
+# ---------------------------------------------------------------------------
+# Aba: Carteira — cadastro dos ativos e posição consolidada
+# ---------------------------------------------------------------------------
+
+def _wallet_tab(*, df_assets: pd.DataFrame, positions: list[inv.Position],
+                rates: inv.MarketRates) -> None:
+    st.subheader("Minha carteira")
     st.caption(
-        "Distribua seus investimentos entre classes (Renda Fixa, Ações, FIIs, "
-        "Cripto, etc.) e defina uma meta de alocação ideal. O app calcula o "
-        "desvio entre real e meta e avisa quando algo está fora do alvo."
+        "Cadastre cada investimento que você tem. A posição é calculada a "
+        "partir das movimentações, projetada pela taxa do papel e já "
+        "descontada de IOF e IR se você resgatasse hoje."
     )
 
-    df_alloc = repository.load_investment_allocation()
-    default_classes = ["Renda Fixa", "Ações", "FIIs", "Cripto", "Internacional"]
-    if df_alloc.empty:
-        df_alloc = pd.DataFrame(
-            {"Classe": default_classes,
-             "Valor": [0.0] * len(default_classes),
-             "Meta (%)": [0.0] * len(default_classes)}
+    if positions:
+        _wallet_kpis(positions)
+        st.divider()
+        _wallet_table(positions)
+        st.divider()
+        _wallet_allocation(positions)
+        st.divider()
+    else:
+        st.info(
+            "Nenhum ativo com movimentação ainda. Cadastre um investimento "
+            "abaixo e registre o primeiro aporte na aba **Movimentações**."
         )
 
-    with st.form("edit_allocation"):
-        edited = st.data_editor(
-            df_alloc, num_rows="dynamic", use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Valor": st.column_config.NumberColumn(
-                    "Valor (R$)", min_value=0.0, format="%.2f",
-                ),
-                "Meta (%)": st.column_config.NumberColumn(
-                    "Meta (%)", min_value=0.0, max_value=100.0, format="%.0f",
-                ),
-            },
+    _market_assumptions(rates)
+    st.divider()
+    _new_asset_form()
+    st.divider()
+    _assets_editor(df_assets)
+
+
+def _wallet_kpis(positions: list[inv.Position]) -> None:
+    principal = sum(p.principal for p in positions)
+    gross = sum(p.gross_today for p in positions)
+    net = sum(p.net_today for p in positions)
+    taxes = sum(p.iof_today + p.ir_today for p in positions)
+    yield_pct = ((gross - principal) / principal * 100) if principal else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Capital aplicado", brl(principal))
+    c2.metric("Valor bruto hoje", brl(gross),
+              delta=f"+{yield_pct:.2f}% de rendimento",
+              delta_color="normal" if gross >= principal else "inverse")
+    c3.metric("Impostos se resgatar hoje", brl(taxes),
+              delta="IOF + IR", delta_color="off")
+    c4.metric("Valor líquido hoje 💎", brl(net),
+              delta=f"{brl(net - principal)} no bolso",
+              delta_color="normal" if net >= principal else "inverse")
+
+
+def _wallet_table(positions: list[inv.Position]) -> None:
+    st.markdown("**Posição por ativo**")
+    rows = []
+    for p in positions:
+        venc = p.maturity.strftime("%d/%m/%Y") if p.maturity else "Sem vencimento"
+        dias = p.days_to_maturity
+        if dias is not None and dias < 0:
+            venc += " (vencido)"
+        elif dias is not None:
+            venc += f" ({dias}d)"
+        rows.append({
+            "Ativo": p.name,
+            "Classe": p.classe,
+            "Remuneração": _rate_label(p),
+            "Aplicado": p.principal,
+            "Bruto hoje": p.gross_today,
+            "Impostos": p.iof_today + p.ir_today,
+            "Líquido hoje": p.net_today,
+            "Rende (líq.)": p.yield_net_today,
+            "Vencimento": venc,
+        })
+    df = pd.DataFrame(rows).sort_values("Líquido hoje", ascending=False)
+    display = df.copy()
+    for col in ("Aplicado", "Bruto hoje", "Impostos", "Líquido hoje",
+                "Rende (líq.)"):
+        display[col] = display[col].apply(brl)
+    st.dataframe(display, hide_index=True, use_container_width=True)
+
+
+def _rate_label(p: inv.Position) -> str:
+    """Descrição curta da remuneração ('110% do CDI', 'IPCA + 6,0%')."""
+    if p.indexador == inv.Indexador.CDI:
+        return f"{p.taxa:.0f}% do CDI"
+    if p.indexador == inv.Indexador.IPCA:
+        return f"IPCA + {p.taxa:.2f}%".replace(".", ",")
+    if p.indexador == inv.Indexador.SELIC:
+        return f"Selic + {p.taxa:.2f}%".replace(".", ",")
+    if p.indexador == inv.Indexador.PREFIXADO:
+        return f"{p.taxa:.2f}% a.a.".replace(".", ",")
+    if p.indexador == inv.Indexador.POUPANCA:
+        return "Poupança"
+    return "—"
+
+
+def _wallet_allocation(positions: list[inv.Position]) -> None:
+    st.markdown("**Alocação da carteira**")
+    df = pd.DataFrame([
+        {"Classe": p.classe, "Valor": p.net_today, "Ativo": p.name}
+        for p in positions
+    ])
+    if df.empty or df["Valor"].sum() <= 0:
+        st.info("Sem valores para exibir.")
+        return
+
+    c1, c2 = st.columns(2)
+    with c1:
+        by_class = df.groupby("Classe")["Valor"].sum().reset_index()
+        fig = px.pie(by_class, values="Valor", names="Classe", hole=0.5,
+                     color_discrete_sequence=px.colors.qualitative.Set2)
+        fig.update_traces(textinfo="percent+label", textposition="inside")
+        fig.update_layout(showlegend=False, height=320,
+                          margin=dict(t=10, b=10, l=10, r=10))
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False})
+        st.caption("Por classe de ativo")
+    with c2:
+        by_asset = df.sort_values("Valor", ascending=True)
+        fig2 = px.bar(by_asset, x="Valor", y="Ativo", orientation="h",
+                      text=[brl(v) for v in by_asset["Valor"]],
+                      color_discrete_sequence=[Colors.INVESTMENT])
+        fig2.update_traces(textposition="outside", cliponaxis=False)
+        fig2.update_layout(height=320, xaxis_title="", yaxis_title="",
+                           margin=dict(t=10, b=10, l=10, r=70))
+        fig2.update_xaxes(tickprefix="R$ ")
+        st.plotly_chart(fig2, use_container_width=True,
+                        config={"displayModeBar": False})
+        st.caption("Por ativo (valor líquido)")
+
+
+def _market_assumptions(rates: inv.MarketRates) -> None:
+    with st.expander("⚙️ Premissas de mercado usadas nas projeções"):
+        st.caption(
+            "Estes índices alimentam a projeção dos papéis pós-fixados e "
+            "indexados. Atualize quando o cenário mudar."
         )
-        if st.form_submit_button("💾 Salvar carteira"):
-            repository.save_investment_allocation(edited)
-            st.success("Carteira salva.")
+        c1, c2, c3 = st.columns(3)
+        cdi = c1.number_input("CDI (% a.a.)", min_value=0.0, max_value=100.0,
+                              value=float(rates.cdi), step=0.25)
+        selic = c2.number_input("Selic (% a.a.)", min_value=0.0, max_value=100.0,
+                                value=float(rates.selic), step=0.25)
+        ipca = c3.number_input("IPCA (% a.a.)", min_value=0.0, max_value=100.0,
+                               value=float(rates.ipca), step=0.25)
+        if st.button("Salvar premissas"):
+            repository.save_config(ConfigKeys.TAXA_CDI, cdi)
+            repository.save_config(ConfigKeys.TAXA_SELIC, selic)
+            repository.save_config(ConfigKeys.TAXA_IPCA, ipca)
+            st.success("Premissas atualizadas.")
             st.rerun()
+        st.caption(
+            f"Poupança calculada pela regra vigente: "
+            f"{rates.poupanca_annual:.2f}% a.a."
+        )
 
-    clean = edited.dropna(subset=["Classe"]).copy() if not edited.empty else edited
-    clean = clean[clean["Classe"].astype(str).str.strip() != ""] if not clean.empty else clean
-    clean["Valor"] = pd.to_numeric(clean.get("Valor"), errors="coerce").fillna(0)
-    clean["Meta (%)"] = pd.to_numeric(clean.get("Meta (%)"), errors="coerce").fillna(0)
 
-    total = float(clean["Valor"].sum())
-    meta_total = float(clean["Meta (%)"].sum())
+def _new_asset_form() -> None:
+    st.markdown("**➕ Cadastrar novo investimento**")
+    with st.form("new_asset", clear_on_submit=True):
+        c1, c2 = st.columns([2, 1])
+        nome = c1.text_input("Nome do ativo",
+                             placeholder="Ex.: CDB Banco Inter 110% CDI")
+        instituicao = c2.text_input("Instituição", placeholder="Ex.: Inter")
 
-    if total <= 0:
-        st.info("Preencha os valores de cada classe para ver gráficos e alertas.")
+        c3, c4, c5 = st.columns(3)
+        classe = c3.selectbox("Classe", inv.CLASSES)
+        produto = c4.selectbox("Produto", inv.PRODUTOS)
+        indexador = c5.selectbox("Remuneração", inv.INDEXADORES)
+
+        c6, c7, c8 = st.columns(3)
+        taxa = c6.number_input(
+            "Taxa (%)", min_value=0.0, value=100.0, step=0.5,
+            help="Prefixado → % ao ano · % do CDI → percentual do CDI · "
+                 "IPCA+/Selic+ → spread anual acima do índice.",
+        )
+        aplicacao = c7.date_input("Data de aplicação", value=date.today(),
+                                  format="DD/MM/YYYY")
+        tem_vencimento = c8.checkbox("Tem vencimento?", value=True)
+
+        vencimento = st.date_input(
+            "Data de vencimento", value=date.today(), format="DD/MM/YYYY",
+            disabled=not tem_vencimento,
+            help="Desmarque acima para ativos de liquidez diária "
+                 "(Tesouro Selic, fundos, ações).",
+        )
+        obs = st.text_input("Observações (opcional)")
+
+        if st.form_submit_button("Cadastrar ativo"):
+            if not nome.strip():
+                st.error("Informe o nome do ativo.")
+            else:
+                repository.save_assets(pd.concat([
+                    repository.load_assets(),
+                    pd.DataFrame([{
+                        "Nome": nome.strip(),
+                        "Instituição": instituicao.strip(),
+                        "Classe": classe,
+                        "Produto": produto,
+                        "Indexador": indexador,
+                        "Taxa": taxa,
+                        "Data Aplicação": aplicacao,
+                        "Vencimento": vencimento if tem_vencimento else "",
+                        "Isento IR": "Sim" if inv.is_isento_ir(produto) else "Não",
+                        "Observações": obs.strip(),
+                    }]),
+                ], ignore_index=True))
+                st.success(
+                    f"'{nome.strip()}' cadastrado. Registre o aporte na aba "
+                    "**Movimentações** para ele aparecer na carteira."
+                )
+                st.rerun()
+
+
+def _assets_editor(df_assets: pd.DataFrame) -> None:
+    if df_assets.empty:
+        return
+    with st.expander("✏️ Editar cadastro dos ativos"):
+        st.caption(
+            "**Isento IR**: marque `Sim` para LCI, LCA, CRI, CRA, LIG, "
+            "debêntures incentivadas e poupança."
+        )
+        with st.form("edit_assets"):
+            edited = st.data_editor(
+                df_assets, num_rows="dynamic", use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Classe": st.column_config.SelectboxColumn(
+                        "Classe", options=inv.CLASSES),
+                    "Produto": st.column_config.SelectboxColumn(
+                        "Produto", options=inv.PRODUTOS),
+                    "Indexador": st.column_config.SelectboxColumn(
+                        "Remuneração", options=inv.INDEXADORES),
+                    "Isento IR": st.column_config.SelectboxColumn(
+                        "Isento IR", options=["Sim", "Não"]),
+                    "Taxa": st.column_config.NumberColumn(
+                        "Taxa (%)", format="%.2f"),
+                },
+            )
+            if st.form_submit_button("💾 Salvar cadastro"):
+                if df_assets.equals(edited):
+                    st.info("Nada a salvar — sem alterações.")
+                else:
+                    repository.save_assets(edited)
+                    st.success("Cadastro atualizado.")
+                    st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Aba: Movimentações — aportes e resgates por ativo
+# ---------------------------------------------------------------------------
+
+def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
+               positions: list[inv.Position]) -> None:
+    st.subheader("Movimentações por ativo")
+    st.caption(
+        "Cada aporte vira um lote com data própria — é o que permite calcular "
+        "o IR regressivo corretamente, já que a alíquota depende de há quanto "
+        "tempo aquele dinheiro específico está aplicado."
+    )
+
+    names = (
+        df_assets["Nome"].dropna().astype(str).str.strip().tolist()
+        if not df_assets.empty else []
+    )
+    names = [n for n in names if n]
+    if not names:
+        st.info("Cadastre um ativo na aba **Carteira** antes de movimentar.")
+        return
+
+    saldo = {p.name: p.principal for p in positions}
+
+    with st.form("new_asset_move", clear_on_submit=True):
+        c1, c2 = st.columns([2, 1])
+        ativo = c1.selectbox("Investimento", names)
+        tipo = c2.selectbox("Tipo", ["Aporte", "Resgate"])
+        c3, c4 = st.columns(2)
+        data_mov = c3.date_input("Data", value=date.today(), format="DD/MM/YYYY")
+        valor = c4.number_input("Valor (R$)", min_value=0.01, format="%.2f")
+        obs = st.text_input("Observação (opcional)")
+
+        if st.form_submit_button("Registrar movimentação"):
+            aplicado = saldo.get(ativo, 0.0)
+            if tipo == "Resgate" and valor > aplicado + 1e-9:
+                st.error(
+                    f"Resgate maior que o capital aplicado em '{ativo}' "
+                    f"({brl(aplicado)}). Ajuste o valor."
+                )
+            else:
+                repository.append_asset_move({
+                    "Data": data_mov, "Investimento": ativo,
+                    "Tipo": tipo, "Valor": valor, "Observação": obs.strip(),
+                })
+                st.success(f"{tipo} de {brl(valor)} em '{ativo}' registrado.")
+                st.rerun()
+
+    if df_moves.empty:
+        st.info("Nenhuma movimentação registrada ainda.")
         return
 
     st.divider()
+    st.markdown("**Histórico de movimentações**")
+
+    filtro = st.selectbox("Filtrar por ativo:", ["Todos"] + names)
+    view = df_moves if filtro == "Todos" else \
+        df_moves[df_moves["Investimento"] == filtro]
+    if view.empty:
+        st.info(f"Sem movimentações em '{filtro}'.")
+        return
+
+    dt = pd.to_datetime(view["Data"], errors="coerce")
+    view = view.loc[dt.sort_values(ascending=False).index]
+
+    with st.form("edit_asset_moves"):
+        edited = st.data_editor(
+            view, num_rows="dynamic", use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Investimento": st.column_config.SelectboxColumn(
+                    "Investimento", options=names, required=True),
+                "Tipo": st.column_config.SelectboxColumn(
+                    "Tipo", options=["Aporte", "Resgate"], required=True),
+                "Valor": st.column_config.NumberColumn(
+                    "Valor (R$)", min_value=0.01, format="%.2f"),
+            },
+        )
+        if st.form_submit_button("💾 Salvar movimentações"):
+            if view.equals(edited):
+                st.info("Nada a salvar — sem alterações.")
+            else:
+                untouched = df_moves.drop(view.index, errors="ignore")
+                merged = pd.concat([untouched, edited], ignore_index=True)
+                repository.save_asset_moves(merged)
+                st.success("Movimentações salvas.")
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Aba: Projeção e Resgate
+# ---------------------------------------------------------------------------
+
+def _projection_tab(*, positions: list[inv.Position],
+                    rates: inv.MarketRates) -> None:
+    st.subheader("Projeção e melhor momento de resgate")
+    st.caption(
+        "Quanto cada ativo vale ao longo do tempo, bruto e já líquido de IOF "
+        "e IR. Use para decidir se vale esperar o próximo degrau da tabela "
+        "regressiva antes de resgatar."
+    )
+
+    if not positions:
+        st.info(
+            "Cadastre ativos e registre movimentações para ver as projeções."
+        )
+        return
+
+    c1, c2 = st.columns([2, 1])
+    escolha = c1.selectbox(
+        "O que projetar:",
+        ["Carteira inteira"] + [p.name for p in positions],
+    )
+    horizonte = c2.slider("Horizonte (meses):", min_value=6, max_value=120,
+                          value=36, step=6)
+
+    if escolha == "Carteira inteira":
+        _portfolio_projection(positions, rates, horizonte)
+    else:
+        position = next(p for p in positions if p.name == escolha)
+        _asset_projection(position, rates, horizonte)
+
+
+def _portfolio_projection(positions: list[inv.Position],
+                          rates: inv.MarketRates, months: int) -> None:
+    curve = inv.portfolio_curve(positions, rates, months=months)
+    if curve.empty:
+        st.info("Sem dados para projetar.")
+        return
+
+    final = curve.iloc[-1]
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Capital aplicado", brl(final["Principal"]))
+    c2.metric("Bruto projetado", brl(final["Bruto"]))
+    c3.metric("Impostos estimados", brl(final["IOF"] + final["IR"]),
+              delta="IOF + IR", delta_color="off")
+    c4.metric("Líquido projetado 💎", brl(final["Líquido"]),
+              delta=f"+{brl(final['Líquido'] - final['Principal'])}",
+              delta_color="normal")
+
+    _gross_net_chart(curve, title="Carteira: bruto × líquido")
+
+    with st.expander("Ver projeção mês a mês"):
+        detail = curve.copy()
+        detail["Data"] = pd.to_datetime(detail["Data"]).dt.strftime("%m/%Y")
+        for col in ("Principal", "Bruto", "IOF", "IR", "Líquido"):
+            detail[col] = detail[col].apply(brl)
+        st.dataframe(detail, hide_index=True, use_container_width=True)
+
+
+def _asset_projection(position: inv.Position, rates: inv.MarketRates,
+                      months: int) -> None:
+    _asset_summary(position)
+
+    curve = inv.projection_curve(position, rates, months=months)
+    if curve.empty:
+        st.info("Sem dados para projetar este ativo.")
+        return
+
+    _gross_net_chart(curve, title=f"{position.name}: bruto × líquido")
+    st.divider()
+    _redemption_scenarios(position, rates)
+    st.divider()
+    _tax_composition(position, rates, curve)
+
+
+def _asset_summary(position: inv.Position) -> None:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Aplicado", brl(position.principal))
+    c2.metric("Bruto hoje", brl(position.gross_today))
+    c3.metric("Líquido hoje", brl(position.net_today),
+              delta=brl(position.yield_net_today),
+              delta_color="normal" if position.yield_net_today >= 0 else "inverse")
+    if position.maturity:
+        dias = position.days_to_maturity or 0
+        c4.metric("Vencimento", position.maturity.strftime("%d/%m/%Y"),
+                  delta=f"faltam {dias} dias" if dias >= 0 else "vencido",
+                  delta_color="off")
+    else:
+        c4.metric("Vencimento", "Liquidez diária",
+                  delta="sem carência", delta_color="off")
+
+    if position.isento:
+        st.success(
+            f"✅ **{position.produto}** é isento de Imposto de Renda — o "
+            "rendimento líquido é igual ao bruto (após IOF, se houver)."
+        )
+
+    step = inv.next_ir_step(position)
+    if step:
+        step_date, current, nxt = step
+        dias = (step_date - date.today()).days
+        if dias > 0:
+            st.info(
+                f"📉 Sua alíquota de IR cai de **{current*100:.1f}%** para "
+                f"**{nxt*100:.1f}%** em **{step_date.strftime('%d/%m/%Y')}** "
+                f"(faltam {dias} dias). Esperar até lá aumenta o valor líquido."
+            )
+
+
+def _gross_net_chart(curve: pd.DataFrame, *, title: str) -> None:
+    fig = go.Figure()
+    x = pd.to_datetime(curve["Data"])
+
+    fig.add_trace(go.Scatter(
+        x=x, y=curve["Principal"], name="Capital aplicado",
+        mode="lines", line=dict(color=Colors.NEUTRAL, width=2, dash="dot"),
+        hovertemplate="Aplicado: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=curve["Bruto"], name="Valor bruto",
+        mode="lines", line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        hovertemplate="Bruto: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=x, y=curve["Líquido"], name="Valor líquido (após IOF/IR)",
+        mode="lines", line=dict(color=Colors.PRIMARY, width=3),
+        fill="tonexty", fillcolor="rgba(239, 68, 68, 0.10)",
+        hovertemplate="Líquido: R$ %{y:,.2f}<extra></extra>",
+    ))
+
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14)),
+        height=430, hovermode="x unified",
+        yaxis_title="Valor (R$)", xaxis_title="",
+        legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center"),
+        margin=dict(t=60, b=20, l=10, r=10),
+    )
+    fig.update_yaxes(tickprefix="R$ ")
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+    st.caption(
+        "A área avermelhada entre as linhas é o quanto os impostos consomem "
+        "do rendimento em cada data."
+    )
+
+
+def _redemption_scenarios(position: inv.Position,
+                          rates: inv.MarketRates) -> None:
+    st.markdown("**Cenários de resgate**")
+    today = date.today()
+    scenarios: list[tuple[str, date]] = [
+        ("Hoje", today),
+        ("Em 3 meses", (pd.Timestamp(today) + pd.DateOffset(months=3)).date()),
+        ("Em 6 meses", (pd.Timestamp(today) + pd.DateOffset(months=6)).date()),
+        ("Em 1 ano", (pd.Timestamp(today) + pd.DateOffset(years=1)).date()),
+        ("Em 2 anos", (pd.Timestamp(today) + pd.DateOffset(years=2)).date()),
+    ]
+    step = inv.next_ir_step(position)
+    if step:
+        scenarios.append(("Próximo degrau de IR", step[0]))
+    if position.maturity:
+        scenarios.append(("No vencimento", position.maturity))
+        scenarios = [(l, d) for l, d in scenarios if d <= position.maturity]
+
+    seen: set[date] = set()
+    rows = []
+    for label, target in scenarios:
+        if target < today or target in seen:
+            continue
+        seen.add(target)
+        bd = inv.taxes_at(
+            position.lots, indexador=position.indexador, taxa=position.taxa,
+            rates=rates, target=target, classe=position.classe,
+            isento=position.isento,
+        )
+        rows.append({
+            "Cenário": label,
+            "Data": target.strftime("%d/%m/%Y"),
+            "Bruto": bd.gross,
+            "IOF": bd.iof,
+            "IR": bd.ir,
+            "Alíq. IR": f"{bd.ir_pct*100:.1f}%",
+            "Líquido": bd.net,
+            "Ganho líquido": bd.yield_net,
+        })
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info("Sem cenários futuros para este ativo.")
+        return
+
+    best = df.loc[df["Líquido"].idxmax()]
+    display = df.copy()
+    for col in ("Bruto", "IOF", "IR", "Líquido", "Ganho líquido"):
+        display[col] = display[col].apply(brl)
+    st.dataframe(display, hide_index=True, use_container_width=True)
+    st.caption(
+        f"Maior valor líquido: **{best['Cenário']}** "
+        f"({best['Data']}) — {brl(best['Líquido'])}. Projeção assume que a "
+        "taxa contratada se mantém e que não há novos aportes."
+    )
+
+
+def _tax_composition(position: inv.Position, rates: inv.MarketRates,
+                     curve: pd.DataFrame) -> None:
+    st.markdown("**Para onde vai o rendimento no fim do período**")
+    final = curve.iloc[-1]
+    principal = float(final["Principal"])
+    net = float(final["Líquido"])
+    iof = float(final["IOF"])
+    ir = float(final["IR"])
+    ganho_liquido = max(net - principal, 0.0)
+
+    parts = [
+        ("Capital aplicado", principal, Colors.NEUTRAL),
+        ("Ganho líquido", ganho_liquido, Colors.INCOME),
+        ("IR", ir, Colors.EXPENSE),
+        ("IOF", iof, Colors.WARNING),
+    ]
+    parts = [(n, v, c) for n, v, c in parts if v > 0.01]
+    df = pd.DataFrame({
+        "Componente": [n for n, _, _ in parts],
+        "Valor": [v for _, v, _ in parts],
+    })
+    fig = px.pie(
+        df, values="Valor", names="Componente", hole=0.55,
+        color="Componente",
+        color_discrete_map={n: c for n, _, c in parts},
+    )
+    fig.update_traces(textinfo="percent+label", textposition="inside")
+    fig.update_layout(height=340, showlegend=False,
+                      margin=dict(t=10, b=10, l=10, r=10))
+
     c1, c2 = st.columns([1, 1])
     with c1:
-        st.markdown("**Distribuição atual**")
-        fig = px.pie(
-            clean[clean["Valor"] > 0], values="Valor", names="Classe", hole=0.45,
-            color_discrete_sequence=px.colors.qualitative.Set2,
-        )
-        fig.update_traces(textinfo="percent+label", textposition="inside")
-        fig.update_layout(margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": False})
     with c2:
-        st.markdown("**Atual × Meta**")
-        clean["% Atual"] = clean["Valor"] / total * 100
-        comparison = clean.melt(
-            id_vars="Classe", value_vars=["% Atual", "Meta (%)"],
-            var_name="Tipo", value_name="Percentual",
-        )
-        fig2 = px.bar(
-            comparison, x="Percentual", y="Classe", color="Tipo", barmode="group",
-            orientation="h",
-            color_discrete_map={"% Atual": Colors.PRIMARY, "Meta (%)": Colors.NEUTRAL},
-        )
-        fig2.update_layout(
-            margin=dict(t=10, b=10, l=10, r=10),
-            legend_title_text="",
-            xaxis_title="%", yaxis_title="",
-        )
-        st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
-
-    # Alertas de desvio (só se a meta total bate 100%)
-    if abs(meta_total - 100) > 1:
-        st.warning(
-            f"As metas somam **{meta_total:.0f}%** — ajuste para somar 100% "
-            "para receber recomendações de rebalanceamento."
-        )
-        return
-
-    st.markdown("**Recomendações de rebalanceamento**")
-    deviations = []
-    for _, row in clean.iterrows():
-        target_value = total * row["Meta (%)"] / 100
-        diff = row["Valor"] - target_value
-        if abs(diff) < total * 0.02:  # ignora desvios menores que 2%
-            continue
-        deviations.append((row["Classe"], diff))
-
-    if not deviations:
-        st.success("✅ Sua carteira está dentro do alvo. Mantenha o ritmo.")
-        return
-    for classe, diff in sorted(deviations, key=lambda x: -abs(x[1])):
-        if diff > 0:
-            st.warning(
-                f"📉 **{classe}**: {brl(diff)} acima da meta. "
-                "Considere direcionar próximos aportes para outras classes."
-            )
-        else:
-            st.info(
-                f"📈 **{classe}**: {brl(abs(diff))} abaixo da meta. "
-                "Vale aportar mais nessa classe."
-            )
+        data = pd.to_datetime(final["Data"]).strftime("%d/%m/%Y")
+        st.write(f"Projeção para **{data}**:")
+        st.write(f"- Capital aplicado: **{brl(principal)}**")
+        st.write(f"- Valor bruto: **{brl(float(final['Bruto']))}**")
+        st.write(f"- IOF: **{brl(iof)}**")
+        st.write(f"- IR: **{brl(ir)}**")
+        st.write(f"- **Líquido: {brl(net)}**")
+        if principal > 0:
+            rent = (net - principal) / principal * 100
+            st.write(f"- Rentabilidade líquida: **{rent:.2f}%**")
