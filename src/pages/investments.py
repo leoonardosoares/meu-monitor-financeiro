@@ -707,6 +707,17 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
     )
     names = [n for n in names if n]
 
+    invalidas = inv.invalid_moves(df_moves)
+    if not invalidas.empty:
+        st.error(
+            f"🚨 {len(invalidas)} movimentação(ões) estão sendo **ignoradas** "
+            "por terem data, tipo ou valor inválidos — o capital delas não "
+            "aparece na carteira. O campo **Tipo** precisa ser exatamente "
+            "`Aporte` ou `Resgate`."
+        )
+        with st.expander("Ver linhas ignoradas"):
+            st.dataframe(invalidas, hide_index=True, use_container_width=True)
+
     _reconciliation_panel(df_transactions, df_moves)
 
     if not names:
@@ -1096,7 +1107,7 @@ def _redemption_scenarios(position: inv.Position,
         bd = inv.taxes_at(
             position.lots, indexador=position.indexador, taxa=position.taxa,
             rates=rates, target=target, classe=position.classe,
-            isento=position.isento,
+            isento=position.isento, produto=position.produto,
         )
         rows.append({
             "Cenário": label,

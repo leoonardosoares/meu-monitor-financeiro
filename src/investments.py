@@ -302,26 +302,107 @@ class Lot:
     amount: float
 
 
+APORTE = "Aporte"
+RESGATE = "Resgate"
+
+_REQUIRED_MOVE_COLUMNS = ("Data", "Investimento", "Tipo", "Valor")
+
+
+def parse_dates(series: pd.Series) -> pd.Series:
+    """Converte datas tolerando os dois formatos que convivem na planilha.
+
+    O app grava ISO (``2026-01-10``); o usuário digita à mão no Google
+    Sheets no formato brasileiro (``10/01/2026``). Aplicar ``dayfirst`` a
+    tudo corromperia o ISO — ``2026-02-20`` viraria "dia 2 do mês 20" e
+    seria descartado. Então o formato é detectado por linha: ISO é lido
+    literalmente, o resto assume dia antes do mês.
+    """
+    s = pd.Series(series)
+    if s.empty:
+        return pd.to_datetime(s, errors="coerce")
+    iso_like = s.astype(str).str.strip().str.match(r"^\d{4}-\d{1,2}-\d{1,2}")
+    iso_like = iso_like.fillna(False)
+
+    out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+    if iso_like.any():
+        out.loc[iso_like] = pd.to_datetime(s[iso_like], errors="coerce")
+    if (~iso_like).any():
+        out.loc[~iso_like] = pd.to_datetime(
+            s[~iso_like], errors="coerce", dayfirst=True,
+        )
+    return out
+
+
+def normalize_move_type(raw) -> str | None:
+    """Normaliza o Tipo da movimentação; `None` se não for reconhecido.
+
+    Aceita variações de caixa e espaços ("aporte", " APORTE "), porque a
+    planilha aceita digitação livre. Valores desconhecidos devolvem `None`
+    para que o chamador os descarte em vez de tratá-los como resgate.
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    text = str(raw).strip().lower()
+    if text in {"aporte", "aportes", "aplicação", "aplicacao", "compra"}:
+        return APORTE
+    if text in {"resgate", "resgates", "saque", "venda", "retirada"}:
+        return RESGATE
+    return None
+
+
+def _clean_moves(df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Movimentações válidas, com Tipo normalizado, valor e data utilizáveis."""
+    if df_moves.empty:
+        return pd.DataFrame(columns=[*_REQUIRED_MOVE_COLUMNS, "_dt", "_tipo"])
+    missing = [c for c in _REQUIRED_MOVE_COLUMNS if c not in df_moves.columns]
+    if missing:
+        return pd.DataFrame(columns=[*_REQUIRED_MOVE_COLUMNS, "_dt", "_tipo"])
+
+    moves = df_moves.copy()
+    moves["_dt"] = parse_dates(moves["Data"])
+    moves["_tipo"] = moves["Tipo"].map(normalize_move_type)
+    moves["_valor"] = pd.to_numeric(moves["Valor"], errors="coerce")
+    return moves.dropna(subset=["_dt", "_tipo", "_valor"])
+
+
+def invalid_moves(df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Linhas que `build_lots` descarta — data, tipo ou valor inutilizáveis.
+
+    Exposto na tela para que capital sumido nunca fique silencioso.
+    """
+    if df_moves.empty:
+        return df_moves
+    missing = [c for c in _REQUIRED_MOVE_COLUMNS if c not in df_moves.columns]
+    if missing:
+        return df_moves
+    valid_idx = _clean_moves(df_moves).index
+    return df_moves.drop(valid_idx, errors="ignore")
+
+
 def build_lots(df_moves: pd.DataFrame, investment: str) -> list[Lot]:
     """Reconstrói os lotes abertos de um investimento consumindo por FIFO.
 
     Aportes criam lotes; resgates consomem os lotes mais antigos primeiro
     (regra usual e a que minimiza a alíquota de IR remanescente).
+
+    Linhas com tipo irreconhecível são DESCARTADAS, nunca tratadas como
+    resgate: um "aporte" com caixa diferente jamais deve subtrair capital.
     """
-    if df_moves.empty:
-        return []
-    moves = df_moves[df_moves["Investimento"] == investment].copy()
+    moves = _clean_moves(df_moves)
     if moves.empty:
         return []
-    moves["_dt"] = pd.to_datetime(moves["Data"], errors="coerce")
-    moves = moves.dropna(subset=["_dt"]).sort_values("_dt")
+    target = str(investment).strip()
+    moves = moves[moves["Investimento"].astype(str).str.strip() == target]
+    if moves.empty:
+        return []
+    moves = moves.sort_values("_dt")
 
     lots: list[list] = []  # [data, valor restante] — mutável durante o FIFO
     for _, row in moves.iterrows():
-        value = float(row["Valor"] or 0)
+        value = float(row["_valor"])
         if value <= 0:
             continue
-        if row["Tipo"] == "Aporte":
+        if row["_tipo"] == APORTE:
             lots.append([row["_dt"].date(), value])
         else:  # Resgate consome do lote mais antigo
             remaining = value
@@ -387,11 +468,15 @@ def value_at(position_lots: list[Lot], *, indexador: str, taxa: float,
 
 def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
              rates: MarketRates, target: date, classe: str,
-             isento: bool, produto: str = "") -> TaxBreakdown:
+             isento: bool, produto: str) -> TaxBreakdown:
     """Tributação agregada de todos os lotes resgatados em `target`.
 
     Cada lote é tributado com o prazo próprio (o IR regressivo depende da
     data de cada aporte), e os resultados são somados.
+
+    `produto` é obrigatório de propósito: um default silencioso já fez a
+    tela de cenários de resgate calcular IOF em papel isento e IR de 15%
+    em fundo de curto prazo (piso 20%), divergindo do resto do app.
     """
     principal = gross = iof = ir = 0.0
     weighted_days = 0.0
@@ -647,7 +732,7 @@ def ledger_investment_flows(df_transactions: pd.DataFrame) -> pd.DataFrame:
     df = df_transactions[df_transactions["Categoria"] == "Investimento"].copy()
     if df.empty:
         return empty
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df["Data_DT"] = parse_dates(df["Data"])
     df = df.dropna(subset=["Data_DT"])
     if df.empty:
         return empty
@@ -671,7 +756,7 @@ def unattributed_flows(df_transactions: pd.DataFrame,
     available: dict[tuple, int] = {}
     if not df_moves.empty and "Data" in df_moves.columns:
         moves = df_moves.copy()
-        moves["Data_DT"] = pd.to_datetime(moves["Data"], errors="coerce")
+        moves["Data_DT"] = parse_dates(moves["Data"])
         moves = moves.dropna(subset=["Data_DT"])
         for _, row in moves.iterrows():
             try:
