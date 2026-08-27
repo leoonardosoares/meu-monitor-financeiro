@@ -724,6 +724,19 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
     )
     names = [n for n in names if n]
 
+    excedentes = inv.unmatched_redemptions(df_moves)
+    if excedentes:
+        linhas = "\n".join(
+            f"- **{nome}**: {brl(v)} de resgate sem capital aplicado que o cubra"
+            for nome, v in excedentes.items()
+        )
+        st.error(
+            "🚨 **Resgates maiores que o capital aplicado.** O excedente "
+            "abaixo está sendo ignorado no cálculo da carteira. Verifique se "
+            "o valor foi digitado errado ou se falta registrar um aporte "
+            "anterior.\n\n" + linhas
+        )
+
     invalidas = inv.invalid_moves(df_moves)
     if not invalidas.empty:
         st.error(
@@ -759,9 +772,8 @@ def _reconciliation_panel(df_transactions: pd.DataFrame,
                           df_moves: pd.DataFrame) -> None:
     """Confronta o razão de caixa (Dashboard) com a alocação por ativo."""
     summary = inv.allocation_summary(df_transactions, df_moves)
-    caixa, alocado, diff = (
-        summary["caixa"], summary["alocado"], summary["diferenca"],
-    )
+    caixa, alocado = summary["caixa"], summary["alocado"]
+    pendente, descasamento = summary["diferenca"], summary["descasamento"]
 
     with st.container(border=True):
         st.markdown("**🔗 Conferência com o Dashboard**")
@@ -770,28 +782,38 @@ def _reconciliation_panel(df_transactions: pd.DataFrame,
                   delta="lançamentos em Entradas e Saídas", delta_color="off")
         c2.metric("Alocado em ativos", brl(alocado),
                   delta="soma das movimentações", delta_color="off")
-        c3.metric("Falta atribuir", brl(diff),
-                  delta_color="off" if abs(diff) < 0.01 else "inverse")
+        c3.metric("Falta atribuir", brl(pendente),
+                  delta_color="off" if abs(pendente) < 0.01 else "inverse")
 
-        if abs(diff) < 0.01:
+        if abs(pendente) < 0.01:
             st.success(
-                "✅ Tudo conciliado — cada real que saiu da conta está "
+                "✅ Tudo conciliado — cada lançamento de investimento está "
                 "atribuído a um ativo."
             )
-        elif diff > 0:
-            st.info(
-                f"Há **{brl(diff)}** lançados como investimento em Entradas e "
-                "Saídas que ainda não foram atribuídos a nenhum ativo. Use a "
-                "seção abaixo para vinculá-los."
-            )
         else:
-            st.warning(
-                f"Há **{brl(abs(diff))}** a mais nas movimentações do que no "
-                "razão de caixa. Isso acontece quando você registra uma "
-                "movimentação sem o lançamento correspondente em Entradas e "
-                "Saídas — o que é esperado se o dinheiro já estava investido "
-                "antes de você usar o app."
+            st.info(
+                f"Há **{brl(abs(pendente))}** em lançamentos de investimento "
+                "sem ativo atribuído. Use a seção abaixo para vinculá-los."
             )
+
+        # Descasamento de totais com tudo pareado significa movimentação sem
+        # lançamento de caixa — esperado para dinheiro já aplicado antes do app.
+        if abs(pendente) < 0.01 and abs(descasamento) > 0.01:
+            if descasamento < 0:
+                st.caption(
+                    f"As movimentações somam {brl(abs(descasamento))} a mais "
+                    "que o razão de caixa. É o esperado para investimentos que "
+                    "já estavam aplicados antes de você usar o app "
+                    "(registrados sem marcar *Lançar também em Entradas e "
+                    "Saídas*)."
+                )
+            else:
+                st.caption(
+                    f"O razão de caixa soma {brl(descasamento)} a mais que as "
+                    "movimentações, mas cada linha já tem par. Costuma ser "
+                    "diferença entre principal resgatado e valor creditado "
+                    "após impostos."
+                )
         st.caption(
             "O Dashboard continua lendo os lançamentos de **Entradas e "
             "Saídas** (categoria Investimento) para saldo bancário, "
