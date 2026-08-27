@@ -609,3 +609,183 @@ def next_ir_step(position: Position, *,
             if nxt < current:
                 return step_date, current, nxt
     return None
+
+
+# ---------------------------------------------------------------------------
+# Ponte com o razão de caixa (aba `financeiro`, Categoria=Investimento)
+# ---------------------------------------------------------------------------
+#
+# Os dois registros são dimensões complementares do MESMO evento, não
+# duplicatas:
+#
+#   financeiro (Categoria=Investimento)  -> o dinheiro saiu da conta corrente.
+#       É o que alimenta saldo bancário, patrimônio e o gráfico de aportes
+#       mensais do Dashboard. Continua sendo a fonte da verdade do caixa.
+#
+#   investimento_movimentacoes           -> em QUAL ativo aquele dinheiro
+#       entrou. Alimenta a carteira, a tributação e a projeção.
+#
+# Quando a atribuição está completa, os totais das duas coincidem — e a
+# diferença vira uma conferência automática exibida na tela.
+
+# financeiro "Saída" = dinheiro saindo da conta para investir = Aporte.
+# financeiro "Entrada" = dinheiro voltando do investimento = Resgate.
+_LEDGER_TO_MOVE = {"Saída": "Aporte", "Entrada": "Resgate"}
+_MOVE_TO_LEDGER = {v: k for k, v in _LEDGER_TO_MOVE.items()}
+
+
+def ledger_investment_flows(df_transactions: pd.DataFrame) -> pd.DataFrame:
+    """Lançamentos de investimento do razão de caixa, com a data parseada.
+
+    Acrescenta `Movimento` (Aporte/Resgate) e `Data_DT`.
+    """
+    empty = pd.DataFrame(
+        columns=["Data", "Descrição", "Valor", "Tipo", "Movimento", "Data_DT"]
+    )
+    if df_transactions.empty or "Categoria" not in df_transactions.columns:
+        return empty
+    df = df_transactions[df_transactions["Categoria"] == "Investimento"].copy()
+    if df.empty:
+        return empty
+    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df = df.dropna(subset=["Data_DT"])
+    if df.empty:
+        return empty
+    df["Movimento"] = df["Tipo"].map(_LEDGER_TO_MOVE)
+    df = df.dropna(subset=["Movimento"])
+    return df[["Data", "Descrição", "Valor", "Tipo", "Movimento", "Data_DT"]]
+
+
+def unattributed_flows(df_transactions: pd.DataFrame,
+                       df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Lançamentos do razão de caixa ainda sem ativo atribuído.
+
+    O pareamento é por (data, valor, natureza) e consome uma movimentação
+    por lançamento — assim dois aportes iguais no mesmo dia exigem duas
+    movimentações para ficarem quitados.
+    """
+    ledger = ledger_investment_flows(df_transactions)
+    if ledger.empty:
+        return ledger.drop(columns=["Data_DT"], errors="ignore")
+
+    available: dict[tuple, int] = {}
+    if not df_moves.empty and "Data" in df_moves.columns:
+        moves = df_moves.copy()
+        moves["Data_DT"] = pd.to_datetime(moves["Data"], errors="coerce")
+        moves = moves.dropna(subset=["Data_DT"])
+        for _, row in moves.iterrows():
+            try:
+                value = round(float(row.get("Valor") or 0), 2)
+            except (TypeError, ValueError):
+                continue
+            key = (row["Data_DT"].date(), value, str(row.get("Tipo") or ""))
+            available[key] = available.get(key, 0) + 1
+
+    pending = []
+    for idx, row in ledger.iterrows():
+        try:
+            value = round(float(row["Valor"] or 0), 2)
+        except (TypeError, ValueError):
+            continue
+        key = (row["Data_DT"].date(), value, row["Movimento"])
+        if available.get(key, 0) > 0:
+            available[key] -= 1
+        else:
+            pending.append(idx)
+
+    return ledger.loc[pending].drop(columns=["Data_DT"])
+
+
+def allocation_summary(df_transactions: pd.DataFrame,
+                       df_moves: pd.DataFrame) -> dict[str, float]:
+    """Confronta o razão de caixa com a alocação por ativo.
+
+    Retorna: `caixa` (aportes − resgates no financeiro), `alocado` (idem nas
+    movimentações) e `diferenca` (o que ainda falta atribuir).
+    """
+    ledger = ledger_investment_flows(df_transactions)
+    if ledger.empty:
+        caixa = 0.0
+    else:
+        valores = pd.to_numeric(ledger["Valor"], errors="coerce").fillna(0)
+        aportes = float(valores[ledger["Movimento"] == "Aporte"].sum())
+        resgates = float(valores[ledger["Movimento"] == "Resgate"].sum())
+        caixa = aportes - resgates
+
+    if df_moves.empty or "Tipo" not in df_moves.columns:
+        alocado = 0.0
+    else:
+        valores = pd.to_numeric(df_moves["Valor"], errors="coerce").fillna(0)
+        aportes = float(valores[df_moves["Tipo"] == "Aporte"].sum())
+        resgates = float(valores[df_moves["Tipo"] == "Resgate"].sum())
+        alocado = aportes - resgates
+
+    return {"caixa": caixa, "alocado": alocado, "diferenca": caixa - alocado}
+
+
+def ledger_row_for_move(*, data, valor: float, tipo: str,
+                        investimento: str) -> dict:
+    """Lançamento equivalente no razão de caixa para uma movimentação nova."""
+    descricao = (
+        f"Aporte — {investimento}" if tipo == "Aporte"
+        else f"Resgate — {investimento}"
+    )
+    return {
+        "Data": data,
+        "Descrição": descricao,
+        "Categoria": "Investimento",
+        "Valor": valor,
+        "Tipo": _MOVE_TO_LEDGER[tipo],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manutenção do cadastro (renomear / excluir em cascata)
+# ---------------------------------------------------------------------------
+
+def rename_asset(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
+                 old: str, new: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Renomeia um ativo e leva junto as movimentações que apontam para ele.
+
+    As movimentações referenciam o ativo pelo nome; renomear só no cadastro
+    deixaria o histórico órfão e a posição sumiria da carteira.
+    """
+    assets = df_assets.copy()
+    moves = df_moves.copy()
+    if not assets.empty and "Nome" in assets.columns:
+        assets["Nome"] = assets["Nome"].astype(str).str.strip().replace(
+            {old: new}
+        )
+    if not moves.empty and "Investimento" in moves.columns:
+        moves["Investimento"] = moves["Investimento"].astype(str).str.strip() \
+            .replace({old: new})
+    return assets, moves
+
+
+def delete_asset(df_assets: pd.DataFrame, df_moves: pd.DataFrame, name: str, *,
+                 drop_moves: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Remove um ativo do cadastro e, por padrão, suas movimentações.
+
+    Manter as movimentações (`drop_moves=False`) deixa o histórico gravado
+    mas órfão — ele não aparece em nenhuma carteira até que um ativo com o
+    mesmo nome seja cadastrado de novo.
+    """
+    assets = df_assets.copy()
+    moves = df_moves.copy()
+    if not assets.empty and "Nome" in assets.columns:
+        assets = assets[assets["Nome"].astype(str).str.strip() != name]
+    if drop_moves and not moves.empty and "Investimento" in moves.columns:
+        moves = moves[moves["Investimento"].astype(str).str.strip() != name]
+    return assets, moves
+
+
+def orphan_moves(df_assets: pd.DataFrame,
+                 df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Movimentações que apontam para um ativo que não existe no cadastro."""
+    if df_moves.empty or "Investimento" not in df_moves.columns:
+        return df_moves
+    known = set()
+    if not df_assets.empty and "Nome" in df_assets.columns:
+        known = set(df_assets["Nome"].dropna().astype(str).str.strip())
+    names = df_moves["Investimento"].astype(str).str.strip()
+    return df_moves[~names.isin(known)]
