@@ -64,6 +64,7 @@ class ConfigKeys:
     TAXA_CDI = "taxa_cdi"
     TAXA_SELIC = "taxa_selic"
     TAXA_IPCA = "taxa_ipca"
+    TAXA_TR = "taxa_tr"
 
 # Defaults para configurações.
 DEFAULTS = {
@@ -72,9 +73,10 @@ DEFAULTS = {
     ConfigKeys.LIMITE_CARTAO: 2000.0,
     ConfigKeys.META_RESERVA: 10000.0,
     ConfigKeys.RECEITA_PREVISTA: 0.0,
-    ConfigKeys.TAXA_CDI: 10.5,
-    ConfigKeys.TAXA_SELIC: 10.75,
-    ConfigKeys.TAXA_IPCA: 4.5,
+    ConfigKeys.TAXA_CDI: 13.90,
+    ConfigKeys.TAXA_SELIC: 14.00,
+    ConfigKeys.TAXA_IPCA: 4.44,
+    ConfigKeys.TAXA_TR: 0.1709,
 }
 
 # Paleta de cores — verde "carteira premium" (gradiente do mais claro

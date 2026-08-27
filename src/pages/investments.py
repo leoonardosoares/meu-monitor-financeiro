@@ -19,9 +19,10 @@ from src.format import brl
 def _market_rates() -> inv.MarketRates:
     """Premissas de mercado salvas nas configurações."""
     return inv.MarketRates(
-        cdi=repository.load_config(ConfigKeys.TAXA_CDI, 10.5),
-        selic=repository.load_config(ConfigKeys.TAXA_SELIC, 10.75),
-        ipca=repository.load_config(ConfigKeys.TAXA_IPCA, 4.5),
+        cdi=repository.load_config(ConfigKeys.TAXA_CDI, 13.90),
+        selic=repository.load_config(ConfigKeys.TAXA_SELIC, 14.00),
+        ipca=repository.load_config(ConfigKeys.TAXA_IPCA, 4.44),
+        tr=repository.load_config(ConfigKeys.TAXA_TR, 0.1709),
     )
 
 
@@ -50,9 +51,11 @@ def render(*, df_transactions: pd.DataFrame) -> None:
     positions = inv.build_positions(df_assets, df_moves, rates)
 
     with tabs[0]:
-        _wallet_tab(df_assets=df_assets, positions=positions, rates=rates)
+        _wallet_tab(df_assets=df_assets, df_moves=df_moves,
+                    positions=positions, rates=rates)
     with tabs[1]:
-        _moves_tab(df_assets=df_assets, df_moves=df_moves, positions=positions)
+        _moves_tab(df_assets=df_assets, df_moves=df_moves,
+                   positions=positions, df_transactions=df_transactions)
     with tabs[2]:
         _projection_tab(positions=positions, rates=rates)
     with tabs[3]:
@@ -88,6 +91,12 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float) -> None:
 
     st.divider()
     st.subheader("💸 Movimentar")
+    st.caption(
+        "Estes formulários registram o aporte **no fluxo de caixa**, sem dizer "
+        "em qual ativo o dinheiro entrou — é como o app funcionava antes. "
+        "Para acompanhar rentabilidade e impostos por ativo, use a aba "
+        "**Movimentações**, que faz as duas coisas de uma vez."
+    )
 
     col_in, col_out = st.columns(2)
     with col_in:
@@ -404,7 +413,8 @@ def _position_tab(*, invested: float, df_transactions: pd.DataFrame) -> None:
 # Aba: Carteira — cadastro dos ativos e posição consolidada
 # ---------------------------------------------------------------------------
 
-def _wallet_tab(*, df_assets: pd.DataFrame, positions: list[inv.Position],
+def _wallet_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
+                positions: list[inv.Position],
                 rates: inv.MarketRates) -> None:
     st.subheader("Minha carteira")
     st.caption(
@@ -412,6 +422,25 @@ def _wallet_tab(*, df_assets: pd.DataFrame, positions: list[inv.Position],
         "partir das movimentações, projetada pela taxa do papel e já "
         "descontada de IOF e IR se você resgatasse hoje."
     )
+
+    orphans = inv.orphan_moves(df_assets, df_moves)
+    if not orphans.empty:
+        nomes = sorted(set(orphans["Investimento"].astype(str).str.strip()))
+        st.warning(
+            "⚠️ Há movimentações apontando para ativos que não existem mais "
+            "no cadastro: **" + "**, **".join(nomes) + "**. Cadastre um ativo "
+            "com esse nome para recuperá-las, ou apague-as na aba "
+            "**Movimentações**."
+        )
+
+    dups = inv.duplicate_asset_names(df_assets)
+    if dups:
+        st.warning(
+            "⚠️ Nome repetido no cadastro: **" + "**, **".join(dups) + "**. "
+            "As movimentações apontam para o ativo pelo nome, então apenas o "
+            "primeiro cadastro de cada nome é usado — renomeie os demais para "
+            "que a carteira fique correta."
+        )
 
     if positions:
         _wallet_kpis(positions)
@@ -431,6 +460,7 @@ def _wallet_tab(*, df_assets: pd.DataFrame, positions: list[inv.Position],
     _new_asset_form()
     st.divider()
     _assets_editor(df_assets)
+    _manage_asset_section(df_assets, df_moves)
 
 
 def _wallet_kpis(positions: list[inv.Position]) -> None:
@@ -537,22 +567,34 @@ def _market_assumptions(rates: inv.MarketRates) -> None:
             "Estes índices alimentam a projeção dos papéis pós-fixados e "
             "indexados. Atualize quando o cenário mudar."
         )
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         cdi = c1.number_input("CDI (% a.a.)", min_value=0.0, max_value=100.0,
                               value=float(rates.cdi), step=0.25)
         selic = c2.number_input("Selic (% a.a.)", min_value=0.0, max_value=100.0,
                                 value=float(rates.selic), step=0.25)
         ipca = c3.number_input("IPCA (% a.a.)", min_value=0.0, max_value=100.0,
                                value=float(rates.ipca), step=0.25)
+        tr = c4.number_input("TR (% ao mês)", min_value=0.0, max_value=5.0,
+                             value=float(rates.tr), step=0.01, format="%.4f",
+                             help="Taxa Referencial — entra no cálculo da poupança.")
         if st.button("Salvar premissas"):
             repository.save_config(ConfigKeys.TAXA_CDI, cdi)
             repository.save_config(ConfigKeys.TAXA_SELIC, selic)
             repository.save_config(ConfigKeys.TAXA_IPCA, ipca)
+            repository.save_config(ConfigKeys.TAXA_TR, tr)
             st.success("Premissas atualizadas.")
             st.rerun()
         st.caption(
-            f"Poupança calculada pela regra vigente: "
-            f"{rates.poupanca_annual:.2f}% a.a."
+            f"Poupança pela regra da Lei 12.703/2012: "
+            f"**{rates.poupanca_annual:.2f}% a.a.** "
+            f"(Selic {'>' if rates.selic > 8.5 else '≤'} 8,5% → "
+            f"{'0,5% a.m.' if rates.selic > 8.5 else '70% da Selic'} + TR)."
+        )
+        st.caption(
+            "⚠️ A projeção mantém estes índices **constantes** por todo o "
+            "horizonte. Em projeções de vários anos isso tende a "
+            "superestimar papéis pós-fixados se o mercado espera queda de "
+            "juros — considere usar uma taxa média do período."
         )
 
 
@@ -649,10 +691,9 @@ def _assets_editor(df_assets: pd.DataFrame) -> None:
 
 # ---------------------------------------------------------------------------
 # Aba: Movimentações — aportes e resgates por ativo
-# ---------------------------------------------------------------------------
-
 def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
-               positions: list[inv.Position]) -> None:
+               positions: list[inv.Position],
+               df_transactions: pd.DataFrame) -> None:
     st.subheader("Movimentações por ativo")
     st.caption(
         "Cada aporte vira um lote com data própria — é o que permite calcular "
@@ -665,12 +706,131 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
         if not df_assets.empty else []
     )
     names = [n for n in names if n]
+
+    _reconciliation_panel(df_transactions, df_moves)
+
     if not names:
         st.info("Cadastre um ativo na aba **Carteira** antes de movimentar.")
         return
 
-    saldo = {p.name: p.principal for p in positions}
+    st.divider()
+    _attribution_section(df_transactions, df_moves, names)
 
+    st.divider()
+    st.markdown("**➕ Nova movimentação**")
+    _new_move_form(names, positions)
+
+    if df_moves.empty:
+        return
+
+    st.divider()
+    _moves_history(df_moves, names)
+
+
+def _reconciliation_panel(df_transactions: pd.DataFrame,
+                          df_moves: pd.DataFrame) -> None:
+    """Confronta o razão de caixa (Dashboard) com a alocação por ativo."""
+    summary = inv.allocation_summary(df_transactions, df_moves)
+    caixa, alocado, diff = (
+        summary["caixa"], summary["alocado"], summary["diferenca"],
+    )
+
+    with st.container(border=True):
+        st.markdown("**🔗 Conferência com o Dashboard**")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Investido (Dashboard)", brl(caixa),
+                  delta="lançamentos em Entradas e Saídas", delta_color="off")
+        c2.metric("Alocado em ativos", brl(alocado),
+                  delta="soma das movimentações", delta_color="off")
+        c3.metric("Falta atribuir", brl(diff),
+                  delta_color="off" if abs(diff) < 0.01 else "inverse")
+
+        if abs(diff) < 0.01:
+            st.success(
+                "✅ Tudo conciliado — cada real que saiu da conta está "
+                "atribuído a um ativo."
+            )
+        elif diff > 0:
+            st.info(
+                f"Há **{brl(diff)}** lançados como investimento em Entradas e "
+                "Saídas que ainda não foram atribuídos a nenhum ativo. Use a "
+                "seção abaixo para vinculá-los."
+            )
+        else:
+            st.warning(
+                f"Há **{brl(abs(diff))}** a mais nas movimentações do que no "
+                "razão de caixa. Isso acontece quando você registra uma "
+                "movimentação sem o lançamento correspondente em Entradas e "
+                "Saídas — o que é esperado se o dinheiro já estava investido "
+                "antes de você usar o app."
+            )
+        st.caption(
+            "O Dashboard continua lendo os lançamentos de **Entradas e "
+            "Saídas** (categoria Investimento) para saldo bancário, "
+            "patrimônio e gráfico de aportes. As movimentações por ativo "
+            "servem à carteira, à tributação e à projeção."
+        )
+
+
+def _attribution_section(df_transactions: pd.DataFrame,
+                         df_moves: pd.DataFrame, names: list[str]) -> None:
+    """Atribui lançamentos antigos do razão de caixa a um ativo cadastrado."""
+    pending = inv.unattributed_flows(df_transactions, df_moves)
+    st.markdown("**📎 Atribuir lançamentos antigos a um ativo**")
+
+    if pending.empty:
+        st.caption(
+            "Nenhum lançamento pendente — todos os aportes e resgates já "
+            "estão vinculados a um ativo."
+        )
+        return
+
+    st.caption(
+        f"{len(pending)} lançamento(s) de investimento feitos em Entradas e "
+        "Saídas ainda sem ativo. Escolha o destino de cada um e confirme — "
+        "isso **não** cria lançamento novo no caixa, apenas informa em qual "
+        "ativo o dinheiro entrou."
+    )
+
+    editor = pending.copy()
+    editor["Atribuir a"] = "— não atribuir —"
+    editor = editor[["Data", "Descrição", "Movimento", "Valor", "Atribuir a"]]
+
+    with st.form("attribute_flows"):
+        edited = st.data_editor(
+            editor, hide_index=True, use_container_width=True,
+            disabled=["Data", "Descrição", "Movimento", "Valor"],
+            column_config={
+                "Valor": st.column_config.NumberColumn(
+                    "Valor (R$)", format="%.2f"),
+                "Movimento": st.column_config.TextColumn(
+                    "Natureza", help="Aporte = saiu da conta · Resgate = voltou"),
+                "Atribuir a": st.column_config.SelectboxColumn(
+                    "Atribuir a", options=["— não atribuir —"] + names,
+                    required=True),
+            },
+        )
+        if st.form_submit_button("🔗 Vincular selecionados"):
+            chosen = edited[edited["Atribuir a"] != "— não atribuir —"]
+            if chosen.empty:
+                st.warning("Escolha ao menos um ativo de destino.")
+            else:
+                novas = [{
+                    "Data": row["Data"],
+                    "Investimento": row["Atribuir a"],
+                    "Tipo": row["Movimento"],
+                    "Valor": float(row["Valor"]),
+                    "Observação": "Atribuído do histórico",
+                } for _, row in chosen.iterrows()]
+                repository.save_asset_moves(pd.concat(
+                    [df_moves, pd.DataFrame(novas)], ignore_index=True,
+                ))
+                st.success(f"{len(novas)} lançamento(s) vinculado(s).")
+                st.rerun()
+
+
+def _new_move_form(names: list[str], positions: list[inv.Position]) -> None:
+    saldo = {p.name: p.principal for p in positions}
     with st.form("new_asset_move", clear_on_submit=True):
         c1, c2 = st.columns([2, 1])
         ativo = c1.selectbox("Investimento", names)
@@ -679,6 +839,14 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
         data_mov = c3.date_input("Data", value=date.today(), format="DD/MM/YYYY")
         valor = c4.number_input("Valor (R$)", min_value=0.01, format="%.2f")
         obs = st.text_input("Observação (opcional)")
+        lancar_caixa = st.checkbox(
+            "Lançar também em Entradas e Saídas (afeta saldo bancário e Dashboard)",
+            value=True,
+            help="Deixe marcado quando o dinheiro realmente saiu ou entrou na "
+                 "conta corrente agora. Desmarque ao cadastrar um "
+                 "investimento antigo que já estava aplicado — assim o "
+                 "Dashboard não conta o aporte duas vezes.",
+        )
 
         if st.form_submit_button("Registrar movimentação"):
             aplicado = saldo.get(ativo, 0.0)
@@ -692,14 +860,19 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                     "Data": data_mov, "Investimento": ativo,
                     "Tipo": tipo, "Valor": valor, "Observação": obs.strip(),
                 })
-                st.success(f"{tipo} de {brl(valor)} em '{ativo}' registrado.")
+                if lancar_caixa:
+                    repository.append_transaction(inv.ledger_row_for_move(
+                        data=data_mov, valor=valor, tipo=tipo,
+                        investimento=ativo,
+                    ))
+                destino = " e no fluxo de caixa" if lancar_caixa else ""
+                st.success(
+                    f"{tipo} de {brl(valor)} em '{ativo}' registrado{destino}."
+                )
                 st.rerun()
 
-    if df_moves.empty:
-        st.info("Nenhuma movimentação registrada ainda.")
-        return
 
-    st.divider()
+def _moves_history(df_moves: pd.DataFrame, names: list[str]) -> None:
     st.markdown("**Histórico de movimentações**")
 
     filtro = st.selectbox("Filtrar por ativo:", ["Todos"] + names)
@@ -734,7 +907,11 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                 repository.save_asset_moves(merged)
                 st.success("Movimentações salvas.")
                 st.rerun()
-
+    st.caption(
+        "Apagar uma movimentação aqui **não** apaga o lançamento "
+        "correspondente em Entradas e Saídas — ele volta a aparecer como "
+        "pendente de atribuição."
+    )
 
 # ---------------------------------------------------------------------------
 # Aba: Projeção e Resgate
@@ -803,7 +980,15 @@ def _asset_projection(position: inv.Position, rates: inv.MarketRates,
 
     curve = inv.projection_curve(position, rates, months=months)
     if curve.empty:
-        st.info("Sem dados para projetar este ativo.")
+        if position.maturity and position.maturity < date.today():
+            st.warning(
+                f"Este papel venceu em "
+                f"**{position.maturity.strftime('%d/%m/%Y')}** — não há mais "
+                "o que projetar. Registre o resgate na aba **Movimentações** "
+                "para tirá-lo da carteira."
+            )
+        else:
+            st.info("Sem dados para projetar este ativo.")
         return
 
     _gross_net_chart(curve, title=f"{position.name}: bruto × líquido")
@@ -986,3 +1171,94 @@ def _tax_composition(position: inv.Position, rates: inv.MarketRates,
         if principal > 0:
             rent = (net - principal) / principal * 100
             st.write(f"- Rentabilidade líquida: **{rent:.2f}%**")
+
+
+def _manage_asset_section(df_assets: pd.DataFrame,
+                          df_moves: pd.DataFrame) -> None:
+    """Renomear (em cascata) ou excluir um ativo cadastrado.
+
+    Renomear pelo editor de tabela quebraria o vínculo com as movimentações,
+    que referenciam o ativo pelo nome — por isso a operação tem lugar próprio.
+    """
+    if df_assets.empty or "Nome" not in df_assets.columns:
+        return
+    names = sorted({
+        n for n in df_assets["Nome"].dropna().astype(str).str.strip() if n
+    })
+    if not names:
+        return
+
+    with st.expander("🛠️ Renomear ou excluir um ativo"):
+        alvo = st.selectbox("Ativo:", names, key="manage_asset_target")
+        vinculadas = (
+            df_moves[df_moves["Investimento"].astype(str).str.strip() == alvo]
+            if not df_moves.empty and "Investimento" in df_moves.columns
+            else pd.DataFrame()
+        )
+        st.caption(f"**{alvo}** tem {len(vinculadas)} movimentação(ões) vinculada(s).")
+
+        st.markdown("**Renomear**")
+        with st.form("rename_asset"):
+            novo = st.text_input("Novo nome", value=alvo)
+            st.caption(
+                "As movimentações são atualizadas junto, então o histórico e "
+                "a posição são preservados."
+            )
+            if st.form_submit_button("Renomear ativo"):
+                novo_limpo = novo.strip()
+                if not novo_limpo:
+                    st.error("Informe um nome.")
+                elif novo_limpo == alvo:
+                    st.info("O nome é o mesmo — nada a fazer.")
+                elif novo_limpo in names:
+                    st.error(
+                        f"Já existe um ativo chamado '{novo_limpo}'. "
+                        "Escolha outro nome."
+                    )
+                else:
+                    assets, moves = inv.rename_asset(
+                        df_assets, df_moves, alvo, novo_limpo,
+                    )
+                    repository.save_assets(assets)
+                    repository.save_asset_moves(moves)
+                    st.success(
+                        f"'{alvo}' renomeado para '{novo_limpo}' "
+                        f"({len(vinculadas)} movimentação(ões) atualizada(s))."
+                    )
+                    st.rerun()
+
+        st.divider()
+        st.markdown("**Excluir**")
+        manter = st.checkbox(
+            "Manter as movimentações no histórico",
+            value=False,
+            help="Marcado: as movimentações continuam gravadas, mas ficam "
+                 "órfãs até você cadastrar um ativo com o mesmo nome. "
+                 "Desmarcado: são apagadas junto.",
+            key="delete_keep_moves",
+        )
+        confirmar = st.text_input(
+            f"Para confirmar, digite o nome do ativo ({alvo}):",
+            key="delete_confirm_name",
+        )
+        if st.button("🗑️ Excluir ativo", key="delete_asset_btn"):
+            if confirmar.strip() != alvo:
+                st.error("O nome digitado não confere. Exclusão cancelada.")
+            else:
+                assets, moves = inv.delete_asset(
+                    df_assets, df_moves, alvo, drop_moves=not manter,
+                )
+                repository.save_assets(assets)
+                repository.save_asset_moves(moves)
+                st.success(
+                    f"'{alvo}' excluído"
+                    + ("; movimentações mantidas no histórico."
+                       if manter else
+                       f" junto com {len(vinculadas)} movimentação(ões).")
+                )
+                st.rerun()
+        st.caption(
+            "Excluir um ativo **não** apaga os lançamentos de Entradas e "
+            "Saídas — seu saldo bancário e o patrimônio do Dashboard "
+            "permanecem intactos."
+        )

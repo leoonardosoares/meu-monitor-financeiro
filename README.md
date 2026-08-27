@@ -6,17 +6,42 @@ sincronizados em **Google Sheets**.
 ## Funcionalidades
 
 - **Dashboard inteligente** — KPIs com comparação mês-a-mês, taxa de poupança,
-  independência financeira, projeção de fluxo do mês, Sankey de fluxo
-  financeiro, visão anual (últimos 12 meses) e insights automáticos.
+  independência financeira, ritmo de gasto do mês, visão anual (12 meses),
+  status dos orçamentos, aportes mensais e insights automáticos.
+- **Fluxo de Caixa** — projeção dos próximos meses considerando receita,
+  custos fixos e faturas já contratadas, com simulador de compras
+  ("e se eu comprar isso em 10x?").
 - **Entradas e Saídas** — lançamentos manuais com busca, filtros e
   auto-sugestão de categoria a partir do histórico.
 - **Cartão de Crédito** — controle de faturas com parcelamento e regras de
   fechamento/vencimento configuráveis.
-- **Investimentos** — reserva de emergência, posição real (rendimento total),
-  carteira por classe de ativo (alocação atual × meta) e simulador de juros
-  compostos com aportes mensais e desconto de IR.
+- **Investimentos** — carteira ativo a ativo com tributação real: posição
+  líquida de IOF e IR, projeção bruto × líquido no tempo, cenários de
+  resgate e alerta de queda da alíquota. Inclui reserva de emergência e
+  simulador de juros compostos.
 - **Configurações e Orçamento** — categorias, tetos por categoria, regras do
   cartão, custos fixos com **geração automática** de lançamentos mensais.
+
+## Tributação de investimentos
+
+O módulo `src/investments.py` implementa as regras brasileiras vigentes,
+conferidas contra fontes primárias:
+
+- **IOF** — tabela regressiva do Decreto 6.306/2007 (96% no 1º dia a 0% no
+  30º), incidente sobre o **rendimento**. Não se aplica a renda variável nem
+  a papéis com carência legal acima de 30 dias (LCI, LCA, CRI, CRA, LIG).
+- **IR** — tabela regressiva da Lei 11.033/2004 (22,5% / 20% / 17,5% / 15%)
+  por prazo em dias corridos, com limites inclusivos. Fundos de curto prazo
+  param em 20%. Isentos: LCI, LCA, CRI, CRA, LIG, debêntures incentivadas e
+  poupança. Renda variável: ações 15%, FIIs 20%.
+- **Ordem** — o IOF é abatido do rendimento primeiro; o IR incide sobre o
+  rendimento já líquido de IOF.
+- **Lotes** — cada aporte tem seu próprio prazo fiscal; resgates consomem
+  lotes por FIFO. É o que faz a alíquota regressiva ficar correta quando há
+  aportes em datas diferentes.
+- **Projeção** — base 252 dias úteis. `% do CDI` multiplica o fator diário
+  (não a taxa anual) e `IPCA+` compõe multiplicativamente (Fisher) — os dois
+  erros mais comuns em calculadoras caseiras.
 
 ## Estrutura do projeto
 
@@ -35,12 +60,14 @@ meu-monitor-financeiro/
     ├── sheets.py             # Conexão com Google Sheets
     ├── repository.py         # CRUD por aba (transações, cartão, etc.)
     ├── finance.py            # Cálculos financeiros (KPIs, séries temporais)
+    ├── investments.py        # Tributação (IOF/IR), lotes e projeção de ativos
     ├── insights.py           # Geração de insights em linguagem natural
     ├── credit_card.py        # Regras de fatura/parcela
     ├── components.py         # Widgets reusáveis (cards, gráficos)
     ├── sidebar.py            # Sidebar (logout, filtros, menu)
     └── pages/
         ├── dashboard.py
+        ├── cash_flow.py
         ├── transactions.py
         ├── credit_card.py
         ├── investments.py
