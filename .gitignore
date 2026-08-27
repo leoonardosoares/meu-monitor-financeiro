@@ -39,3 +39,8 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Scripts de repro/scratch criados durante investigação — não fazem parte do app
+repro*.py
+scratch*.py
+/tmp_*.py

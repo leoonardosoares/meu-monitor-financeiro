@@ -16,6 +16,7 @@ Convenções adotadas
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -163,6 +164,29 @@ def is_isento_ir(produto: str) -> bool:
     return produto in PRODUTOS_ISENTOS_IR
 
 
+_ISENTO_SIM = {"sim", "s", "true", "verdadeiro", "1", "x", "y", "yes",
+               "isento", "isenta", "✓"}
+_ISENTO_NAO = {"nao", "não", "n", "false", "falso", "0", "-", "tributado"}
+
+
+def parse_isento(raw, produto: str) -> bool:
+    """Interpreta a coluna "Isento IR", caindo no produto quando ambíguo.
+
+    Reconhecer só um conjunto fechado de "sins" fazia qualquer outra grafia
+    (inclusive "Isento") virar `False` e tributar uma LCI em 22,5%. Agora
+    ambos os lados são reconhecidos e o que não for entendido volta para a
+    regra do produto, que é a fonte legal.
+    """
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw or "").strip().lower()
+    if text in _ISENTO_SIM:
+        return True
+    if text in _ISENTO_NAO:
+        return False
+    return is_isento_ir(produto)
+
+
 # ---------------------------------------------------------------------------
 # Projeção de valor futuro
 # ---------------------------------------------------------------------------
@@ -233,9 +257,15 @@ def project_value(principal: float, *, indexador: str, taxa: float,
     if principal <= 0 or days <= 0:
         return max(principal, 0.0)
     annual = annual_rate(indexador, taxa, rates)
-    if annual <= 0:
+    if annual == 0:
         return principal
+    if annual <= -1:
+        # Capital totalmente consumido; evita base negativa com expoente
+        # fracionário (que produziria número complexo).
+        return 0.0
     du = business_days(days)
+    # Taxa negativa (deflação no IPCA+, spread negativo) precisa aparecer como
+    # perda — devolver o principal esconderia o cenário adverso.
     return principal * (1 + annual) ** (du / DIAS_UTEIS_ANO)
 
 
@@ -302,26 +332,119 @@ class Lot:
     amount: float
 
 
+APORTE = "Aporte"
+RESGATE = "Resgate"
+
+_REQUIRED_MOVE_COLUMNS = ("Data", "Investimento", "Tipo", "Valor")
+
+
+def parse_dates(series: pd.Series) -> pd.Series:
+    """Converte datas tolerando os dois formatos que convivem na planilha.
+
+    O app grava ISO (``2026-01-10``); o usuário digita à mão no Google
+    Sheets no formato brasileiro (``10/01/2026``). Aplicar ``dayfirst`` a
+    tudo corromperia o ISO — ``2026-02-20`` viraria "dia 2 do mês 20" e
+    seria descartado. Então o formato é detectado por linha: ISO é lido
+    literalmente, o resto assume dia antes do mês.
+    """
+    s = pd.Series(series)
+    if s.empty:
+        return pd.to_datetime(s, errors="coerce")
+    iso_like = s.astype(str).str.strip().str.match(r"^\d{4}-\d{1,2}-\d{1,2}")
+    iso_like = iso_like.fillna(False)
+
+    out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+    if iso_like.any():
+        out.loc[iso_like] = pd.to_datetime(s[iso_like], errors="coerce")
+    if (~iso_like).any():
+        out.loc[~iso_like] = pd.to_datetime(
+            s[~iso_like], errors="coerce", dayfirst=True,
+        )
+    return out
+
+
+def normalize_move_type(raw) -> str | None:
+    """Normaliza o Tipo da movimentação; `None` se não for reconhecido.
+
+    Aceita variações de caixa e espaços ("aporte", " APORTE "), porque a
+    planilha aceita digitação livre. Valores desconhecidos devolvem `None`
+    para que o chamador os descarte em vez de tratá-los como resgate.
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    text = str(raw).strip().lower()
+    if text in {"aporte", "aportes", "aplicação", "aplicacao", "compra"}:
+        return APORTE
+    if text in {"resgate", "resgates", "saque", "venda", "retirada"}:
+        return RESGATE
+    return None
+
+
+def _clean_moves(df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Movimentações válidas, com Tipo normalizado, valor e data utilizáveis."""
+    if df_moves.empty:
+        return pd.DataFrame(columns=[*_REQUIRED_MOVE_COLUMNS, "_dt", "_tipo"])
+    missing = [c for c in _REQUIRED_MOVE_COLUMNS if c not in df_moves.columns]
+    if missing:
+        return pd.DataFrame(columns=[*_REQUIRED_MOVE_COLUMNS, "_dt", "_tipo"])
+
+    moves = df_moves.copy()
+    moves["_dt"] = parse_dates(moves["Data"])
+    moves["_tipo"] = moves["Tipo"].map(normalize_move_type)
+    moves["_valor"] = pd.to_numeric(moves["Valor"], errors="coerce")
+    return moves.dropna(subset=["_dt", "_tipo", "_valor"])
+
+
+def invalid_moves(df_moves: pd.DataFrame) -> pd.DataFrame:
+    """Linhas que `build_lots` descarta — data, tipo ou valor inutilizáveis.
+
+    Exposto na tela para que capital sumido nunca fique silencioso.
+    """
+    if df_moves.empty:
+        return df_moves
+    missing = [c for c in _REQUIRED_MOVE_COLUMNS if c not in df_moves.columns]
+    if missing:
+        return df_moves
+    valid_idx = _clean_moves(df_moves).index
+    return df_moves.drop(valid_idx, errors="ignore")
+
+
 def build_lots(df_moves: pd.DataFrame, investment: str) -> list[Lot]:
     """Reconstrói os lotes abertos de um investimento consumindo por FIFO.
 
     Aportes criam lotes; resgates consomem os lotes mais antigos primeiro
     (regra usual e a que minimiza a alíquota de IR remanescente).
+
+    Linhas com tipo irreconhecível são DESCARTADAS, nunca tratadas como
+    resgate: um "aporte" com caixa diferente jamais deve subtrair capital.
     """
-    if df_moves.empty:
-        return []
-    moves = df_moves[df_moves["Investimento"] == investment].copy()
+    moves = _clean_moves(df_moves)
     if moves.empty:
         return []
-    moves["_dt"] = pd.to_datetime(moves["Data"], errors="coerce")
-    moves = moves.dropna(subset=["_dt"]).sort_values("_dt")
+    target = str(investment).strip()
+    moves = moves[moves["Investimento"].astype(str).str.strip() == target]
+    if moves.empty:
+        return []
+    moves = moves.sort_values("_dt")
 
+    lots, _ = _run_fifo(moves)
+    return [Lot(application_date=d, amount=v) for d, v in lots]
+
+
+def _run_fifo(moves: pd.DataFrame) -> tuple[list[list], float]:
+    """Executa o FIFO e devolve (lotes abertos, resgate não coberto).
+
+    O excedente é devolvido em vez de descartado: um resgate maior que o
+    capital aplicado significa dado errado, e sumir com ele em silêncio
+    fazia a carteira mostrar capital que não existe.
+    """
     lots: list[list] = []  # [data, valor restante] — mutável durante o FIFO
+    unmatched = 0.0
     for _, row in moves.iterrows():
-        value = float(row["Valor"] or 0)
+        value = float(row["_valor"])
         if value <= 0:
             continue
-        if row["Tipo"] == "Aporte":
+        if row["_tipo"] == APORTE:
             lots.append([row["_dt"].date(), value])
         else:  # Resgate consome do lote mais antigo
             remaining = value
@@ -332,7 +455,28 @@ def build_lots(df_moves: pd.DataFrame, investment: str) -> list[Lot]:
                 lot[1] -= take
                 remaining -= take
             lots = [lot for lot in lots if lot[1] > 1e-9]
-    return [Lot(application_date=d, amount=v) for d, v in lots]
+            if remaining > 1e-6:
+                unmatched += remaining
+    return lots, unmatched
+
+
+def unmatched_redemptions(df_moves: pd.DataFrame) -> dict[str, float]:
+    """Por ativo, quanto de resgate não encontrou capital aplicado.
+
+    Sinaliza lançamentos impossíveis (resgate maior que o aportado, ou
+    resgate anterior ao aporte) que antes evaporavam sem aviso.
+    """
+    moves = _clean_moves(df_moves)
+    if moves.empty:
+        return {}
+    out: dict[str, float] = {}
+    for name, group in moves.groupby(
+        moves["Investimento"].astype(str).str.strip()
+    ):
+        _, unmatched = _run_fifo(group.sort_values("_dt"))
+        if unmatched > 1e-6:
+            out[str(name)] = unmatched
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -387,11 +531,15 @@ def value_at(position_lots: list[Lot], *, indexador: str, taxa: float,
 
 def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
              rates: MarketRates, target: date, classe: str,
-             isento: bool, produto: str = "") -> TaxBreakdown:
+             isento: bool, produto: str) -> TaxBreakdown:
     """Tributação agregada de todos os lotes resgatados em `target`.
 
     Cada lote é tributado com o prazo próprio (o IR regressivo depende da
     data de cada aporte), e os resultados são somados.
+
+    `produto` é obrigatório de propósito: um default silencioso já fez a
+    tela de cenários de resgate calcular IOF em papel isento e IR de 15%
+    em fundo de curto prazo (piso 20%), divergindo do resto do app.
     """
     principal = gross = iof = ir = 0.0
     weighted_days = 0.0
@@ -419,6 +567,18 @@ def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
         ir_pct=(ir / (yield_gross - iof)) if (yield_gross - iof) > 0 else 0.0,
         days=avg_days,
     )
+
+
+def valuation_date(target: date, maturity: date | None) -> date:
+    """Data efetiva de avaliação: um papel não rende depois de vencer.
+
+    Quem paga o rendimento é o emissor, e ele para na data de vencimento —
+    o dinheiro fica parado até o resgate. Avaliar um papel vencido em
+    `today` faria a posição crescer para sempre.
+    """
+    if maturity is None:
+        return target
+    return min(target, maturity)
 
 
 def duplicate_asset_names(df_assets: pd.DataFrame) -> list[str]:
@@ -462,25 +622,21 @@ def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
         classe = str(row.get("Classe") or "Renda Fixa")
         produto = str(row.get("Produto") or "Outro")
         indexador = str(row.get("Indexador") or Indexador.SEM_TAXA)
-        try:
-            taxa = float(row.get("Taxa") or 0)
-        except (TypeError, ValueError):
-            taxa = 0.0
+        # `float(x or 0)` deixava NaN passar (NaN é truthy e float(NaN) não
+        # levanta), e a NaN contaminava annual_rate -> project_value -> toda a
+        # carteira, inclusive os outros ativos.
+        taxa_raw = pd.to_numeric(row.get("Taxa"), errors="coerce")
+        taxa = float(taxa_raw) if pd.notna(taxa_raw) and math.isfinite(taxa_raw) else 0.0
 
-        isento_raw = row.get("Isento IR")
-        if isinstance(isento_raw, str) and isento_raw.strip():
-            isento = isento_raw.strip().lower() in {"sim", "true", "1", "s"}
-        elif isinstance(isento_raw, bool):
-            isento = isento_raw
-        else:
-            isento = is_isento_ir(produto)
+        isento = parse_isento(row.get("Isento IR"), produto)
 
         maturity_raw = pd.to_datetime(row.get("Vencimento"), errors="coerce")
         maturity = maturity_raw.date() if pd.notna(maturity_raw) else None
 
         bd = taxes_at(
             lots, indexador=indexador, taxa=taxa, rates=rates,
-            target=today, classe=classe, isento=isento, produto=produto,
+            target=valuation_date(today, maturity), classe=classe,
+            isento=isento, produto=produto,
         )
         positions.append(Position(
             name=name, classe=classe, produto=produto,
@@ -527,8 +683,11 @@ def projection_curve(position: Position, rates: MarketRates, *,
         })
 
     # Garante o ponto exato do vencimento, que raramente cai num aniversário
-    # mensal — é a data que mais interessa para decidir o resgate.
-    if position.maturity and position.maturity > today:
+    # mensal — é a data que mais interessa para decidir o resgate. Só entra
+    # se estiver DENTRO do horizonte pedido: anexá-lo de um vencimento em
+    # 2031 num gráfico de 6 meses criaria um salto sem sentido.
+    horizon_end = (pd.Timestamp(today) + pd.DateOffset(months=months)).date()
+    if position.maturity and today < position.maturity <= horizon_end:
         if not rows or rows[-1]["Data"] < position.maturity:
             bd = taxes_at(
                 position.lots, indexador=position.indexador,
@@ -562,9 +721,7 @@ def portfolio_curve(positions: list[Position], rates: MarketRates, *,
         target = (pd.Timestamp(today) + pd.DateOffset(months=i)).date()
         principal = gross = iof = ir = net = 0.0
         for p in positions:
-            # Após o vencimento, o dinheiro é considerado resgatado e parado
-            # (não continua rendendo à taxa do papel vencido).
-            effective = min(target, p.maturity) if p.maturity else target
+            effective = valuation_date(target, p.maturity)
             bd = taxes_at(
                 p.lots, indexador=p.indexador, taxa=p.taxa, rates=rates,
                 target=effective, classe=p.classe, isento=p.isento,
@@ -584,30 +741,55 @@ def portfolio_curve(positions: list[Position], rates: MarketRates, *,
 
 def next_ir_step(position: Position, *,
                  today: date | None = None) -> tuple[date, float, float] | None:
-    """Próxima data em que a alíquota de IR cai, e as alíquotas envolvidas.
+    """Próxima data em que a alíquota efetiva da posição CAI, e as alíquotas.
 
-    Retorna (data, aliquota_atual, proxima_aliquota) ou None se já está na
-    menor faixa, se o produto é isento ou se é renda variável.
+    Retorna (data, alíquota_hoje, alíquota_na_data), ambas ponderadas pelo
+    capital de cada lote, ou None se não há degrau à frente, se o produto é
+    isento ou se é renda variável.
+
+    Antes esta função olhava só o lote MAIS RECENTE, o que produzia dois
+    erros: anunciava uma data muito posterior à real (ignorando lotes mais
+    antigos prestes a mudar de faixa) e citava alíquotas de um único aporte
+    como se fossem "sua alíquota" — que podia até estar SUBINDO na data
+    anunciada, por causa do reequilíbrio entre os lotes.
     """
     if position.isento or position.classe in CLASSES_RENDA_VARIAVEL:
         return None
     today = today or date.today()
     if not position.lots:
         return None
+    total = sum(lot.amount for lot in position.lots)
+    if total <= 0:
+        return None
 
-    # O lote mais recente é o que ainda tem degraus a percorrer.
-    newest = max(lot.application_date for lot in position.lots)
-    days_held = (today - newest).days
     curto = position.produto in PRODUTOS_CURTO_PRAZO
     rate_fn = ir_rate_fundo_curto_prazo if curto else ir_rate_renda_fixa
     thresholds = (180,) if curto else (180, 360, 720)
-    for threshold in thresholds:
-        if days_held <= threshold:
-            step_date = newest + timedelta(days=threshold + 1)
-            current = rate_fn(days_held)
-            nxt = rate_fn(threshold + 1)
-            if nxt < current:
-                return step_date, current, nxt
+
+    # Toda data futura em que ALGUM lote troca de faixa.
+    candidates: set[date] = set()
+    for lot in position.lots:
+        held = (today - lot.application_date).days
+        for threshold in thresholds:
+            if held <= threshold:
+                candidates.add(
+                    lot.application_date + timedelta(days=threshold + 1)
+                )
+    future = sorted(d for d in candidates if d > today)
+    if not future:
+        return None
+
+    def weighted_rate(at: date) -> float:
+        return sum(
+            lot.amount * rate_fn(max((at - lot.application_date).days, 0))
+            for lot in position.lots
+        ) / total
+
+    current = weighted_rate(today)
+    for step_date in future:
+        nxt = weighted_rate(step_date)
+        if nxt < current - 1e-12:
+            return step_date, current, nxt
     return None
 
 
@@ -647,7 +829,7 @@ def ledger_investment_flows(df_transactions: pd.DataFrame) -> pd.DataFrame:
     df = df_transactions[df_transactions["Categoria"] == "Investimento"].copy()
     if df.empty:
         return empty
-    df["Data_DT"] = pd.to_datetime(df["Data"], errors="coerce")
+    df["Data_DT"] = parse_dates(df["Data"])
     df = df.dropna(subset=["Data_DT"])
     if df.empty:
         return empty
@@ -671,14 +853,14 @@ def unattributed_flows(df_transactions: pd.DataFrame,
     available: dict[tuple, int] = {}
     if not df_moves.empty and "Data" in df_moves.columns:
         moves = df_moves.copy()
-        moves["Data_DT"] = pd.to_datetime(moves["Data"], errors="coerce")
+        moves["Data_DT"] = parse_dates(moves["Data"])
         moves = moves.dropna(subset=["Data_DT"])
         for _, row in moves.iterrows():
-            try:
-                value = round(float(row.get("Valor") or 0), 2)
-            except (TypeError, ValueError):
+            value_raw = pd.to_numeric(row.get("Valor"), errors="coerce")
+            tipo = normalize_move_type(row.get("Tipo"))
+            if pd.isna(value_raw) or tipo is None:
                 continue
-            key = (row["Data_DT"].date(), value, str(row.get("Tipo") or ""))
+            key = (row["Data_DT"].date(), round(float(value_raw), 2), tipo)
             available[key] = available.get(key, 0) + 1
 
     pending = []
@@ -715,12 +897,29 @@ def allocation_summary(df_transactions: pd.DataFrame,
     if df_moves.empty or "Tipo" not in df_moves.columns:
         alocado = 0.0
     else:
+        # Mesma normalização de `build_lots`: sem isso, uma linha digitada
+        # como "aporte" contava na carteira mas valia zero aqui, e o painel
+        # convidava a atribuir um lançamento já atribuído — duplicando capital.
         valores = pd.to_numeric(df_moves["Valor"], errors="coerce").fillna(0)
-        aportes = float(valores[df_moves["Tipo"] == "Aporte"].sum())
-        resgates = float(valores[df_moves["Tipo"] == "Resgate"].sum())
+        tipos = df_moves["Tipo"].map(normalize_move_type)
+        aportes = float(valores[tipos == APORTE].sum())
+        resgates = float(valores[tipos == RESGATE].sum())
         alocado = aportes - resgates
 
-    return {"caixa": caixa, "alocado": alocado, "diferenca": caixa - alocado}
+    # "Falta atribuir" vem das MESMAS linhas que a tela de atribuição lista,
+    # e não do agregado — assim painel e lista não podem se contradizer.
+    pending = unattributed_flows(df_transactions, df_moves)
+    if pending.empty:
+        pendente = 0.0
+    else:
+        pv = pd.to_numeric(pending["Valor"], errors="coerce").fillna(0)
+        pendente = float(pv[pending["Movimento"] == APORTE].sum()) \
+            - float(pv[pending["Movimento"] == RESGATE].sum())
+
+    return {
+        "caixa": caixa, "alocado": alocado,
+        "diferenca": pendente, "descasamento": caixa - alocado,
+    }
 
 
 def ledger_row_for_move(*, data, valor: float, tipo: str,
