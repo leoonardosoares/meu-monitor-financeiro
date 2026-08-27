@@ -33,6 +33,8 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "investimento_movimentacoes": [
         "Data", "Investimento", "Tipo", "Valor", "Observação",
     ],
+    # Valor bruto real de cada ativo, informado pela corretora/banco.
+    "posicao_ativos": ["Data", "Investimento", "Valor"],
 }
 
 # Categorias automáticas que sempre aparecem nos selects, mesmo que o

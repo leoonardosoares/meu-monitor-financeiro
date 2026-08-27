@@ -231,6 +231,27 @@ def append_asset_move(row: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Posição real por ativo (snapshots do valor bruto na corretora)
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_asset_snapshots() -> pd.DataFrame:
+    return _to_numeric(_read("posicao_ativos"), ["Valor"])
+
+
+def save_asset_snapshots(df: pd.DataFrame) -> None:
+    _overwrite("posicao_ativos", df)
+    load_asset_snapshots.clear()
+
+
+def append_asset_snapshot(row: dict) -> None:
+    df = pd.concat(
+        [load_asset_snapshots(), pd.DataFrame([row])], ignore_index=True,
+    )
+    save_asset_snapshots(df)
+
+
+# ---------------------------------------------------------------------------
 # Alocação de investimentos por classe
 # ---------------------------------------------------------------------------
 

@@ -16,9 +16,10 @@ sincronizados em **Google Sheets**.
 - **Cartão de Crédito** — controle de faturas com parcelamento e regras de
   fechamento/vencimento configuráveis.
 - **Investimentos** — carteira ativo a ativo com tributação real: posição
-  líquida de IOF e IR, projeção bruto × líquido no tempo, cenários de
-  resgate e alerta de queda da alíquota. Inclui reserva de emergência e
-  simulador de juros compostos.
+  líquida de IOF e IR, **posição real informada por ativo** (real ×
+  projetado), projeção bruto × líquido no tempo, cenários de resgate e
+  alerta de queda da alíquota. Inclui reserva de emergência e simulador
+  de juros compostos.
 - **Configurações e Orçamento** — categorias, tetos por categoria, regras do
   cartão, custos fixos com **geração automática** de lançamentos mensais.
 
@@ -42,6 +43,10 @@ conferidas contra fontes primárias:
 - **Projeção** — base 252 dias úteis. `% do CDI` multiplica o fator diário
   (não a taxa anual) e `IPCA+` compõe multiplicativamente (Fisher) — os dois
   erros mais comuns em calculadoras caseiras.
+- **Posição real** — ao informar o valor bruto que a corretora mostra, ele
+  passa a valer no lugar da projeção, inclusive como base dos impostos, e a
+  curva futura cresce a partir dele. O rateio entre lotes preserva o IR
+  regressivo por data de aporte.
 
 ## Estrutura do projeto
 
