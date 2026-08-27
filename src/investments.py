@@ -499,6 +499,22 @@ class Position:
     iof_today: float
     ir_today: float
     lots: list[Lot]
+    # Última posição real informada pela corretora, quando existe. Quando
+    # presente, ela — e não a projeção — define o valor de hoje.
+    real_value: float | None = None
+    real_date: date | None = None
+    projected_today: float = 0.0
+
+    @property
+    def has_real(self) -> bool:
+        return self.real_value is not None
+
+    @property
+    def real_vs_projected(self) -> float:
+        """Quanto a posição real está acima (+) ou abaixo (−) da projeção."""
+        if self.real_value is None:
+            return 0.0
+        return self.real_value - self.projected_today
 
     @property
     def yield_gross_today(self) -> float:
@@ -531,7 +547,8 @@ def value_at(position_lots: list[Lot], *, indexador: str, taxa: float,
 
 def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
              rates: MarketRates, target: date, classe: str,
-             isento: bool, produto: str) -> TaxBreakdown:
+             isento: bool, produto: str,
+             gross_override: float | None = None) -> TaxBreakdown:
     """Tributação agregada de todos os lotes resgatados em `target`.
 
     Cada lote é tributado com o prazo próprio (o IR regressivo depende da
@@ -541,13 +558,35 @@ def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
     tela de cenários de resgate calcular IOF em papel isento e IR de 15%
     em fundo de curto prazo (piso 20%), divergindo do resto do app.
     """
+    # Com um bruto real informado pela corretora, ele manda: rateamos entre
+    # os lotes na proporção do valor projetado de cada um, para que o IR
+    # regressivo continue usando o prazo próprio de cada aporte.
+    projected = [
+        project_value(
+            lot.amount, indexador=indexador, taxa=taxa,
+            days=max((target - lot.application_date).days, 0), rates=rates,
+        )
+        for lot in position_lots
+    ]
+    total_projected = sum(projected)
+    shares: list[float] | None = None
+    if gross_override is not None and total_projected > 0:
+        shares = [pv / total_projected for pv in projected]
+    elif gross_override is not None:
+        total_principal = sum(lot.amount for lot in position_lots)
+        shares = [
+            (lot.amount / total_principal) if total_principal > 0 else 0.0
+            for lot in position_lots
+        ]
+
     principal = gross = iof = ir = 0.0
     weighted_days = 0.0
-    for lot in position_lots:
+    for i, lot in enumerate(position_lots):
         days = max((target - lot.application_date).days, 0)
-        lot_gross = project_value(
-            lot.amount, indexador=indexador, taxa=taxa, days=days, rates=rates,
-        )
+        if shares is not None:
+            lot_gross = gross_override * shares[i]
+        else:
+            lot_gross = projected[i]
         bd = compute_taxes(
             principal=lot.amount, gross=lot_gross, days=days,
             classe=classe, isento=isento, produto=produto,
@@ -567,6 +606,44 @@ def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
         ir_pct=(ir / (yield_gross - iof)) if (yield_gross - iof) > 0 else 0.0,
         days=avg_days,
     )
+
+
+def latest_snapshots(df_snapshots: pd.DataFrame) -> dict[str, tuple[date, float]]:
+    """Última posição real informada por ativo: {nome: (data, valor bruto)}."""
+    if df_snapshots.empty:
+        return {}
+    needed = {"Data", "Investimento", "Valor"}
+    if not needed.issubset(df_snapshots.columns):
+        return {}
+    df = df_snapshots.copy()
+    df["_dt"] = parse_dates(df["Data"])
+    df["_valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+    df = df.dropna(subset=["_dt", "_valor"])
+    if df.empty:
+        return {}
+    df["_nome"] = df["Investimento"].astype(str).str.strip()
+    df = df.sort_values("_dt")
+    out: dict[str, tuple[date, float]] = {}
+    for name, group in df.groupby("_nome"):
+        row = group.iloc[-1]
+        out[str(name)] = (row["_dt"].date(), float(row["_valor"]))
+    return out
+
+
+def snapshot_history(df_snapshots: pd.DataFrame, name: str) -> pd.DataFrame:
+    """Histórico ordenado das posições reais de um ativo (Data, Valor)."""
+    empty = pd.DataFrame(columns=["Data", "Valor"])
+    if df_snapshots.empty:
+        return empty
+    needed = {"Data", "Investimento", "Valor"}
+    if not needed.issubset(df_snapshots.columns):
+        return empty
+    df = df_snapshots.copy()
+    df["Data"] = parse_dates(df["Data"])
+    df["Valor"] = pd.to_numeric(df["Valor"], errors="coerce")
+    df = df.dropna(subset=["Data", "Valor"])
+    df = df[df["Investimento"].astype(str).str.strip() == str(name).strip()]
+    return df[["Data", "Valor"]].sort_values("Data").reset_index(drop=True)
 
 
 def valuation_date(target: date, maturity: date | None) -> date:
@@ -597,11 +674,21 @@ def duplicate_asset_names(df_assets: pd.DataFrame) -> list[str]:
 
 def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                     rates: MarketRates, *,
+                    df_snapshots: pd.DataFrame | None = None,
                     today: date | None = None) -> list[Position]:
-    """Consolida cadastro + movimentações em posições avaliadas hoje."""
+    """Consolida cadastro + movimentações em posições avaliadas hoje.
+
+    Se houver posição real informada para o ativo (`df_snapshots`), ela
+    substitui a projeção no valor de hoje — inclusive na base de cálculo
+    dos impostos, que passam a incidir sobre o rendimento que existe de
+    fato, e não sobre o estimado.
+    """
     today = today or date.today()
     if df_assets.empty:
         return []
+    snapshots = latest_snapshots(
+        df_snapshots if df_snapshots is not None else pd.DataFrame()
+    )
 
     positions: list[Position] = []
     seen_names: set[str] = set()
@@ -633,17 +720,31 @@ def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
         maturity_raw = pd.to_datetime(row.get("Vencimento"), errors="coerce")
         maturity = maturity_raw.date() if pd.notna(maturity_raw) else None
 
-        bd = taxes_at(
+        effective = valuation_date(today, maturity)
+        projected = taxes_at(
             lots, indexador=indexador, taxa=taxa, rates=rates,
-            target=valuation_date(today, maturity), classe=classe,
-            isento=isento, produto=produto,
+            target=effective, classe=classe, isento=isento, produto=produto,
         )
+
+        snap = snapshots.get(name)
+        real_value = real_date = None
+        bd = projected
+        if snap is not None:
+            real_date, real_value = snap
+            bd = taxes_at(
+                lots, indexador=indexador, taxa=taxa, rates=rates,
+                target=effective, classe=classe, isento=isento,
+                produto=produto, gross_override=real_value,
+            )
+
         positions.append(Position(
             name=name, classe=classe, produto=produto,
             instituicao=str(row.get("Instituição") or ""),
             indexador=indexador, taxa=taxa, isento=isento, maturity=maturity,
             principal=bd.principal, gross_today=bd.gross, net_today=bd.net,
             iof_today=bd.iof, ir_today=bd.ir, lots=lots,
+            real_value=real_value, real_date=real_date,
+            projected_today=projected.gross,
         ))
     return positions
 
@@ -651,6 +752,26 @@ def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
 # ---------------------------------------------------------------------------
 # Projeção temporal (para gráficos e decisão de resgate)
 # ---------------------------------------------------------------------------
+
+def anchored_gross(position: Position, rates: MarketRates,
+                   target: date) -> float | None:
+    """Bruto projetado a partir da última posição REAL informada.
+
+    Sem âncora (ou para datas anteriores a ela), devolve None e o chamador
+    projeta desde os aportes. Com âncora, o rendimento futuro cresce a
+    partir do valor que a corretora mostra hoje — projetar desde o aporte
+    original ignoraria a diferença já observada entre estimativa e real.
+    """
+    if position.real_value is None or position.real_date is None:
+        return None
+    if target < position.real_date:
+        return None
+    days = (target - position.real_date).days
+    return project_value(
+        position.real_value, indexador=position.indexador,
+        taxa=position.taxa, days=days, rates=rates,
+    )
+
 
 def projection_curve(position: Position, rates: MarketRates, *,
                      months: int = 36,
@@ -670,6 +791,7 @@ def projection_curve(position: Position, rates: MarketRates, *,
             position.lots, indexador=position.indexador, taxa=position.taxa,
             rates=rates, target=target, classe=position.classe,
             isento=position.isento, produto=position.produto,
+            gross_override=anchored_gross(position, rates, target),
         )
         rows.append({
             "Data": target,
@@ -694,6 +816,9 @@ def projection_curve(position: Position, rates: MarketRates, *,
                 taxa=position.taxa, rates=rates, target=position.maturity,
                 classe=position.classe, isento=position.isento,
                 produto=position.produto,
+                gross_override=anchored_gross(
+                    position, rates, position.maturity,
+                ),
             )
             rows.append({
                 "Data": position.maturity,
@@ -726,6 +851,7 @@ def portfolio_curve(positions: list[Position], rates: MarketRates, *,
                 p.lots, indexador=p.indexador, taxa=p.taxa, rates=rates,
                 target=effective, classe=p.classe, isento=p.isento,
                 produto=p.produto,
+                gross_override=anchored_gross(p, rates, effective),
             )
             principal += bd.principal
             gross += bd.gross

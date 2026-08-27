@@ -48,16 +48,21 @@ def render(*, df_transactions: pd.DataFrame) -> None:
     rates = _market_rates()
     df_assets = repository.load_assets()
     df_moves = repository.load_asset_moves()
-    positions = inv.build_positions(df_assets, df_moves, rates)
+    df_snapshots = repository.load_asset_snapshots()
+    positions = inv.build_positions(
+        df_assets, df_moves, rates, df_snapshots=df_snapshots,
+    )
 
     with tabs[0]:
         _wallet_tab(df_assets=df_assets, df_moves=df_moves,
-                    positions=positions, rates=rates)
+                    df_snapshots=df_snapshots, positions=positions,
+                    rates=rates)
     with tabs[1]:
         _moves_tab(df_assets=df_assets, df_moves=df_moves,
                    positions=positions, df_transactions=df_transactions)
     with tabs[2]:
-        _projection_tab(positions=positions, rates=rates)
+        _projection_tab(positions=positions, rates=rates,
+                        df_snapshots=df_snapshots)
     with tabs[3]:
         _position_tab(invested=invested, df_transactions=df_transactions)
     with tabs[4]:
@@ -414,7 +419,7 @@ def _position_tab(*, invested: float, df_transactions: pd.DataFrame) -> None:
 # ---------------------------------------------------------------------------
 
 def _wallet_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
-                positions: list[inv.Position],
+                df_snapshots: pd.DataFrame, positions: list[inv.Position],
                 rates: inv.MarketRates) -> None:
     st.subheader("Minha carteira")
     st.caption(
@@ -472,6 +477,10 @@ def _wallet_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
             "abaixo e registre o primeiro aporte na aba **Movimentações**."
         )
 
+    if positions:
+        _real_position_section(positions, df_snapshots)
+        st.divider()
+
     _market_assumptions(rates)
     st.divider()
     _new_asset_form()
@@ -494,9 +503,15 @@ def _wallet_kpis(positions: list[inv.Position]) -> None:
               delta_color="normal" if gross >= principal else "inverse")
     c3.metric("Impostos se resgatar hoje", brl(taxes),
               delta="IOF + IR", delta_color="off")
+    com_real = sum(1 for p in positions if p.has_real)
     c4.metric("Valor líquido hoje 💎", brl(net),
               delta=f"{brl(net - principal)} no bolso",
               delta_color="normal" if net >= principal else "inverse")
+    if com_real:
+        st.caption(
+            f"📌 {com_real} de {len(positions)} ativo(s) usam a **posição real** "
+            "informada por você; os demais usam a projeção pela taxa contratada."
+        )
 
 
 def _wallet_table(positions: list[inv.Position]) -> None:
@@ -515,6 +530,7 @@ def _wallet_table(positions: list[inv.Position]) -> None:
             "Remuneração": _rate_label(p),
             "Aplicado": p.principal,
             "Bruto hoje": p.gross_today,
+            "Fonte": "📌 real" if p.has_real else "projeção",
             "Impostos": p.iof_today + p.ir_today,
             "Líquido hoje": p.net_today,
             "Rende (líq.)": p.yield_net_today,
@@ -968,7 +984,8 @@ def _moves_history(df_moves: pd.DataFrame, names: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def _projection_tab(*, positions: list[inv.Position],
-                    rates: inv.MarketRates) -> None:
+                    rates: inv.MarketRates,
+                    df_snapshots: pd.DataFrame) -> None:
     st.subheader("Projeção e melhor momento de resgate")
     st.caption(
         "Quanto cada ativo vale ao longo do tempo, bruto e já líquido de IOF "
@@ -994,7 +1011,7 @@ def _projection_tab(*, positions: list[inv.Position],
         _portfolio_projection(positions, rates, horizonte)
     else:
         position = next(p for p in positions if p.name == escolha)
-        _asset_projection(position, rates, horizonte)
+        _asset_projection(position, rates, horizonte, df_snapshots)
 
 
 def _portfolio_projection(positions: list[inv.Position],
@@ -1025,7 +1042,8 @@ def _portfolio_projection(positions: list[inv.Position],
 
 
 def _asset_projection(position: inv.Position, rates: inv.MarketRates,
-                      months: int) -> None:
+                      months: int,
+                      df_snapshots: pd.DataFrame | None = None) -> None:
     _asset_summary(position)
 
     curve = inv.projection_curve(position, rates, months=months)
@@ -1042,6 +1060,9 @@ def _asset_projection(position: inv.Position, rates: inv.MarketRates,
         return
 
     _gross_net_chart(curve, title=f"{position.name}: bruto × líquido")
+    if df_snapshots is not None and not df_snapshots.empty:
+        st.divider()
+        _real_vs_projected_chart(position, df_snapshots, curve)
     st.divider()
     _redemption_scenarios(position, rates)
     st.divider()
@@ -1312,3 +1333,143 @@ def _manage_asset_section(df_assets: pd.DataFrame,
             "Saídas — seu saldo bancário e o patrimônio do Dashboard "
             "permanecem intactos."
         )
+
+
+def _real_position_section(positions: list[inv.Position],
+                           df_snapshots: pd.DataFrame) -> None:
+    """Registro e acompanhamento da posição real de cada ativo."""
+    st.markdown("**📌 Posição real dos ativos**")
+    st.caption(
+        "Informe o valor bruto que a corretora mostra hoje para cada ativo. "
+        "Quando existe posição real, ela substitui a projeção — inclusive na "
+        "base dos impostos — e a curva futura passa a crescer a partir dela."
+    )
+
+    names = [p.name for p in positions]
+    by_name = {p.name: p for p in positions}
+
+    with st.form("new_asset_snapshot", clear_on_submit=True):
+        c1, c2, c3 = st.columns([2, 1, 1])
+        ativo = c1.selectbox("Ativo", names, key="snap_asset")
+        data_snap = c2.date_input("Data", value=date.today(),
+                                  format="DD/MM/YYYY", key="snap_date")
+        alvo = by_name[ativo]
+        valor = c3.number_input(
+            "Valor bruto (R$)", min_value=0.0, format="%.2f",
+            value=float(round(alvo.projected_today, 2)),
+            help="Pré-preenchido com o valor projetado — troque pelo que "
+                 "aparece no seu extrato.",
+            key="snap_value",
+        )
+        if st.form_submit_button("📌 Registrar posição"):
+            repository.append_asset_snapshot({
+                "Data": data_snap, "Investimento": ativo, "Valor": valor,
+            })
+            st.success(f"Posição de '{ativo}' atualizada para {brl(valor)}.")
+            st.rerun()
+
+    com_real = [p for p in positions if p.has_real]
+    if com_real:
+        st.markdown("**Real × projetado**")
+        rows = []
+        for p in com_real:
+            desvio_pct = (
+                (p.real_vs_projected / p.projected_today * 100)
+                if p.projected_today else 0.0
+            )
+            rows.append({
+                "Ativo": p.name,
+                "Atualizado em": p.real_date.strftime("%d/%m/%Y"),
+                "Projetado": brl(p.projected_today),
+                "Real": brl(p.real_value or 0),
+                "Diferença": brl(p.real_vs_projected),
+                "Desvio": f"{desvio_pct:+.2f}%",
+                "Rendimento real (líq.)": brl(p.yield_net_today),
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True,
+                     use_container_width=True)
+        st.caption(
+            "Desvio positivo: o ativo rendeu **mais** que a taxa presumida. "
+            "Negativo: rendeu menos — vale revisar a taxa cadastrada ou as "
+            "premissas de mercado."
+        )
+
+    sem_real = [p.name for p in positions if not p.has_real]
+    if sem_real:
+        st.caption(
+            "Ainda sem posição real (usando projeção): "
+            + ", ".join(f"**{n}**" for n in sem_real)
+        )
+
+    if not df_snapshots.empty:
+        with st.expander("🗂️ Histórico de posições informadas"):
+            hist = df_snapshots.copy()
+            dt = inv.parse_dates(hist["Data"]) if "Data" in hist.columns else None
+            if dt is not None:
+                hist = hist.loc[dt.sort_values(ascending=False).index]
+            with st.form("edit_asset_snapshots"):
+                edited = st.data_editor(
+                    hist, num_rows="dynamic", use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Investimento": st.column_config.SelectboxColumn(
+                            "Investimento", options=names, required=True),
+                        "Valor": st.column_config.NumberColumn(
+                            "Valor bruto (R$)", min_value=0.0, format="%.2f"),
+                    },
+                )
+                if st.form_submit_button("💾 Salvar histórico de posições"):
+                    if hist.equals(edited):
+                        st.info("Nada a salvar — sem alterações.")
+                    else:
+                        repository.save_asset_snapshots(edited)
+                        st.success("Histórico atualizado.")
+                        st.rerun()
+
+
+def _real_vs_projected_chart(position: inv.Position,
+                             df_snapshots: pd.DataFrame,
+                             curve: pd.DataFrame) -> None:
+    """Sobrepõe as posições reais já informadas à curva projetada."""
+    hist = inv.snapshot_history(df_snapshots, position.name)
+    if hist.empty:
+        return
+
+    st.markdown("**Posições reais já registradas**")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=pd.to_datetime(curve["Data"]), y=curve["Bruto"],
+        name="Projetado", mode="lines",
+        line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        hovertemplate="Projetado: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=hist["Data"], y=hist["Valor"],
+        name="Real informado", mode="lines+markers",
+        line=dict(color=Colors.INVESTMENT, width=3),
+        marker=dict(size=9, symbol="diamond"),
+        hovertemplate="Real: R$ %{y:,.2f}<extra></extra>",
+    ))
+    fig.update_layout(
+        height=360, hovermode="x unified",
+        yaxis_title="Valor bruto (R$)", xaxis_title="",
+        legend=dict(orientation="h", y=1.12, x=0.5, xanchor="center"),
+        margin=dict(t=40, b=20, l=10, r=10),
+    )
+    fig.update_yaxes(tickprefix="R$ ")
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+
+    if len(hist) >= 2:
+        primeiro, ultimo = hist.iloc[0], hist.iloc[-1]
+        dias = (ultimo["Data"] - primeiro["Data"]).days
+        var = ultimo["Valor"] - primeiro["Valor"]
+        if primeiro["Valor"] > 0 and dias > 0:
+            pct = var / primeiro["Valor"] * 100
+            ao_ano = ((1 + pct / 100) ** (365 / dias) - 1) * 100
+            st.caption(
+                f"Entre {primeiro['Data']:%d/%m/%Y} e {ultimo['Data']:%d/%m/%Y} "
+                f"({dias} dias) a posição variou {brl(var)} ({pct:+.2f}%), "
+                f"o equivalente a **{ao_ano:+.2f}% ao ano** — compare com a "
+                f"taxa contratada ({_rate_label(position)})."
+            )
