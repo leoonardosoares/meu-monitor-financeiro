@@ -414,6 +414,15 @@ def _wallet_tab(*, df_assets: pd.DataFrame, positions: list[inv.Position],
         "descontada de IOF e IR se você resgatasse hoje."
     )
 
+    dups = inv.duplicate_asset_names(df_assets)
+    if dups:
+        st.warning(
+            "⚠️ Nome repetido no cadastro: **" + "**, **".join(dups) + "**. "
+            "As movimentações apontam para o ativo pelo nome, então apenas o "
+            "primeiro cadastro de cada nome é usado — renomeie os demais para "
+            "que a carteira fique correta."
+        )
+
     if positions:
         _wallet_kpis(positions)
         st.divider()
@@ -816,7 +825,15 @@ def _asset_projection(position: inv.Position, rates: inv.MarketRates,
 
     curve = inv.projection_curve(position, rates, months=months)
     if curve.empty:
-        st.info("Sem dados para projetar este ativo.")
+        if position.maturity and position.maturity < date.today():
+            st.warning(
+                f"Este papel venceu em "
+                f"**{position.maturity.strftime('%d/%m/%Y')}** — não há mais "
+                "o que projetar. Registre o resgate na aba **Movimentações** "
+                "para tirá-lo da carteira."
+            )
+        else:
+            st.info("Sem dados para projetar este ativo.")
         return
 
     _gross_net_chart(curve, title=f"{position.name}: bruto × líquido")

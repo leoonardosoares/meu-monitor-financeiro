@@ -421,6 +421,20 @@ def taxes_at(position_lots: list[Lot], *, indexador: str, taxa: float,
     )
 
 
+def duplicate_asset_names(df_assets: pd.DataFrame) -> list[str]:
+    """Nomes cadastrados mais de uma vez (comparação sem espaços extras).
+
+    Como as movimentações apontam para o ativo pelo nome, duplicatas são
+    ambíguas: `build_positions` mantém apenas a primeira ocorrência.
+    """
+    if df_assets.empty or "Nome" not in df_assets.columns:
+        return []
+    names = df_assets["Nome"].dropna().astype(str).str.strip()
+    names = names[names != ""]
+    counts = names.value_counts()
+    return counts[counts > 1].index.tolist()
+
+
 def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                     rates: MarketRates, *,
                     today: date | None = None) -> list[Position]:
@@ -430,10 +444,17 @@ def build_positions(df_assets: pd.DataFrame, df_moves: pd.DataFrame,
         return []
 
     positions: list[Position] = []
+    seen_names: set[str] = set()
     for _, row in df_assets.iterrows():
         name = str(row.get("Nome") or "").strip()
         if not name:
             continue
+        # As movimentações referenciam o ativo pelo nome. Dois cadastros com
+        # o mesmo nome receberiam os mesmos lotes e dobrariam a carteira —
+        # só o primeiro vale. `duplicate_asset_names` avisa o usuário.
+        if name in seen_names:
+            continue
+        seen_names.add(name)
         lots = build_lots(df_moves, name)
         if not lots:
             continue
