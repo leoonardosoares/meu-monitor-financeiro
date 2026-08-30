@@ -161,11 +161,25 @@ class Invoice:
 
 
 def _card_series(df: pd.DataFrame) -> pd.Series:
-    """Coluna Cartão normalizada, com fallback para o cartão padrão."""
+    """Coluna Cartão normalizada, com fallback para o cartão padrão.
+
+    O `fillna` vem ANTES do `astype(str)` de propósito: no pandas 3 o
+    `astype(str)` preserva NaN em vez de convertê-lo para a string "nan",
+    então converter primeiro deixaria as compras antigas (sem cartão
+    preenchido) fora de qualquer fatura.
+    """
     if "Cartão" not in df.columns:
         return pd.Series([DEFAULT_CARD_NAME] * len(df), index=df.index)
-    s = df["Cartão"].astype(str).str.strip()
-    return s.replace({"": DEFAULT_CARD_NAME, "nan": DEFAULT_CARD_NAME})
+    s = df["Cartão"].fillna(DEFAULT_CARD_NAME).astype(str).str.strip()
+    return s.replace({
+        "": DEFAULT_CARD_NAME, "nan": DEFAULT_CARD_NAME,
+        "None": DEFAULT_CARD_NAME,
+    })
+
+
+def card_series(df: pd.DataFrame) -> pd.Series:
+    """Versão pública de `_card_series`, para as telas filtrarem por cartão."""
+    return _card_series(df)
 
 
 def list_card_names(df_cards: pd.DataFrame,
@@ -340,3 +354,79 @@ def settle_invoice(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame,
         df_pay = df_pay[~absorver]
 
     return df_tx, df_pay, invoice.balance
+
+
+def rename_card(df_cards: pd.DataFrame, df_credit_card: pd.DataFrame,
+                df_payments: pd.DataFrame, old: str, new: str
+                ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Renomeia um cartão e leva junto compras e pagamentos.
+
+    Compras e pagamentos referenciam o cartão pelo nome; renomear só no
+    cadastro deixaria a fatura órfã e o limite voltaria a parecer livre.
+    Compras sem a coluna preenchida (lançadas antes do cadastro de cartões)
+    contam como do cartão padrão e também acompanham a troca.
+    """
+    old, new = str(old).strip(), str(new).strip()
+
+    cards = df_cards.copy()
+    if not cards.empty and "Nome" in cards.columns:
+        cards["Nome"] = cards["Nome"].astype(str).str.strip().replace({old: new})
+
+    tx = df_credit_card.copy()
+    if not tx.empty:
+        atual = _card_series(tx)
+        tx["Cartão"] = atual.replace({old: new})
+
+    pay = df_payments.copy()
+    if not pay.empty and "Cartão" in pay.columns:
+        pay["Cartão"] = pay["Cartão"].astype(str).str.strip().replace({old: new})
+
+    return cards, tx, pay
+
+
+def delete_card(df_cards: pd.DataFrame, df_credit_card: pd.DataFrame,
+                df_payments: pd.DataFrame, card: str, *,
+                move_to: str | None = None
+                ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Remove um cartão do cadastro.
+
+    `move_to` transfere as compras e pagamentos para outro cartão; sem ele,
+    compras e pagamentos são apagados junto. Em nenhum caso os lançamentos
+    do fluxo de caixa são tocados.
+    """
+    card = str(card).strip()
+
+    cards = df_cards.copy()
+    if not cards.empty and "Nome" in cards.columns:
+        cards = cards[cards["Nome"].astype(str).str.strip() != card]
+
+    tx = df_credit_card.copy()
+    pay = df_payments.copy()
+
+    if move_to:
+        destino = str(move_to).strip()
+        if not tx.empty:
+            tx["Cartão"] = _card_series(tx).replace({card: destino})
+        if not pay.empty and "Cartão" in pay.columns:
+            pay["Cartão"] = pay["Cartão"].astype(str).str.strip().replace(
+                {card: destino}
+            )
+    else:
+        if not tx.empty:
+            tx = tx[_card_series(tx) != card]
+        if not pay.empty and "Cartão" in pay.columns:
+            pay = pay[pay["Cartão"].astype(str).str.strip() != card]
+
+    return cards, tx, pay
+
+
+def orphan_card_names(df_cards: pd.DataFrame,
+                      df_credit_card: pd.DataFrame) -> list[str]:
+    """Cartões que aparecem em compras mas não estão cadastrados."""
+    if df_credit_card.empty:
+        return []
+    cadastrados = set()
+    if not df_cards.empty and "Nome" in df_cards.columns:
+        cadastrados = set(df_cards["Nome"].dropna().astype(str).str.strip())
+    usados = set(_card_series(df_credit_card).unique())
+    return sorted(n for n in usados if n and n not in cadastrados)

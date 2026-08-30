@@ -45,7 +45,7 @@ def render(*, df_credit_card: pd.DataFrame,
     st.divider()
     _purchase_form(df_cards, df_credit_card, names, categories, card)
     st.divider()
-    _cards_registry(df_cards, names)
+    _cards_registry(df_cards, df_credit_card, df_payments, names)
     st.divider()
     _extract_section(df_credit_card, df_credit_card_period, names,
                      selected_month, card)
@@ -201,9 +201,9 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 def _invoice_lines(df_tx: pd.DataFrame, card: str, month: str) -> pd.DataFrame:
     if df_tx.empty:
         return pd.DataFrame()
-    cards = df_tx["Cartão"].astype(str).str.strip() \
-        if "Cartão" in df_tx.columns else pd.Series(DEFAULT_CARD_NAME, index=df_tx.index)
-    mask = (cards == card) & (df_tx["Mês da Fatura"].astype(str).str.strip() == month)
+    mask = (cc.card_series(df_tx) == card) & (
+        df_tx["Mês da Fatura"].astype(str).str.strip() == month
+    )
     cols = [c for c in ("Data Compra", "Descrição", "Categoria", "Parcela",
                         "Valor", "Status") if c in df_tx.columns]
     out = df_tx.loc[mask, cols].copy()
@@ -302,7 +302,7 @@ def _payment_section(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
         with st.expander("Histórico de pagamentos parciais"):
             hist = df_pay.copy()
             if card:
-                hist = hist[hist["Cartão"].astype(str).str.strip() == card]
+                hist = hist[hist["Cartão"].fillna("").astype(str).str.strip() == card]
             if hist.empty:
                 st.caption("Nenhum pagamento parcial registrado.")
             else:
@@ -386,36 +386,172 @@ def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 # Cadastro de cartões
 # ---------------------------------------------------------------------------
 
-def _cards_registry(df_cards: pd.DataFrame, names: list[str]) -> None:
-    with st.expander("🛠️ Meus cartões"):
-        st.caption(
-            "Cada cartão tem limite e datas próprias — elas definem em qual "
-            "fatura cada compra cai."
+def _cards_registry(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                    df_pay: pd.DataFrame, names: list[str]) -> None:
+    st.subheader("Meus cartões")
+
+    orfaos = cc.orphan_card_names(df_cards, df_tx)
+    if orfaos:
+        st.warning(
+            "⚠️ Há compras em cartões que não estão cadastrados: **"
+            + "**, **".join(orfaos)
+            + "**. Cadastre-os abaixo para definir limite e datas."
         )
-        with st.form("edit_cards"):
-            edited = st.data_editor(
-                df_cards, num_rows="dynamic", hide_index=True,
-                use_container_width=True,
-                column_config={
-                    "Limite": st.column_config.NumberColumn(
-                        "Limite (R$)", min_value=0.0, format="%.2f"),
-                    "Dia Fechamento": st.column_config.NumberColumn(
-                        "Dia Fechamento", min_value=1, max_value=31),
-                    "Dia Vencimento": st.column_config.NumberColumn(
-                        "Dia Vencimento", min_value=1, max_value=31),
-                },
-            )
-            if st.form_submit_button("💾 Salvar cartões"):
-                if df_cards.equals(edited):
-                    st.info("Nada a salvar — sem alterações.")
-                else:
-                    repository.save_cards(edited)
-                    st.success("Cartões atualizados.")
-                    st.rerun()
+
+    _card_settings_form(df_cards, df_tx, df_pay, names)
+    st.divider()
+    _new_card_form(names)
+    st.divider()
+    _card_danger_zone(df_cards, df_tx, df_pay, names)
+
+
+def _card_settings_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                        df_pay: pd.DataFrame, names: list[str]) -> None:
+    """Nome, instituição, limite e datas de um cartão.
+
+    Renomear leva junto compras e pagamentos — sem isso a fatura ficaria
+    órfã e o limite voltaria a parecer livre.
+    """
+    alvo = st.selectbox("Editar cartão:", names, key="card_edit_target")
+    settings = cc.card_settings(df_cards, alvo)
+    compras = int((cc.card_series(df_tx) == alvo).sum()) if not df_tx.empty else 0
+
+    with st.form("edit_card_settings"):
+        c1, c2 = st.columns(2)
+        novo_nome = c1.text_input("Nome", value=alvo)
+        inst = c2.text_input("Instituição", value=settings["instituicao"])
+        c3, c4, c5 = st.columns(3)
+        limite = c3.number_input(
+            "Limite (R$)", min_value=0.0, step=100.0,
+            value=float(settings["limite"]),
+            help="O limite real do cartão. É a base do 'disponível'.",
+        )
+        fech = c4.number_input(
+            "Dia de fechamento", min_value=1, max_value=31, step=1,
+            value=int(settings["fechamento"]),
+            help="Compras a partir desse dia caem na fatura do mês corrente.",
+        )
+        venc = c5.number_input(
+            "Dia de vencimento", min_value=1, max_value=31, step=1,
+            value=int(settings["vencimento"]),
+        )
         st.caption(
-            "Renomear um cartão aqui **não** renomeia as compras já "
-            "lançadas — elas continuam apontando para o nome antigo. Ajuste "
-            "a coluna *Cartão* no extrato se precisar."
+            f"**{alvo}** tem {compras} compra(s) lançada(s). Renomear atualiza "
+            "todas elas e os pagamentos junto."
+        )
+        if st.form_submit_button("💾 Salvar cartão"):
+            limpo = novo_nome.strip()
+            if not limpo:
+                st.error("Informe um nome.")
+            elif limpo != alvo and limpo in names:
+                st.error(f"Já existe um cartão chamado '{limpo}'.")
+            else:
+                cards, tx, pay = (df_cards, df_tx, df_pay)
+                if limpo != alvo:
+                    cards, tx, pay = cc.rename_card(
+                        df_cards, df_tx, df_pay, alvo, limpo,
+                    )
+                    repository.save_credit_card(tx)
+                    repository.save_card_payments(pay)
+
+                if cards.empty or "Nome" not in cards.columns or \
+                        limpo not in set(cards["Nome"].astype(str).str.strip()):
+                    cards = pd.concat([cards, pd.DataFrame([{"Nome": limpo}])],
+                                      ignore_index=True)
+                mask = cards["Nome"].astype(str).str.strip() == limpo
+                cards.loc[mask, "Instituição"] = inst.strip()
+                cards.loc[mask, "Limite"] = limite
+                cards.loc[mask, "Dia Fechamento"] = fech
+                cards.loc[mask, "Dia Vencimento"] = venc
+                repository.save_cards(cards)
+
+                if limpo != alvo:
+                    st.success(
+                        f"'{alvo}' renomeado para '{limpo}' — {compras} "
+                        "compra(s) e os pagamentos acompanharam."
+                    )
+                else:
+                    st.success(f"'{limpo}' atualizado.")
+                st.rerun()
+
+
+def _new_card_form(names: list[str]) -> None:
+    with st.expander("➕ Adicionar outro cartão"):
+        with st.form("new_card", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            nome = c1.text_input("Nome do cartão", placeholder="Ex.: Nubank")
+            inst = c2.text_input("Instituição")
+            c3, c4, c5 = st.columns(3)
+            limite = c3.number_input("Limite (R$)", min_value=0.0,
+                                     value=1000.0, step=100.0)
+            fech = c4.number_input("Dia de fechamento", min_value=1,
+                                   max_value=31, value=8, step=1)
+            venc = c5.number_input("Dia de vencimento", min_value=1,
+                                   max_value=31, value=15, step=1)
+            if st.form_submit_button("Cadastrar cartão"):
+                limpo = nome.strip()
+                if not limpo:
+                    st.error("Informe um nome.")
+                elif limpo in names:
+                    st.error(f"Já existe um cartão chamado '{limpo}'.")
+                else:
+                    repository.save_cards(pd.concat([
+                        repository.load_cards(),
+                        pd.DataFrame([{
+                            "Nome": limpo, "Instituição": inst.strip(),
+                            "Limite": limite, "Dia Fechamento": fech,
+                            "Dia Vencimento": venc,
+                        }]),
+                    ], ignore_index=True))
+                    st.success(f"'{limpo}' cadastrado.")
+                    st.rerun()
+
+
+def _card_danger_zone(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                      df_pay: pd.DataFrame, names: list[str]) -> None:
+    with st.expander("🗑️ Excluir um cartão"):
+        alvo = st.selectbox("Cartão a excluir:", names, key="card_delete_target")
+        compras = int((cc.card_series(df_tx) == alvo).sum()) if not df_tx.empty else 0
+        st.caption(f"**{alvo}** tem {compras} compra(s) lançada(s).")
+
+        outros = [n for n in names if n != alvo]
+        destino = None
+        if compras and outros:
+            mover = st.radio(
+                "O que fazer com as compras?",
+                ["Transferir para outro cartão", "Apagar junto"],
+                key="card_delete_mode",
+            )
+            if mover == "Transferir para outro cartão":
+                destino = st.selectbox("Transferir para:", outros,
+                                       key="card_delete_dest")
+        elif compras:
+            st.caption("Sem outro cartão para transferir — serão apagadas.")
+
+        confirmar = st.text_input(
+            f"Para confirmar, digite o nome do cartão ({alvo}):",
+            key="card_delete_confirm",
+        )
+        if st.button("🗑️ Excluir cartão", key="card_delete_btn"):
+            if confirmar.strip() != alvo:
+                st.error("O nome digitado não confere. Exclusão cancelada.")
+            else:
+                cards, tx, pay = cc.delete_card(
+                    df_cards, df_tx, df_pay, alvo, move_to=destino,
+                )
+                repository.save_cards(cards)
+                repository.save_credit_card(tx)
+                repository.save_card_payments(pay)
+                st.success(
+                    f"'{alvo}' excluído"
+                    + (f"; compras transferidas para '{destino}'."
+                       if destino else
+                       f" junto com {compras} compra(s).")
+                )
+                st.rerun()
+        st.caption(
+            "Excluir um cartão **não** apaga os lançamentos de Entradas e "
+            "Saídas — seu saldo bancário permanece intacto."
         )
 
 
@@ -430,8 +566,8 @@ def _extract_section(df_tx: pd.DataFrame, df_period: pd.DataFrame,
     st.subheader(f"Gastos por categoria{label}")
 
     view = df_period
-    if card and not view.empty and "Cartão" in view.columns:
-        view = view[view["Cartão"].astype(str).str.strip() == card]
+    if card and not view.empty:
+        view = view[cc.card_series(view) == card]
     if view.empty:
         st.info("Nenhuma compra neste período.")
     else:
@@ -444,8 +580,8 @@ def _extract_section(df_tx: pd.DataFrame, df_period: pd.DataFrame,
     st.caption("Edite as linhas livremente e clique em salvar.")
 
     editable = df_tx
-    if card and not editable.empty and "Cartão" in editable.columns:
-        editable = editable[editable["Cartão"].astype(str).str.strip() == card]
+    if card and not editable.empty:
+        editable = editable[cc.card_series(editable) == card]
     if editable.empty:
         st.info("Sem compras lançadas.")
         return
