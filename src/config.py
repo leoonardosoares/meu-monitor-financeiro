@@ -15,8 +15,16 @@ GOOGLE_SCOPES = [
 SHEETS_SCHEMA: dict[str, list[str]] = {
     "financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo"],
     "cartao": [
-        "Data Compra", "Mês da Fatura", "Descrição", "Categoria",
+        "Data Compra", "Mês da Fatura", "Cartão", "Descrição", "Categoria",
         "Parcela", "Valor", "Status",
+    ],
+    # Cadastro dos cartões: cada um com limite e datas próprias.
+    "cartoes": [
+        "Nome", "Instituição", "Limite", "Dia Fechamento", "Dia Vencimento",
+    ],
+    # Pagamentos parciais (adiantamentos) sobre uma fatura ainda aberta.
+    "cartao_pagamentos": [
+        "Data", "Cartão", "Mês da Fatura", "Valor", "Observação",
     ],
     "configuracoes": ["chave", "valor"],
     "categorias": ["Categoria"],
@@ -49,6 +57,9 @@ SYSTEM_CATEGORIES = [
 DEFAULT_USER_CATEGORIES = [
     "Aluguel", "Supermercado", "Lazer", "Saúde", "Outros", "Condomínio",
 ]
+
+# Cartão usado para as compras lançadas antes de existir cadastro de cartões.
+DEFAULT_CARD_NAME = "Principal"
 
 # Categorias que NÃO entram nas Receitas/Despesas do período — são
 # transferências entre contas (conta corrente ↔ conta de investimento)
