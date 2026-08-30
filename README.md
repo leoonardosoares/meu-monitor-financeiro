@@ -8,18 +8,17 @@ sincronizados em **Google Sheets**.
 - **Dashboard inteligente** — KPIs com comparação mês-a-mês, taxa de poupança,
   independência financeira, ritmo de gasto do mês, visão anual (12 meses),
   status dos orçamentos, aportes mensais e insights automáticos.
-- **Fluxo de Caixa** — projeção dos próximos meses considerando receita,
-  custos fixos e faturas já contratadas, com simulador de compras
-  ("e se eu comprar isso em 10x?").
 - **Entradas e Saídas** — lançamentos manuais com busca, filtros e
   auto-sugestão de categoria a partir do histórico.
-- **Cartão de Crédito** — controle de faturas com parcelamento e regras de
-  fechamento/vencimento configuráveis.
+- **Cartão de Crédito** — vários cartões, cada um com limite e datas
+  próprias. Faturas acompanhadas separadamente, com **pagamento parcial**
+  (adiantar um valor para liberar limite antes do fechamento) e baixa
+  total. Tudo consolidado no Dashboard.
 - **Investimentos** — carteira ativo a ativo com tributação real: posição
-  líquida de IOF e IR, **posição real informada por ativo** (real ×
-  projetado), projeção bruto × líquido no tempo, cenários de resgate e
-  alerta de queda da alíquota. Inclui reserva de emergência e simulador
-  de juros compostos.
+  líquida de IOF e IR, posição real informada por ativo (real × projetado)
+  com desempenho individual e consolidado, projeção bruto × líquido no
+  tempo, cenários de resgate e alerta de queda da alíquota. A aba de metas
+  acompanha a reserva de emergência.
 - **Configurações e Orçamento** — categorias, tetos por categoria, regras do
   cartão, custos fixos com **geração automática** de lançamentos mensais.
 
@@ -72,7 +71,6 @@ meu-monitor-financeiro/
     ├── sidebar.py            # Sidebar (logout, filtros, menu)
     └── pages/
         ├── dashboard.py
-        ├── cash_flow.py
         ├── transactions.py
         ├── credit_card.py
         ├── investments.py

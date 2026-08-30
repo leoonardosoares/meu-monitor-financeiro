@@ -21,7 +21,7 @@ from src import auth, repository, sidebar, styles
 from src.config import APP_ICON, APP_TITLE, SYSTEM_CATEGORIES
 from src.finance import filter_by_month, list_months
 from src.pages import (
-    cash_flow, credit_card, dashboard, investments, settings, transactions,
+    credit_card, dashboard, investments, settings, transactions,
 )
 from src.sidebar import PAGES
 
@@ -74,27 +74,21 @@ def main() -> None:
             df_budgets=repository.load_budgets(),
             selected_month=state.selected_month,
         )
-    elif page == PAGES[1]:  # Fluxo de Caixa
-        cash_flow.render(
-            df_transactions=df_transactions,
-            df_credit_card=df_credit_card,
-            df_fixed_costs=repository.load_fixed_costs(),
-        )
-    elif page == PAGES[2]:  # Entradas e Saídas
+    elif page == PAGES[1]:  # Entradas e Saídas
         transactions.render(
             df_transactions=df_transactions,
             categories=_bootstrap_categories(),
         )
-    elif page == PAGES[3]:  # Cartão de Crédito
+    elif page == PAGES[2]:  # Cartão de Crédito
         credit_card.render(
             df_credit_card=df_credit_card,
             df_credit_card_period=df_credit_card_period,
             categories=_bootstrap_categories(),
             selected_month=state.selected_month,
         )
-    elif page == PAGES[4]:  # Investimentos
+    elif page == PAGES[3]:  # Investimentos
         investments.render(df_transactions=df_transactions)
-    elif page == PAGES[5]:  # Configurações e Orçamento
+    elif page == PAGES[4]:  # Configurações e Orçamento
         settings.render(
             df_categories=repository.load_categories(),
             df_budgets=repository.load_budgets(),

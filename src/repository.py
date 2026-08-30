@@ -13,6 +13,7 @@ import streamlit as st
 
 from src.config import (
     CACHE_TTL_SECONDS,
+    DEFAULT_CARD_NAME,
     DEFAULT_USER_CATEGORIES,
     SHEETS_SCHEMA,
 )
@@ -82,12 +83,55 @@ def append_transaction(row: dict) -> None:
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def load_credit_card() -> pd.DataFrame:
-    return _to_numeric(_read("cartao"), ["Valor"])
+    df = _to_numeric(_read("cartao"), ["Valor"])
+    # Migração suave: compras lançadas antes do cadastro de cartões não têm
+    # a coluna, e ficariam órfãs. Elas passam a pertencer ao cartão padrão.
+    if "Cartão" not in df.columns:
+        df["Cartão"] = DEFAULT_CARD_NAME
+    else:
+        vazio = df["Cartão"].isna() | (
+            df["Cartão"].astype(str).str.strip() == ""
+        )
+        df.loc[vazio, "Cartão"] = DEFAULT_CARD_NAME
+    return df
 
 
 def save_credit_card(df: pd.DataFrame) -> None:
     _overwrite("cartao", df)
     load_credit_card.clear()
+
+
+# ---------------------------------------------------------------------------
+# Cadastro de cartões e pagamentos parciais de fatura
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_cards() -> pd.DataFrame:
+    return _to_numeric(
+        _read("cartoes"), ["Limite", "Dia Fechamento", "Dia Vencimento"],
+    )
+
+
+def save_cards(df: pd.DataFrame) -> None:
+    _overwrite("cartoes", df)
+    load_cards.clear()
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_card_payments() -> pd.DataFrame:
+    return _to_numeric(_read("cartao_pagamentos"), ["Valor"])
+
+
+def save_card_payments(df: pd.DataFrame) -> None:
+    _overwrite("cartao_pagamentos", df)
+    load_card_payments.clear()
+
+
+def append_card_payment(row: dict) -> None:
+    df = pd.concat(
+        [load_card_payments(), pd.DataFrame([row])], ignore_index=True,
+    )
+    save_card_payments(df)
 
 
 # ---------------------------------------------------------------------------

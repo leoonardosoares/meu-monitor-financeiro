@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src import components, insights, repository
+from src import components, credit_card as cc, insights, repository
 from src.config import ConfigKeys
 from src.finance import (
     avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
@@ -233,12 +233,11 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     expected_income = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
     fixed_total = float(df_fixed_costs["Valor"].sum()) if not df_fixed_costs.empty else 0.0
 
-    if df_credit_card.empty:
-        invoice_total = 0.0
-    else:
-        mask = (df_credit_card["Mês da Fatura"] == current_str) & \
-               (df_credit_card["Status"] == "Pendente")
-        invoice_total = float(df_credit_card.loc[mask, "Valor"].sum())
+    # Soma o saldo de TODOS os cartões no mês, já descontando o que foi
+    # adiantado — esse dinheiro saiu da conta e não deve ser cobrado de novo.
+    invoice_total = cc.outstanding_for_month(
+        df_credit_card, repository.load_card_payments(), current_str,
+    )
 
     projected = expected_income - fixed_total - invoice_total
     st.caption(
