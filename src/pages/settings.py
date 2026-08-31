@@ -20,12 +20,11 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
            selected_month: str) -> None:
     components.page_header(
         "Configurações e Orçamento",
-        "Personalize categorias, orçamentos, regras do cartão e custos fixos.",
+        "Personalize categorias, orçamentos e custos fixos. As regras de "
+        "cada cartão ficam na própria aba **Cartão de Crédito**.",
     )
 
-    tabs = st.tabs([
-        "Categorias", "Orçamento", "Regras do Cartão", "Custos Fixos",
-    ])
+    tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos"])
 
     with tabs[0]:
         _categories_tab(df_categories)
@@ -37,8 +36,6 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
             selected_month=selected_month,
         )
     with tabs[2]:
-        _card_rules_tab()
-    with tabs[3]:
         _fixed_costs_tab(df_fixed_costs, categories=categories)
 
 
@@ -183,33 +180,6 @@ def _render_category_transactions(*, category: str,
             df = df.sort_values("Data Compra", ascending=False)
         df["Valor"] = df["Valor"].apply(brl)
         st.dataframe(df, hide_index=True, use_container_width=True)
-
-
-def _card_rules_tab() -> None:
-    st.subheader("Datas importantes do cartão")
-    st.caption("Definem em qual mês cada compra entra.")
-
-    closing = int(repository.load_config(ConfigKeys.DIA_FECHAMENTO, 8))
-    due = int(repository.load_config(ConfigKeys.DIA_VENCIMENTO, 15))
-
-    c1, c2 = st.columns(2)
-    new_closing = c1.number_input(
-        "Dia de fechamento (melhor dia de compra):",
-        min_value=1, max_value=31, value=closing, step=1,
-    )
-    new_due = c2.number_input(
-        "Dia de vencimento da fatura:",
-        min_value=1, max_value=31, value=due, step=1,
-    )
-
-    if new_closing != closing:
-        repository.save_config(ConfigKeys.DIA_FECHAMENTO, new_closing)
-        st.success("Dia de fechamento atualizado.")
-        st.rerun()
-    if new_due != due:
-        repository.save_config(ConfigKeys.DIA_VENCIMENTO, new_due)
-        st.success("Dia de vencimento atualizado.")
-        st.rerun()
 
 
 def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,

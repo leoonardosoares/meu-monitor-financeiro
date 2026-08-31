@@ -19,8 +19,9 @@ sincronizados em **Google Sheets**.
   com desempenho individual e consolidado, projeção bruto × líquido no
   tempo, cenários de resgate e alerta de queda da alíquota. A aba de metas
   acompanha a reserva de emergência.
-- **Configurações e Orçamento** — categorias, tetos por categoria, regras do
-  cartão, custos fixos com **geração automática** de lançamentos mensais.
+- **Configurações e Orçamento** — categorias, tetos por categoria e custos
+  fixos com **geração automática** de lançamentos mensais. As regras de cada
+  cartão ficam na própria aba de Cartão de Crédito.
 
 ## Tributação de investimentos
 
