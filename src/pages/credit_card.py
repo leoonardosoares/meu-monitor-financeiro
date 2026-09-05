@@ -157,10 +157,11 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     titulo = card + (f" · {settings['instituicao']}"
                      if settings["instituicao"] else "")
     st.subheader(titulo)
-    st.caption(
-        f"Fecha todo dia {settings['fechamento']} · "
-        f"vence dia {settings['vencimento']}"
-    )
+    if int(settings["vencimento"]) > int(settings["fechamento"]):
+        quando = "vence dia {} do mesmo mês".format(settings["vencimento"])
+    else:
+        quando = "vence dia {} do mês seguinte".format(settings["vencimento"])
+    st.caption(f"Fecha todo dia {settings['fechamento']} · {quando}")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Limite", brl(limite))
@@ -185,6 +186,14 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             f"{icone} {i.month} — falta pagar {brl(i.balance)} "
             f"(total {brl(i.total)})"
         ):
+            fechamento, vencimento = cc.invoice_dates(
+                i.month, int(settings["fechamento"]),
+                int(settings["vencimento"]),
+            )
+            st.caption(
+                f"Fecha em {fechamento:%d/%m/%Y} · "
+                f"vence em {vencimento:%d/%m/%Y}"
+            )
             m1, m2, m3 = st.columns(3)
             m1.metric("Total da fatura", brl(i.total))
             m2.metric("Já adiantado", brl(i.advances))

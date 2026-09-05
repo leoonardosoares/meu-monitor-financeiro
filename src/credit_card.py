@@ -30,6 +30,37 @@ def invoice_month_for_purchase(purchase_date: date, closing_day: int) -> pd.Time
     return dt
 
 
+def _day_in_month(anchor: pd.Timestamp, day: int) -> pd.Timestamp:
+    """`day` dentro do mês de `anchor`, limitado ao último dia real dele.
+
+    Fechamento no dia 31 em mês de 30 dias vira dia 30, como no banco.
+    """
+    ultimo = anchor.days_in_month
+    return pd.Timestamp(anchor.year, anchor.month, min(int(day), ultimo))
+
+
+def invoice_dates(month: str, closing_day: int,
+                  due_day: int) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Datas reais de fechamento e vencimento da fatura de `month`.
+
+    O vencimento é sempre DEPOIS do fechamento — é o prazo para pagar o
+    que já fechou. Então, quando o dia do vencimento é menor ou igual ao
+    do fechamento, ele só pode cair no mês seguinte: fecha 30/08 e vence
+    07/09, e isso não muda o nome da fatura, que continua sendo a de
+    agosto. Quando o dia do vencimento é maior, os dois ficam no mesmo
+    mês: fecha 08/09 e vence 15/09.
+    """
+    anchor = pd.Timestamp(f"{month[3:]}-{month[:2]}-01")
+    fechamento = _day_in_month(anchor, closing_day)
+    vencimento = _day_in_month(anchor, due_day)
+    # A comparação é entre as datas já ajustadas ao tamanho do mês, e não
+    # entre os números dos dias: fechamento 30 e vencimento 31 empatam em
+    # junho, e o pagamento também tem que ir para o mês seguinte.
+    if vencimento <= fechamento:
+        vencimento = _day_in_month(anchor + pd.DateOffset(months=1), due_day)
+    return fechamento, vencimento
+
+
 def _parcel_index(value) -> int:
     """Índice 0-based da parcela a partir do rótulo "i/n"."""
     try:
