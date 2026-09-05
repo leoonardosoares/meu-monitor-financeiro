@@ -358,8 +358,8 @@ def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
         fech = cc.card_settings(df_cards, cartao)["fechamento"]
         st.caption(
-            f"**{cartao}** fecha dia {fech}: compras a partir desse dia caem "
-            "na fatura do mês corrente; antes, na do mês anterior."
+            f"**{cartao}** fecha dia {fech}: compras até esse dia entram na "
+            "fatura do mês corrente; depois dele, já vão para a do mês seguinte."
         )
 
         if st.form_submit_button("Lançar compra"):
@@ -400,6 +400,8 @@ def _cards_registry(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
     _card_settings_form(df_cards, df_tx, df_pay, names)
     st.divider()
+    _reschedule_section(df_cards, df_tx, df_pay, names)
+    st.divider()
     _new_card_form(names)
     st.divider()
     _card_danger_zone(df_cards, df_tx, df_pay, names)
@@ -429,11 +431,18 @@ def _card_settings_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         fech = c4.number_input(
             "Dia de fechamento", min_value=1, max_value=31, step=1,
             value=int(settings["fechamento"]),
-            help="Compras a partir desse dia caem na fatura do mês corrente.",
+            help=(
+                "O dia em que a fatura do mês FECHA. Compras até esse dia "
+                "entram nela; depois dele, vão para a fatura do mês seguinte."
+            ),
         )
         venc = c5.number_input(
             "Dia de vencimento", min_value=1, max_value=31, step=1,
             value=int(settings["vencimento"]),
+            help=(
+                "O dia do pagamento. Pode ser no mês seguinte ao fechamento "
+                "(fecha dia 30, vence dia 7) sem mudar o nome da fatura."
+            ),
         )
         st.caption(
             f"**{alvo}** tem {compras} compra(s) lançada(s). Renomear atualiza "
@@ -473,6 +482,50 @@ def _card_settings_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                 else:
                     st.success(f"'{limpo}' atualizado.")
                 st.rerun()
+
+
+def _reschedule_section(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                        df_pay: pd.DataFrame, names: list[str]) -> None:
+    """Realinha faturas antigas depois de corrigir o dia de fechamento.
+
+    O mês da fatura é congelado na planilha quando a compra é lançada.
+    Mudar o dia de fechamento não reescreve o passado sozinho — de
+    propósito, para não mexer em fatura já conferida sem o usuário pedir.
+    """
+    with st.expander("🔄 Recalcular o mês das faturas em aberto"):
+        st.caption(
+            "Use depois de corrigir o dia de fechamento de um cartão. "
+            "Só mexe em parcelas **pendentes** — faturas já pagas ficam "
+            "como estão, preservando o histórico."
+        )
+        alvo = st.selectbox("Cartão:", names, key="card_reschedule_target")
+        fech = int(cc.card_settings(df_cards, alvo)["fechamento"])
+        drift = cc.invoice_month_drift(df_tx, df_cards, alvo)
+
+        if not drift:
+            st.success(
+                f"Tudo certo: as parcelas pendentes de **{alvo}** já batem "
+                f"com o fechamento no dia {fech}."
+            )
+            return
+
+        preview = pd.DataFrame(
+            [{"De": antigo, "Para": novo} for antigo, novo in drift.values()]
+        ).value_counts().reset_index(name="Parcelas")
+        st.warning(
+            f"**{len(drift)}** parcela(s) pendente(s) de **{alvo}** estão em "
+            f"um mês que não corresponde ao fechamento no dia {fech}."
+        )
+        st.dataframe(preview, hide_index=True, use_container_width=True)
+
+        if st.button(f"Aplicar em {alvo}", type="primary",
+                     key="card_reschedule_apply"):
+            tx, pay = cc.apply_invoice_month_drift(df_tx, df_pay, alvo, drift)
+            repository.save_credit_card(tx)
+            if not pay.equals(df_pay):
+                repository.save_card_payments(pay)
+            st.success(f"{len(drift)} parcela(s) remanejada(s).")
+            st.rerun()
 
 
 def _new_card_form(names: list[str]) -> None:

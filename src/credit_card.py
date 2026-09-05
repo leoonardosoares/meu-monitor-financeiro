@@ -7,24 +7,35 @@ from datetime import date
 import pandas as pd
 
 from src.config import DEFAULT_CARD_NAME
+from src.dates import parse_dates
 
 
 def invoice_month_for_purchase(purchase_date: date, closing_day: int) -> pd.Timestamp:
     """Retorna o Timestamp do MÊS de fatura em que a compra cai.
 
-    A "Fatura de [mês]" cobre o ciclo que abre no `closing_day` desse mês
-    e vai até o dia anterior ao `closing_day` do mês seguinte. Logo:
+    A "Fatura de [mês]" é a que FECHA no `closing_day` desse mês — a
+    mesma convenção que o banco usa. Ela cobre o ciclo que começa no dia
+    seguinte ao fechamento do mês anterior e termina no fechamento deste.
+    O vencimento pode cair no mês seguinte sem mudar o nome da fatura
+    (ex.: fecha 30/08, vence 07/09, e ainda é a fatura de 08/2026).
 
-    - Compras com `day >= closing_day` entram na fatura do mês corrente
-      (ex.: 08/06 com fechamento dia 8 → fatura de 06/2026).
-    - Compras com `day < closing_day` entram na fatura do mês anterior,
-      que ainda está aberta (ex.: 07/06 com fechamento dia 8 → fatura
-      de 05/2026).
+    - Compras com `day <= closing_day` entram na fatura do mês corrente
+      (22/08 com fechamento dia 30 → fatura de 08/2026).
+    - Compras com `day > closing_day` já perderam o fechamento e caem na
+      fatura seguinte (31/08 com fechamento dia 30 → fatura de 09/2026).
     """
     dt = pd.Timestamp(purchase_date)
-    if dt.day < closing_day:
-        return dt - pd.DateOffset(months=1)
+    if dt.day > closing_day:
+        return dt + pd.DateOffset(months=1)
     return dt
+
+
+def _parcel_index(value) -> int:
+    """Índice 0-based da parcela a partir do rótulo "i/n"."""
+    try:
+        return max(int(str(value).split("/")[0].strip()) - 1, 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def installments_for_purchase(*, purchase_date: date, description: str,
@@ -61,10 +72,8 @@ def upcoming_invoices(df_credit_card: pd.DataFrame, *, today: pd.Timestamp,
 
     if pending_months:
         base = pd.to_datetime(pending_months, format="%m/%Y").min()
-    elif today.day < closing_day:
-        base = today - pd.DateOffset(months=1)
     else:
-        base = today
+        base = invoice_month_for_purchase(today, closing_day)
 
     out: list[tuple[str, float]] = []
     for i in range(months):
@@ -81,12 +90,17 @@ def upcoming_invoices(df_credit_card: pd.DataFrame, *, today: pd.Timestamp,
 
 def invoice_phase(today: pd.Timestamp, closing_day: int,
                   due_day: int) -> str:
-    """Devolve um sufixo legível sobre a fatura corrente."""
-    if today.day < closing_day:
-        return "Aberta"
-    if closing_day <= today.day <= due_day:
-        return "Fechada"
-    return "Aberta"
+    """Devolve um sufixo legível sobre a fatura corrente.
+
+    "Fechada" = já fechou e ainda está dentro do prazo de pagamento.
+    Quando o vencimento é anterior ao fechamento no calendário, o
+    pagamento cai no mês seguinte (fecha dia 30, vence dia 7), então a
+    janela dá a volta na virada do mês.
+    """
+    day = today.day
+    if due_day > closing_day:          # fecha e vence no mesmo mês
+        return "Fechada" if closing_day <= day <= due_day else "Aberta"
+    return "Fechada" if (day > closing_day or day <= due_day) else "Aberta"
 
 
 def pending_total(df_credit_card: pd.DataFrame) -> float:
@@ -227,6 +241,70 @@ def card_settings(df_cards: pd.DataFrame, card: str, *,
             out[key] = cast(raw)
     out["instituicao"] = str(row.get("Instituição") or "")
     return out
+
+
+def invoice_month_drift(df_credit_card: pd.DataFrame, df_cards: pd.DataFrame,
+                        card: str, *,
+                        only_pending: bool = True) -> dict[int, tuple[str, str]]:
+    """Parcelas cujo "Mês da Fatura" gravado discorda do dia de fechamento.
+
+    O mês da fatura é gravado na planilha no momento do lançamento. Se o
+    dia de fechamento do cartão for corrigido depois, as compras antigas
+    continuam com o rótulo antigo — esta função mostra quais mudariam.
+
+    Devolve ``{índice da linha: (mês gravado, mês recalculado)}``, só com
+    as linhas que realmente mudam.
+    """
+    if df_credit_card.empty or "Data Compra" not in df_credit_card.columns:
+        return {}
+
+    closing = int(card_settings(df_cards, card)["fechamento"])
+    mask = _card_series(df_credit_card) == card
+    if only_pending and "Status" in df_credit_card.columns:
+        mask &= df_credit_card["Status"].astype(str).str.strip() == "Pendente"
+    if not mask.any():
+        return {}
+
+    datas = parse_dates(df_credit_card.loc[mask, "Data Compra"])
+    out: dict[int, tuple[str, str]] = {}
+    for idx, compra in datas.items():
+        if pd.isna(compra):
+            continue
+        parcela = df_credit_card.at[idx, "Parcela"] \
+            if "Parcela" in df_credit_card.columns else "1/1"
+        base = invoice_month_for_purchase(compra, closing)
+        novo = (base + pd.DateOffset(months=_parcel_index(parcela))) \
+            .strftime("%m/%Y")
+        atual = str(df_credit_card.at[idx, "Mês da Fatura"]).strip()
+        if novo != atual:
+            out[idx] = (atual, novo)
+    return out
+
+
+def apply_invoice_month_drift(df_credit_card: pd.DataFrame,
+                              df_payments: pd.DataFrame,
+                              card: str,
+                              drift: dict[int, tuple[str, str]],
+                              ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Grava os meses recalculados e leva os pagamentos parciais junto.
+
+    Um adiantamento aponta para o par (cartão, mês da fatura). Se as
+    parcelas mudam de mês e o pagamento fica para trás, o dinheiro
+    adiantado some da fatura e ela volta a parecer integralmente em
+    aberto — por isso o mesmo remapeamento é aplicado aos dois.
+    """
+    df = df_credit_card.copy()
+    for idx, (_antigo, novo) in drift.items():
+        df.at[idx, "Mês da Fatura"] = novo
+
+    pay = df_payments.copy()
+    remap = {antigo: novo for antigo, novo in drift.values()}
+    if remap and not pay.empty and \
+            {"Cartão", "Mês da Fatura"}.issubset(pay.columns):
+        alvo = pay["Cartão"].astype(str).str.strip() == str(card).strip()
+        meses = pay.loc[alvo, "Mês da Fatura"].astype(str).str.strip()
+        pay.loc[alvo, "Mês da Fatura"] = meses.map(lambda m: remap.get(m, m))
+    return df, pay
 
 
 def _advances_for(df_payments: pd.DataFrame, card: str, month: str) -> float:
