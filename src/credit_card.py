@@ -61,6 +61,24 @@ def invoice_dates(month: str, closing_day: int,
     return fechamento, vencimento
 
 
+def invoice_window(month: str, closing_day: int,
+                   ) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Primeiro e último dia de compra que entram na fatura de `month`.
+
+    A janela termina no fechamento do próprio mês e começa no dia
+    seguinte ao fechamento do mês anterior. O vencimento não participa:
+    ele é o prazo para PAGAR o que já fechou, não para continuar
+    comprando dentro da fatura.
+    """
+    fim, _ = invoice_dates(month, closing_day, closing_day)
+    anterior, _ = invoice_dates(
+        (pd.Timestamp(f"{month[3:]}-{month[:2]}-01") - pd.DateOffset(months=1))
+        .strftime("%m/%Y"),
+        closing_day, closing_day,
+    )
+    return anterior + pd.Timedelta(days=1), fim
+
+
 def _parcel_index(value) -> int:
     """Índice 0-based da parcela a partir do rótulo "i/n"."""
     try:

@@ -147,6 +147,31 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                  use_container_width=True)
 
 
+def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                   card: str) -> None:
+    """Avisa quando o mês gravado de alguma parcela discorda do fechamento.
+
+    O mês da fatura é congelado na planilha no lançamento. Sem este
+    aviso, uma compra antiga com rótulo defasado fica indistinguível de
+    uma compra recém-lançada, e o extrato parece contraditório: duas
+    compras do mesmo ciclo aparecem em faturas diferentes.
+    """
+    drift = cc.invoice_month_drift(df_tx, df_cards, card)
+    if not drift:
+        return
+    exemplos = ", ".join(
+        f"{antigo} → {novo}"
+        for antigo, novo in sorted({v for v in drift.values()})[:3]
+    )
+    st.warning(
+        f"⚠️ {len(drift)} parcela(s) deste cartão estão gravadas em um mês "
+        f"que não corresponde ao fechamento no dia "
+        f"{int(cc.card_settings(df_cards, card)['fechamento'])} ({exemplos}). "
+        "Corrija em **Meus cartões → 🔄 Recalcular o mês das faturas em "
+        "aberto** — dá para ver a prévia antes de aplicar."
+    )
+
+
 def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                       df_pay: pd.DataFrame, card: str) -> None:
     settings = cc.card_settings(df_cards, card)
@@ -162,6 +187,8 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     else:
         quando = "vence dia {} do mês seguinte".format(settings["vencimento"])
     st.caption(f"Fecha todo dia {settings['fechamento']} · {quando}")
+
+    _drift_warning(df_cards, df_tx, card)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Limite", brl(limite))
@@ -365,10 +392,14 @@ def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         parcelas = c6.number_input("Parcelas", min_value=1, max_value=48,
                                    value=1, step=1)
 
-        fech = cc.card_settings(df_cards, cartao)["fechamento"]
+        fech = int(cc.card_settings(df_cards, cartao)["fechamento"])
+        atual = cc.invoice_month_for_purchase(date.today(), fech).strftime("%m/%Y")
+        ini, fim = cc.invoice_window(atual, fech)
         st.caption(
-            f"**{cartao}** fecha dia {fech}: compras até esse dia entram na "
-            "fatura do mês corrente; depois dele, já vão para a do mês seguinte."
+            f"**{cartao}** fecha dia {fech}. A fatura de **{atual}** pega "
+            f"compras de {ini:%d/%m/%Y} até {fim:%d/%m/%Y} — depois disso a "
+            "compra já vai para a fatura seguinte, mesmo que esta ainda não "
+            "tenha vencido."
         )
 
         if st.form_submit_button("Lançar compra"):
