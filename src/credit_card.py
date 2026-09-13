@@ -346,8 +346,28 @@ def apply_invoice_month_drift(df_credit_card: pd.DataFrame,
     for idx, (_antigo, novo) in drift.items():
         df.at[idx, "Mês da Fatura"] = novo
 
+    # O adiantamento só acompanha a mudança quando ela é inequívoca: todas
+    # as parcelas daquele mês foram para o mesmo destino e nenhuma ficou
+    # para trás. Se o mês antigo ainda existir no cartão, mover o pagamento
+    # tiraria dinheiro de uma fatura que continua tendo parcelas.
+    destinos: dict[str, set[str]] = {}
+    for antigo, novo in drift.values():
+        destinos.setdefault(antigo, set()).add(novo)
+
+    restantes: set[str] = set()
+    if not df.empty:
+        do_cartao = _card_series(df) == card
+        restantes = set(
+            df.loc[do_cartao, "Mês da Fatura"].astype(str).str.strip()
+        )
+
+    remap = {
+        antigo: novos.pop()
+        for antigo, novos in destinos.items()
+        if len(novos) == 1 and antigo not in restantes
+    }
+
     pay = df_payments.copy()
-    remap = {antigo: novo for antigo, novo in drift.values()}
     if remap and not pay.empty and \
             {"Cartão", "Mês da Fatura"}.issubset(pay.columns):
         alvo = pay["Cartão"].astype(str).str.strip() == str(card).strip()

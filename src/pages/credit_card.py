@@ -167,8 +167,8 @@ def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         f"⚠️ {len(drift)} parcela(s) deste cartão estão gravadas em um mês "
         f"que não corresponde ao fechamento no dia "
         f"{int(cc.card_settings(df_cards, card)['fechamento'])} ({exemplos}). "
-        "Corrija em **Meus cartões → 🔄 Recalcular o mês das faturas em "
-        "aberto** — dá para ver a prévia antes de aplicar."
+        "Corrija em **Meus cartões → 🔄 Recalcular o mês das faturas** — "
+        "dá para ver a prévia antes de aplicar."
     )
 
 
@@ -532,19 +532,31 @@ def _reschedule_section(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     Mudar o dia de fechamento não reescreve o passado sozinho — de
     propósito, para não mexer em fatura já conferida sem o usuário pedir.
     """
-    with st.expander("🔄 Recalcular o mês das faturas em aberto"):
+    with st.expander("🔄 Recalcular o mês das faturas"):
         st.caption(
             "Use depois de corrigir o dia de fechamento de um cartão. "
-            "Só mexe em parcelas **pendentes** — faturas já pagas ficam "
-            "como estão, preservando o histórico."
+            "Por padrão só mexe em parcelas **pendentes**, preservando o "
+            "histórico já conferido."
         )
         alvo = st.selectbox("Cartão:", names, key="card_reschedule_target")
         fech = int(cc.card_settings(df_cards, alvo)["fechamento"])
-        drift = cc.invoice_month_drift(df_tx, df_cards, alvo)
+        incluir_pagas = st.checkbox(
+            "Corrigir também as faturas já pagas",
+            key="card_reschedule_paid",
+            help=(
+                "Marque se o mês foi gravado errado desde o começo. Isso "
+                "reescreve o histórico do cartão — o total de cada fatura "
+                "passada muda, e com ele os gráficos do Dashboard."
+            ),
+        )
+        drift = cc.invoice_month_drift(
+            df_tx, df_cards, alvo, only_pending=not incluir_pagas,
+        )
 
         if not drift:
+            escopo = "" if incluir_pagas else "pendentes "
             st.success(
-                f"Tudo certo: as parcelas pendentes de **{alvo}** já batem "
+                f"Tudo certo: as parcelas {escopo}de **{alvo}** já batem "
                 f"com o fechamento no dia {fech}."
             )
             return
