@@ -156,19 +156,32 @@ def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     uma compra recém-lançada, e o extrato parece contraditório: duas
     compras do mesmo ciclo aparecem em faturas diferentes.
     """
-    drift = cc.invoice_month_drift(df_tx, df_cards, card)
-    if not drift:
+    todas = cc.invoice_month_drift(df_tx, df_cards, card, only_pending=False)
+    if not todas:
         return
+    pendentes = cc.invoice_month_drift(df_tx, df_cards, card)
+    pagas = len(todas) - len(pendentes)
+
     exemplos = ", ".join(
-        f"{antigo} → {novo}"
-        for antigo, novo in sorted({v for v in drift.values()})[:3]
+        f"{antigo} → {novo}" for antigo, novo in sorted(set(todas.values()))[:3]
     )
+    # As pagas são contadas à parte: elas só mudam com o opt-in explícito,
+    # então omiti-las faria o aviso sumir antes de o histórico estar certo.
+    if pendentes and pagas:
+        quanto = f"{len(pendentes)} parcela(s) pendente(s) e {pagas} já paga(s)"
+    elif pendentes:
+        quanto = f"{len(pendentes)} parcela(s) pendente(s)"
+    else:
+        quanto = f"{pagas} parcela(s) já paga(s)"
+
     st.warning(
-        f"⚠️ {len(drift)} parcela(s) deste cartão estão gravadas em um mês "
-        f"que não corresponde ao fechamento no dia "
+        f"⚠️ {quanto} deste cartão estão gravadas em um mês que não "
+        f"corresponde ao fechamento no dia "
         f"{int(cc.card_settings(df_cards, card)['fechamento'])} ({exemplos}). "
         "Corrija em **Meus cartões → 🔄 Recalcular o mês das faturas** — "
         "dá para ver a prévia antes de aplicar."
+        + (" Para as já pagas, marque a caixa que libera o histórico."
+           if pagas else "")
     )
 
 
