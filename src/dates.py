@@ -5,7 +5,11 @@ import re
 
 import pandas as pd
 
-_MONTH_LABEL = re.compile(r"^\s*(\d{1,2})/(\d{4})\s*$")
+# Aceita os separadores que aparecem quando o rótulo é digitado à mão
+# ("10 / 2026", "10-2026", "10.2026") sem reabrir a porta para os dois
+# casos que eram lidos errado em silêncio: ano de dois dígitos ("09/26",
+# que virava 2001) e ordem invertida ("2026-10").
+_MONTH_LABEL = re.compile(r"^\s*(\d{1,2})\s*[/.\-]+\s*(\d{4})\s*$")
 
 
 def parse_month_label(label) -> pd.Timestamp | None:

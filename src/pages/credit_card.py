@@ -226,14 +226,25 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             f"{icone} {i.month} — falta pagar {brl(i.balance)} "
             f"(total {brl(i.total)})"
         ):
-            fechamento, vencimento = cc.invoice_dates(
-                i.month, int(settings["fechamento"]),
-                int(settings["vencimento"]),
-            )
-            st.caption(
-                f"Fecha em {fechamento:%d/%m/%Y} · "
-                f"vence em {vencimento:%d/%m/%Y}"
-            )
+            # Sem a guarda, um "Mês da Fatura" ilegível derrubaria a página
+            # inteira — justamente a página para onde o aviso manda o
+            # usuário vir corrigir. A fatura continua pagável sem as datas.
+            try:
+                fechamento, vencimento = cc.invoice_dates(
+                    i.month, int(settings["fechamento"]),
+                    int(settings["vencimento"]),
+                )
+            except ValueError:
+                st.caption(
+                    f"⚠️ Não consegui ler o mês **{i.month}** nem as datas "
+                    "deste cartão. Corrija o **Mês da Fatura** no extrato "
+                    "(formato MM/AAAA) ou as datas em Meus cartões."
+                )
+            else:
+                st.caption(
+                    f"Fecha em {fechamento:%d/%m/%Y} · "
+                    f"vence em {vencimento:%d/%m/%Y}"
+                )
             m1, m2, m3 = st.columns(3)
             m1.metric("Total da fatura", brl(i.total))
             m2.metric("Já adiantado", brl(i.advances))

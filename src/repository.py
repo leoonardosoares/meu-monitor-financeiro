@@ -47,9 +47,28 @@ def _overwrite(sheet_name: str, df: pd.DataFrame) -> None:
 
 
 def _to_numeric(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    """Converte colunas de valor, aceitando também o formato brasileiro.
+
+    O Google Sheets devolve o número como texto quando a célula está
+    formatada como texto, e aí "266,67" virava NaN — a parcela contava
+    como zero e a fatura sumia das somas sem nenhum aviso. A limpeza só
+    roda no que o parser direto não conseguiu ler, para não estragar
+    valores que já vieram corretos.
+    """
     for col in columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if col not in df.columns:
+            continue
+        direto = pd.to_numeric(df[col], errors="coerce")
+        faltando = direto.isna() & df[col].notna()
+        if faltando.any():
+            ptbr = (
+                df.loc[faltando, col].astype(str)
+                .str.replace(r"[^\d,.\-]", "", regex=True)
+                .str.replace(".", "", regex=False)
+                .str.replace(",", ".", regex=False)
+            )
+            direto.loc[faltando] = pd.to_numeric(ptbr, errors="coerce")
+        df[col] = direto
     return df
 
 

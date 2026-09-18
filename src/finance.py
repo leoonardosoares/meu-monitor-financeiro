@@ -7,6 +7,7 @@ contexto.
 from __future__ import annotations
 
 import calendar
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
@@ -161,14 +162,23 @@ def savings_rate(income: float, expense: float) -> float:
     return (income - expense) / income * 100
 
 
-def avg_monthly_expense(df_transactions: pd.DataFrame, *, months: int = 6) -> float:
+def avg_monthly_expense(df_transactions: pd.DataFrame, *, months: int = 6,
+                        exclude_card_invoices: bool = False) -> float:
     """Despesa mensal média dos últimos N meses (com data válida).
 
     Aportes/saques de investimento NÃO entram (são transferências).
+
+    `exclude_card_invoices` descarta também os lançamentos que o próprio
+    app grava no caixa ao dar baixa numa fatura. Eles são despesa real e
+    contam para a reserva de emergência, mas não podem entrar onde a
+    fatura já foi subtraída por outro caminho — seria descontar a mesma
+    fatura duas vezes.
     """
     if df_transactions.empty:
         return 0.0
     df = _drop_transfers(df_transactions)
+    if exclude_card_invoices and "Categoria" in df.columns:
+        df = df[~is_card_category(df["Categoria"])]
     df = df[df["Tipo"] == "Saída"]
     if df.empty:
         return 0.0
@@ -219,27 +229,55 @@ def projection_target(selected_month: str, *, today: date) -> tuple[str, bool]:
     return month_label(proximo), False
 
 
+def is_card_category(series: pd.Series) -> pd.Series:
+    """Máscara das linhas cuja categoria representa a fatura do cartão.
+
+    Comparar com a string exata "Cartão de Crédito" deixava passar as
+    grafias que convivem numa planilha digitada à mão — sem acento, com
+    acento em NFD, no plural. Cada uma dessas passava direto e a fatura
+    era descontada duas vezes, então a comparação é feita sobre o texto
+    sem acento e sem caixa.
+    """
+    limpo = (
+        series.astype(str)
+        .map(lambda s: unicodedata.normalize("NFKD", s)
+             .encode("ascii", "ignore").decode())
+        .str.strip().str.casefold()
+    )
+    return limpo.str.startswith(("cartao", "cartoes", "fatura"))
+
+
 def fixed_costs_split(df_fixed_costs: pd.DataFrame,
-                      has_invoice: bool) -> tuple[float, float]:
+                      cards_due: set[str]) -> tuple[float, float]:
     """(total a subtrair, parte que é fatura de cartão e foi excluída).
 
-    Um custo fixo na categoria "Cartão de Crédito" descreve justamente a
-    fatura, que já entra na projeção pelo seu próprio valor — somar os
-    dois desconta a mesma despesa duas vezes, e o erro cresce junto com a
-    fatura. A exclusão é condicionada a existir fatura vencendo no mês:
-    sem nenhuma, essa despesa não entrou por outro caminho e precisa
-    continuar contando, senão some da projeção.
+    Um custo fixo na categoria do cartão descreve justamente a fatura,
+    que já entra na projeção pelo seu próprio valor — somar os dois
+    desconta a mesma despesa duas vezes, e o erro cresce junto com a
+    fatura. Mas a exclusão é POR CARTÃO: descartar todas as linhas de
+    cartão só porque algum cartão vence no mês apagaria a despesa do
+    cartão que não vence, inflando o saldo livre. Casa-se a descrição do
+    custo fixo com o nome do cartão; sem casar, a linha continua contando.
     """
     if df_fixed_costs.empty or "Valor" not in df_fixed_costs.columns:
         return 0.0, 0.0
     valores = pd.to_numeric(df_fixed_costs["Valor"], errors="coerce").fillna(0)
-    if "Categoria" not in df_fixed_costs.columns or not has_invoice:
+    if "Categoria" not in df_fixed_costs.columns or not cards_due:
         return float(valores.sum()), 0.0
-    e_cartao = (
-        df_fixed_costs["Categoria"].astype(str).str.strip().str.casefold()
-        == "cartão de crédito"
-    )
-    return float(valores[~e_cartao].sum()), float(valores[e_cartao].sum())
+
+    e_cartao = is_card_category(df_fixed_costs["Categoria"])
+    descricao = df_fixed_costs.get(
+        "Descrição", pd.Series("", index=df_fixed_costs.index),
+    ).astype(str).str.casefold()
+    alvos = {str(c).strip().casefold() for c in cards_due if str(c).strip()}
+    # Uma única fatura vencendo e um único custo fixo de cartão é o caso
+    # comum; aí o casamento por nome é dispensável e só atrapalharia.
+    if len(alvos) == 1 and int(e_cartao.sum()) == 1:
+        casa = e_cartao
+    else:
+        casa = e_cartao & descricao.map(
+            lambda d: any(a in d or d in a for a in alvos))
+    return float(valores[~casa].sum()), float(valores[casa].sum())
 
 
 def pct_change(current: float, previous: float) -> float | None:

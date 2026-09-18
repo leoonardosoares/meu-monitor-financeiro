@@ -238,10 +238,12 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     )
     do_mes = cc.invoices_due_in(agendadas, alvo)
     atrasadas = cc.overdue_invoices(agendadas)
+    antes = cc.invoices_due_before(agendadas, alvo)
 
     invoice_total = sum(i.balance for i in do_mes)
     expected_income = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
-    fixed_total, fixed_card = fixed_costs_split(df_fixed_costs, bool(do_mes))
+    fixed_total, fixed_card = fixed_costs_split(
+        df_fixed_costs, {i.card for i in do_mes})
     projected = expected_income - fixed_total - invoice_total
 
     if veio_do_filtro:
@@ -252,7 +254,7 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
             "sidebar — ela sempre olha para frente."
         )
 
-    _projection_warnings(atrasadas, agendadas, ilegiveis)
+    _projection_warnings(atrasadas, antes, agendadas, ilegiveis)
 
     p1, p2, p3, p4 = st.columns(4)
     p1.metric("Receita prevista (+)", brl(expected_income))
@@ -274,8 +276,19 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     )
 
 
-def _projection_warnings(atrasadas: list, agendadas: list,
+def _projection_warnings(atrasadas: list, antes: list, agendadas: list,
                          ilegiveis: list[str]) -> None:
+    if antes:
+        linhas = " · ".join(
+            f"{i.card} {i.month} ({brl(i.balance)}, vence {i.due:%d/%m})"
+            for i in antes
+        )
+        st.info(
+            f"💳 **{brl(sum(i.balance for i in antes))} vencem antes disso** "
+            f"— {linhas}. Sai da conta antes do mês projetado, então não "
+            "está somado abaixo."
+        )
+
     if atrasadas:
         linhas = " · ".join(
             f"{i.card} {i.month} ({brl(i.balance)}, venceu {i.due:%d/%m})"
@@ -308,12 +321,18 @@ def _projection_warnings(atrasadas: list, agendadas: list,
 
 def _projection_footnotes(*, df_transactions: pd.DataFrame, projected: float,
                           fixed_card: float, do_mes: list, alvo: str) -> None:
-    variavel = avg_monthly_expense(df_transactions, months=6)
+    # Sem excluir os lançamentos de fatura, a média conteria as faturas
+    # que `projected` já subtraiu, e o rodapé descontaria o cartão duas
+    # vezes — erro que cresce junto com o uso do cartão.
+    variavel = avg_monthly_expense(
+        df_transactions, months=6, exclude_card_invoices=True,
+    )
     if variavel > 0:
         st.caption(
             f"O saldo livre conta apenas receita, custos fixos e faturas. "
-            f"Seu gasto variável no banco tem média de **{brl(variavel)}/mês** "
-            f"nos últimos 6 meses; descontando isso, sobrariam "
+            f"Seu gasto variável no banco — sem contar pagamento de fatura, "
+            f"que já está acima — tem média de **{brl(variavel)}/mês** nos "
+            f"últimos 6 meses; descontando isso, sobrariam "
             f"**{brl(projected - variavel)}**."
         )
     if fixed_card > 0:

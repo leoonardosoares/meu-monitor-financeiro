@@ -36,7 +36,8 @@ def _day_in_month(anchor: pd.Timestamp, day: int) -> pd.Timestamp:
     Fechamento no dia 31 em mês de 30 dias vira dia 30, como no banco.
     """
     ultimo = anchor.days_in_month
-    return pd.Timestamp(anchor.year, anchor.month, min(int(day), ultimo))
+    return pd.Timestamp(
+        anchor.year, anchor.month, min(max(int(day), 1), ultimo))
 
 
 def invoice_dates(month: str, closing_day: int,
@@ -54,12 +55,21 @@ def invoice_dates(month: str, closing_day: int,
     if anchor is None:
         raise ValueError(f"mês de fatura ilegível: {month!r}")
     fechamento = _day_in_month(anchor, closing_day)
+
+    # Quem decide se o pagamento é no mês seguinte é o par de dias CRU, não
+    # as datas já cortadas pelo tamanho do mês. Comparar as datas cortadas
+    # fazia fechamento 30 / vencimento 31 empatar em abril e o vencimento
+    # pular para maio — abril ficava sem fatura nenhuma e maio com duas.
+    if int(due_day) <= int(closing_day):
+        return fechamento, _day_in_month(
+            anchor + pd.DateOffset(months=1), due_day)
+
     vencimento = _day_in_month(anchor, due_day)
-    # A comparação é entre as datas já ajustadas ao tamanho do mês, e não
-    # entre os números dos dias: fechamento 30 e vencimento 31 empatam em
-    # junho, e o pagamento também tem que ir para o mês seguinte.
     if vencimento <= fechamento:
-        vencimento = _day_in_month(anchor + pd.DateOffset(months=1), due_day)
+        # Os dois dias caíram no mesmo fim de mês curto. A intenção
+        # cadastrada é pagar no próprio mês, então quem recua é o
+        # fechamento — empurrar o vencimento mudaria o mês da fatura.
+        fechamento = vencimento - pd.Timedelta(days=1)
     return fechamento, vencimento
 
 
@@ -227,6 +237,27 @@ class Invoice:
         return min(self.advances / self.outstanding * 100, 100.0)
 
 
+def _month_key(value) -> str:
+    """Chave canônica de um rótulo de fatura, para casar os dois lados.
+
+    Compras, adiantamentos e o cadastro são digitados em momentos
+    diferentes, então o mesmo mês aparece como "09/2026", " 09/2026 " ou
+    "9/2026". Casar por texto cru fazia o adiantamento não encontrar a
+    fatura: o dinheiro já tinha saído do banco e a dívida continuava
+    cheia. O que não for legível cai no texto sem espaços, para não
+    fundir rótulos distintos por acidente.
+    """
+    ts = parse_month_label(value)
+    return month_label(ts) if ts is not None else str(value).strip()
+
+
+def _month_series(df: pd.DataFrame) -> pd.Series:
+    """Coluna "Mês da Fatura" canonizada; vazia se a coluna não existir."""
+    if "Mês da Fatura" not in df.columns:
+        return pd.Series("", index=df.index, dtype=object)
+    return df["Mês da Fatura"].map(_month_key)
+
+
 def _is_settled(df: pd.DataFrame) -> pd.Series:
     """Máscara das parcelas já quitadas.
 
@@ -283,7 +314,15 @@ def card_settings(df_cards: pd.DataFrame, card: str, *,
                   default_limit: float = 2000.0,
                   default_closing: int = 8,
                   default_due: int = 15) -> dict:
-    """Limite e datas de um cartão, com defaults quando não cadastrado."""
+    """Limite e datas de um cartão, com defaults quando não cadastrado.
+
+    Um dia fora de 1..31 é tratado como não cadastrado, não como valor
+    válido: `pd.Timestamp(ano, mes, 0)` levanta exceção, e essa exceção
+    era capturada lá na frente como "mês da fatura ilegível" — mensagem
+    que culpa o campo errado enquanto todas as faturas do cartão somem
+    da conta. Caindo no default, `has_registered_dates` marca o cartão
+    como estimado e a tela avisa no lugar certo.
+    """
     out = {
         "limite": default_limit,
         "fechamento": default_closing,
@@ -296,14 +335,14 @@ def card_settings(df_cards: pd.DataFrame, card: str, *,
     if match.empty:
         return out
     row = match.iloc[0]
-    for key, col, cast in (
-        ("limite", "Limite", float),
-        ("fechamento", "Dia Fechamento", int),
-        ("vencimento", "Dia Vencimento", int),
-    ):
+    raw_limite = pd.to_numeric(row.get("Limite"), errors="coerce")
+    if pd.notna(raw_limite):
+        out["limite"] = float(raw_limite)
+    for key, col in (("fechamento", "Dia Fechamento"),
+                     ("vencimento", "Dia Vencimento")):
         raw = pd.to_numeric(row.get(col), errors="coerce")
-        if pd.notna(raw):
-            out[key] = cast(raw)
+        if pd.notna(raw) and 1 <= int(raw) <= 31:
+            out[key] = int(raw)
     out["instituicao"] = str(row.get("Instituição") or "")
     return out
 
@@ -400,7 +439,7 @@ def _advances_for(df_payments: pd.DataFrame, card: str, month: str) -> float:
         return 0.0
     mask = (
         (df_payments["Cartão"].astype(str).str.strip() == str(card).strip())
-        & (df_payments["Mês da Fatura"].astype(str).str.strip() == str(month).strip())
+        & (_month_series(df_payments) == _month_key(month))
     )
     valores = pd.to_numeric(df_payments.loc[mask, "Valor"], errors="coerce")
     return float(valores.fillna(0).sum())
@@ -414,8 +453,7 @@ def invoice_for(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame,
     cards = _card_series(df_credit_card)
     mask = (
         (cards == str(card).strip())
-        & (df_credit_card["Mês da Fatura"].astype(str).str.strip()
-           == str(month).strip())
+        & (_month_series(df_credit_card) == _month_key(month))
     )
     subset = df_credit_card[mask]
     valores = pd.to_numeric(subset.get("Valor"), errors="coerce").fillna(0) \
@@ -453,8 +491,7 @@ def open_invoices(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame, *,
     # idênticas e a mesma dívida seria contada duas vezes — inclusive no
     # limite disponível do cartão.
     pares = (
-        pendentes.assign(
-            _mes=pendentes["Mês da Fatura"].astype(str).str.strip())
+        pendentes.assign(_mes=_month_series(pendentes))
         [["_card", "_mes"]].drop_duplicates()
     )
     out = [
@@ -511,10 +548,11 @@ def has_registered_dates(df_cards: pd.DataFrame, card: str) -> bool:
     if match.empty:
         return False
     row = match.iloc[0]
-    return all(
-        pd.notna(pd.to_numeric(row.get(col), errors="coerce"))
-        for col in ("Dia Fechamento", "Dia Vencimento")
-    )
+    for col in ("Dia Fechamento", "Dia Vencimento"):
+        raw = pd.to_numeric(row.get(col), errors="coerce")
+        if pd.isna(raw) or not 1 <= int(raw) <= 31:
+            return False
+    return True
 
 
 def schedule_invoices(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame,
@@ -576,6 +614,24 @@ def overdue_invoices(scheduled: list[ScheduledInvoice],
     return [i for i in scheduled if i.overdue]
 
 
+def invoices_due_before(scheduled: list[ScheduledInvoice],
+                        month: str) -> list[ScheduledInvoice]:
+    """Faturas que ainda vão vencer, mas antes do mês-alvo.
+
+    "Atrasada" e "vence no mês-alvo" não cobrem o intervalo entre hoje e
+    o primeiro dia do alvo. Sem este terceiro balde, todo mês existe uma
+    janela em que a fatura prestes a ser paga não aparece em lugar
+    nenhum do painel — nem na conta, nem num aviso.
+    """
+    inicio = parse_month_label(month)
+    if inicio is None:
+        return []
+    return [
+        i for i in scheduled
+        if not i.overdue and i.balance > 1e-6 and i.due < inicio
+    ]
+
+
 def available_limit(df_cards: pd.DataFrame, df_credit_card: pd.DataFrame,
                     df_payments: pd.DataFrame, card: str) -> tuple[float, float]:
     """(limite total, limite disponível) de um cartão.
@@ -618,7 +674,7 @@ def settle_invoice(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame,
         cards = _card_series(df_tx)
         mask = (
             (cards == invoice.card)
-            & (df_tx["Mês da Fatura"].astype(str).str.strip() == invoice.month)
+            & (_month_series(df_tx) == _month_key(invoice.month))
             & ~_is_settled(df_tx)
         )
         df_tx.loc[mask, "Status"] = "Pago"
@@ -627,7 +683,7 @@ def settle_invoice(df_credit_card: pd.DataFrame, df_payments: pd.DataFrame,
     if not df_pay.empty and {"Cartão", "Mês da Fatura"}.issubset(df_pay.columns):
         absorver = (
             (df_pay["Cartão"].astype(str).str.strip() == invoice.card)
-            & (df_pay["Mês da Fatura"].astype(str).str.strip() == invoice.month)
+            & (_month_series(df_pay) == _month_key(invoice.month))
         )
         df_pay = df_pay[~absorver]
 
