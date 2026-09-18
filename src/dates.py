@@ -1,7 +1,36 @@
 """Leitura de datas vindas da planilha."""
 from __future__ import annotations
 
+import re
+
 import pandas as pd
+
+_MONTH_LABEL = re.compile(r"^\s*(\d{1,2})/(\d{4})\s*$")
+
+
+def parse_month_label(label) -> pd.Timestamp | None:
+    """Primeiro dia do mês de um rótulo "MM/AAAA"; `None` se ilegível.
+
+    O rótulo vem de uma planilha que o usuário edita à mão, então chega
+    torto: `"9/2026"` sem zero à esquerda, `"09/26"` com ano de dois
+    dígitos, espaços nas pontas. Fatiar por posição — `label[3:]` e
+    `label[:2]` — lia `"9/2026"` como ano 26 e `"09/26"` como ano 2001,
+    ambos sem erro nenhum, e a fatura simplesmente sumia das somas.
+    Aqui o formato é validado: o que não casar volta `None` para o
+    chamador avisar, em vez de virar uma data absurda em silêncio.
+    """
+    m = _MONTH_LABEL.match(str(label))
+    if not m:
+        return None
+    mes, ano = int(m.group(1)), int(m.group(2))
+    if not 1 <= mes <= 12:
+        return None
+    return pd.Timestamp(ano, mes, 1)
+
+
+def month_label(ts) -> str:
+    """Rótulo canônico "MM/AAAA" de um Timestamp."""
+    return pd.Timestamp(ts).strftime("%m/%Y")
 
 
 def parse_dates(series: pd.Series) -> pd.Series:

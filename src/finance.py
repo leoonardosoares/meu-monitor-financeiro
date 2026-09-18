@@ -13,6 +13,7 @@ from datetime import date
 import pandas as pd
 
 from src.config import TRANSFER_CATEGORIES
+from src.dates import month_label, parse_month_label
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,47 @@ def previous_month(month_str: str) -> str:
     dt = pd.to_datetime(month_str, format="%m/%Y")
     prev = dt - pd.DateOffset(months=1)
     return prev.strftime("%m/%Y")
+
+
+def projection_target(selected_month: str, *, today: date) -> tuple[str, bool]:
+    """Mês que a projeção deve mostrar, e se ele veio do filtro da sidebar.
+
+    A projeção nunca olha para trás. Receita prevista e custos fixos são
+    configurações únicas, sem vigência: aplicá-las a um mês passado
+    produz um número que nunca existiu. Pior, ancorar no filtro fazia a
+    mesma dívida ora entrar ora sair da conta conforme o mês escolhido —
+    com o filtro num mês passado, uma fatura já vencida caía dentro de
+    "o que vou pagar". Então: o alvo é o próximo mês, a menos que o
+    usuário tenha escolhido um mês ainda mais à frente.
+    """
+    proximo = pd.Timestamp(today) + pd.DateOffset(months=1)
+    escolhido = parse_month_label(selected_month)
+    if escolhido is not None and escolhido > proximo:
+        return month_label(escolhido), True
+    return month_label(proximo), False
+
+
+def fixed_costs_split(df_fixed_costs: pd.DataFrame,
+                      has_invoice: bool) -> tuple[float, float]:
+    """(total a subtrair, parte que é fatura de cartão e foi excluída).
+
+    Um custo fixo na categoria "Cartão de Crédito" descreve justamente a
+    fatura, que já entra na projeção pelo seu próprio valor — somar os
+    dois desconta a mesma despesa duas vezes, e o erro cresce junto com a
+    fatura. A exclusão é condicionada a existir fatura vencendo no mês:
+    sem nenhuma, essa despesa não entrou por outro caminho e precisa
+    continuar contando, senão some da projeção.
+    """
+    if df_fixed_costs.empty or "Valor" not in df_fixed_costs.columns:
+        return 0.0, 0.0
+    valores = pd.to_numeric(df_fixed_costs["Valor"], errors="coerce").fillna(0)
+    if "Categoria" not in df_fixed_costs.columns or not has_invoice:
+        return float(valores.sum()), 0.0
+    e_cartao = (
+        df_fixed_costs["Categoria"].astype(str).str.strip().str.casefold()
+        == "cartão de crédito"
+    )
+    return float(valores[~e_cartao].sum()), float(valores[e_cartao].sum())
 
 
 def pct_change(current: float, previous: float) -> float | None:

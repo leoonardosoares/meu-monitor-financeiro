@@ -72,6 +72,8 @@ def main() -> None:
             df_credit_card_period=df_credit_card_period,
             df_fixed_costs=repository.load_fixed_costs(),
             df_budgets=repository.load_budgets(),
+            df_cards=repository.load_cards(),
+            df_card_payments=repository.load_card_payments(),
             selected_month=state.selected_month,
         )
     elif page == PAGES[1]:  # Entradas e Saídas
