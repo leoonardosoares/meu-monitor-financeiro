@@ -147,6 +147,44 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                  use_container_width=True)
 
 
+def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                   card: str) -> None:
+    """Avisa quando o mês gravado de alguma parcela discorda do fechamento.
+
+    O mês da fatura é congelado na planilha no lançamento. Sem este
+    aviso, uma compra antiga com rótulo defasado fica indistinguível de
+    uma compra recém-lançada, e o extrato parece contraditório: duas
+    compras do mesmo ciclo aparecem em faturas diferentes.
+    """
+    todas = cc.invoice_month_drift(df_tx, df_cards, card, only_pending=False)
+    if not todas:
+        return
+    pendentes = cc.invoice_month_drift(df_tx, df_cards, card)
+    pagas = len(todas) - len(pendentes)
+
+    exemplos = ", ".join(
+        f"{antigo} → {novo}" for antigo, novo in sorted(set(todas.values()))[:3]
+    )
+    # As pagas são contadas à parte: elas só mudam com o opt-in explícito,
+    # então omiti-las faria o aviso sumir antes de o histórico estar certo.
+    if pendentes and pagas:
+        quanto = f"{len(pendentes)} parcela(s) pendente(s) e {pagas} já paga(s)"
+    elif pendentes:
+        quanto = f"{len(pendentes)} parcela(s) pendente(s)"
+    else:
+        quanto = f"{pagas} parcela(s) já paga(s)"
+
+    st.warning(
+        f"⚠️ {quanto} deste cartão estão gravadas em um mês que não "
+        f"corresponde ao fechamento no dia "
+        f"{int(cc.card_settings(df_cards, card)['fechamento'])} ({exemplos}). "
+        "Corrija em **Meus cartões → 🔄 Recalcular o mês das faturas** — "
+        "dá para ver a prévia antes de aplicar."
+        + (" Para as já pagas, marque a caixa que libera o histórico."
+           if pagas else "")
+    )
+
+
 def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                       df_pay: pd.DataFrame, card: str) -> None:
     settings = cc.card_settings(df_cards, card)
@@ -162,6 +200,8 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     else:
         quando = "vence dia {} do mês seguinte".format(settings["vencimento"])
     st.caption(f"Fecha todo dia {settings['fechamento']} · {quando}")
+
+    _drift_warning(df_cards, df_tx, card)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Limite", brl(limite))
@@ -186,14 +226,25 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             f"{icone} {i.month} — falta pagar {brl(i.balance)} "
             f"(total {brl(i.total)})"
         ):
-            fechamento, vencimento = cc.invoice_dates(
-                i.month, int(settings["fechamento"]),
-                int(settings["vencimento"]),
-            )
-            st.caption(
-                f"Fecha em {fechamento:%d/%m/%Y} · "
-                f"vence em {vencimento:%d/%m/%Y}"
-            )
+            # Sem a guarda, um "Mês da Fatura" ilegível derrubaria a página
+            # inteira — justamente a página para onde o aviso manda o
+            # usuário vir corrigir. A fatura continua pagável sem as datas.
+            try:
+                fechamento, vencimento = cc.invoice_dates(
+                    i.month, int(settings["fechamento"]),
+                    int(settings["vencimento"]),
+                )
+            except ValueError:
+                st.caption(
+                    f"⚠️ Não consegui ler o mês **{i.month}** nem as datas "
+                    "deste cartão. Corrija o **Mês da Fatura** no extrato "
+                    "(formato MM/AAAA) ou as datas em Meus cartões."
+                )
+            else:
+                st.caption(
+                    f"Fecha em {fechamento:%d/%m/%Y} · "
+                    f"vence em {vencimento:%d/%m/%Y}"
+                )
             m1, m2, m3 = st.columns(3)
             m1.metric("Total da fatura", brl(i.total))
             m2.metric("Já adiantado", brl(i.advances))
@@ -365,10 +416,14 @@ def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         parcelas = c6.number_input("Parcelas", min_value=1, max_value=48,
                                    value=1, step=1)
 
-        fech = cc.card_settings(df_cards, cartao)["fechamento"]
+        fech = int(cc.card_settings(df_cards, cartao)["fechamento"])
+        atual = cc.invoice_month_for_purchase(date.today(), fech).strftime("%m/%Y")
+        ini, fim = cc.invoice_window(atual, fech)
         st.caption(
-            f"**{cartao}** fecha dia {fech}: compras até esse dia entram na "
-            "fatura do mês corrente; depois dele, já vão para a do mês seguinte."
+            f"**{cartao}** fecha dia {fech}. A fatura de **{atual}** pega "
+            f"compras de {ini:%d/%m/%Y} até {fim:%d/%m/%Y} — depois disso a "
+            "compra já vai para a fatura seguinte, mesmo que esta ainda não "
+            "tenha vencido."
         )
 
         if st.form_submit_button("Lançar compra"):
@@ -501,19 +556,31 @@ def _reschedule_section(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     Mudar o dia de fechamento não reescreve o passado sozinho — de
     propósito, para não mexer em fatura já conferida sem o usuário pedir.
     """
-    with st.expander("🔄 Recalcular o mês das faturas em aberto"):
+    with st.expander("🔄 Recalcular o mês das faturas"):
         st.caption(
             "Use depois de corrigir o dia de fechamento de um cartão. "
-            "Só mexe em parcelas **pendentes** — faturas já pagas ficam "
-            "como estão, preservando o histórico."
+            "Por padrão só mexe em parcelas **pendentes**, preservando o "
+            "histórico já conferido."
         )
         alvo = st.selectbox("Cartão:", names, key="card_reschedule_target")
         fech = int(cc.card_settings(df_cards, alvo)["fechamento"])
-        drift = cc.invoice_month_drift(df_tx, df_cards, alvo)
+        incluir_pagas = st.checkbox(
+            "Corrigir também as faturas já pagas",
+            key="card_reschedule_paid",
+            help=(
+                "Marque se o mês foi gravado errado desde o começo. Isso "
+                "reescreve o histórico do cartão — o total de cada fatura "
+                "passada muda, e com ele os gráficos do Dashboard."
+            ),
+        )
+        drift = cc.invoice_month_drift(
+            df_tx, df_cards, alvo, only_pending=not incluir_pagas,
+        )
 
         if not drift:
+            escopo = "" if incluir_pagas else "pendentes "
             st.success(
-                f"Tudo certo: as parcelas pendentes de **{alvo}** já batem "
+                f"Tudo certo: as parcelas {escopo}de **{alvo}** já batem "
                 f"com o fechamento no dia {fech}."
             )
             return
