@@ -95,6 +95,63 @@ check("nenhuma falta", faltando, [])
 check("importacoes está no esquema", "importacoes" in SHEETS_SCHEMA, True)
 check("com as colunas certas", SHEETS_SCHEMA["importacoes"][0], "ID Pluggy")
 
+print("  Cache sem .clear() (recarga parcial de módulo) não quebra")
+def _sem_clear():
+    return {"financeiro": "ws"}
+sheets.get_worksheets = _sem_clear          # sem atributo .clear
+try:
+    sheets.get_sheet("importacoes")
+    _fail.append("deveria levantar KeyError, não AttributeError")
+except KeyError:
+    _ok += 1
+except AttributeError:
+    _fail.append("estourou AttributeError ao tentar limpar o cache")
+
+print("  Ler aba inexistente devolve vazio, não erro")
+from src import repository
+from src.config import SHEETS_SCHEMA
+
+
+class _WsFalso:
+    def get_all_records(self):
+        return [{"ID Pluggy": "x", "Valor": 1}]
+
+
+class _NotFound(Exception):
+    pass
+
+
+_NotFound.__name__ = "WorksheetNotFound"
+
+def _faltando(nome):
+    raise KeyError(nome)
+
+repository.get_sheet = _faltando
+df = repository._read("importacoes")
+check("vazio", df.empty, True)
+check("com as colunas do esquema", list(df.columns),
+      SHEETS_SCHEMA["importacoes"])
+
+def _notfound(nome):
+    raise _NotFound(nome)
+
+repository.get_sheet = _notfound
+check("WorksheetNotFound também", repository._read("importacoes").empty, True)
+
+def _erro_real(nome):
+    raise RuntimeError("cota da API estourada")
+
+repository.get_sheet = _erro_real
+try:
+    repository._read("importacoes")
+    _fail.append("erro de verdade deveria propagar")
+except RuntimeError:
+    _ok += 1
+
+repository.get_sheet = lambda nome: _WsFalso()
+check("aba existente é lida normalmente",
+      len(repository._read("importacoes")), 1)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

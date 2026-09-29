@@ -56,7 +56,11 @@ def get_sheet(name: str) -> Worksheet:
     """
     worksheets = get_worksheets()
     if name not in worksheets:
-        get_worksheets.clear()
+        # `.clear()` some quando o módulo é recarregado sem o processo
+        # reiniciar: aí o atributo do cache não existe mais no objeto.
+        limpar = getattr(get_worksheets, "clear", None)
+        if callable(limpar):
+            limpar()
         worksheets = get_worksheets()
     if name not in worksheets:
         raise KeyError(
