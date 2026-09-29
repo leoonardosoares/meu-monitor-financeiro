@@ -73,6 +73,37 @@ def _open_finance_tab() -> None:
         "abre a tela da Pluggy onde você entra com a sua conta do Meu Pluggy "
         "e autoriza este app a ler as mesmas conexões."
     )
+
+    with st.expander("O que a tela de conexão vai pedir"):
+        st.caption(
+            "A Pluggy monta aquele formulário a partir da ficha do conector. "
+            "Se o campo não aparecer na tela dela, é aqui que se descobre o "
+            "que ele espera."
+        )
+        if st.button("Consultar o conector MeuPluggy"):
+            try:
+                ficha = pluggy.connector()
+            except pluggy.PluggyError as exc:
+                st.error(f"🚨 {exc}")
+            else:
+                campos = ficha.get("credentials") or []
+                if campos:
+                    st.dataframe(pd.DataFrame([{
+                        "Campo": c.get("name"),
+                        "Rótulo": c.get("label"),
+                        "Tipo": c.get("type"),
+                        "Formato": c.get("validation") or c.get("placeholder"),
+                        "Instruções": c.get("instructions"),
+                        "Opcional": c.get("optional"),
+                    } for c in campos]), hide_index=True,
+                        use_container_width=True)
+                else:
+                    st.caption("O conector não declara campos de entrada.")
+                st.caption(
+                    f"Tipo: {ficha.get('type')} · "
+                    f"OAuth: {ficha.get('oauth')} · MFA: {ficha.get('hasMFA')}"
+                )
+
     if st.button("🔗 Gerar link de autorização"):
         try:
             url = pluggy.connect_url(pluggy.connect_token())
