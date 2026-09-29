@@ -318,6 +318,12 @@ check("restringe ao conector do Meu Pluggy", '"connectorIds": [200]' in _h, True
 check("pede conexão nova", '"avoidDuplicates": true' in _h, True)
 check("trata o sucesso", "onSuccess" in _h, True)
 check("e o erro", "onError" in _h, True)
+# Import estático falha ANTES de qualquer try, e dentro de um iframe
+# isso não aparece em lugar nenhum — a tela fica só em branco.
+check("import é dinâmico", "await import(" in _h, True)
+check("captura erro solto", 'window.addEventListener("error"' in _h, True)
+check("captura promessa rejeitada", "unhandledrejection" in _h, True)
+check("mostra estado antes de carregar", "Carregando o widget" in _h, True)
 check("um único bloco de script",
       (_h.count("<script"), _h.count("</script>")), (1, 1))
 

@@ -254,37 +254,60 @@ def connect_widget_html(token: str, *,
         opcoes["updateItem"] = item_id
 
     return """
-<div id="saida" style="font-family:system-ui;padding:12px"></div>
+<div style="font-family:system-ui">
+  <div id="estado" style="padding:10px;border-radius:8px;background:#f1f5f9">
+    Carregando o widget da Pluggy…
+  </div>
+  <div id="saida" style="padding:10px"></div>
+</div>
 <script type="module">
-import PluggyConnect from "%s";
-
+const estado = document.getElementById("estado");
 const saida = document.getElementById("saida");
-const mostrar = (cor, titulo, corpo) => {
-  saida.innerHTML =
-    '<div style="border:2px solid ' + cor + ';border-radius:10px;padding:16px">' +
-    '<b>' + titulo + '</b><div style="margin-top:8px">' + corpo + '</div></div>';
-};
+
+const caixa = (cor, titulo, corpo) =>
+  '<div style="border:2px solid ' + cor + ';border-radius:10px;padding:16px">' +
+  '<b>' + titulo + '</b><div style="margin-top:8px">' + corpo + '</div></div>';
+
+// Erro dentro de um iframe não aparece em lugar nenhum, então tudo que
+// pode falhar é capturado e escrito na própria caixa.
+window.addEventListener("error", (e) =>
+  estado.innerHTML = caixa("#EF4444", "Erro no widget", String(e.message)));
+window.addEventListener("unhandledrejection", (e) =>
+  estado.innerHTML = caixa("#EF4444", "Erro no widget", String(e.reason)));
 
 try {
+  // `import()` dinâmico, e não estático: a falha de um import estático
+  // acontece antes de qualquer try e deixaria a área em branco.
+  const mod = await import("%s");
+  const PluggyConnect = mod.default || mod.PluggyConnect;
+  if (!PluggyConnect) throw new Error("SDK carregou sem a classe esperada");
+
+  estado.textContent = "Widget carregado. Abrindo…";
   const pluggy = new PluggyConnect(Object.assign(%s, {
     onSuccess: (data) => {
-      const id = (data && data.item && data.item.id) || "";
-      const banco = (data && data.item && data.item.connector &&
-                     data.item.connector.name) || "banco";
-      mostrar("#317256", "Conectado: " + banco,
+      const item = (data && data.item) || {};
+      const nome = (item.connector && item.connector.name) || "banco";
+      estado.style.display = "none";
+      saida.innerHTML = caixa("#317256", "Conectado: " + nome,
         'Copie este identificador e cole no passo 2:' +
-        '<div style="margin-top:8px;font-family:monospace;font-size:16px;' +
-        'user-select:all;background:#f1f5f9;padding:10px;border-radius:6px">' +
-        id + '</div>');
+        '<div style="margin-top:8px;font-family:monospace;font-size:18px;' +
+        'user-select:all;background:#f1f5f9;padding:12px;border-radius:6px">' +
+        (item.id || "(sem id)") + '</div>');
     },
     onError: (err) => {
-      mostrar("#EF4444", "Não deu certo",
-        (err && (err.message || err.code)) || "erro desconhecido");
+      estado.innerHTML = caixa("#EF4444", "Não deu certo",
+        (err && (err.message || err.code)) || JSON.stringify(err));
+    },
+    onEvent: (evento) => {
+      if (evento && evento.event === "LOAD_SUCCESS")
+        estado.textContent = "Widget aberto — siga os passos na janela.";
     },
   }));
   pluggy.init();
 } catch (e) {
-  mostrar("#EF4444", "Não consegui carregar o widget", String(e));
+  estado.innerHTML = caixa("#EF4444", "Não consegui carregar o widget",
+    String(e && e.message ? e.message : e) +
+    '<br><br>Use o botão abaixo para abrir a tela da Pluggy.');
 }
 </script>
 """ % (CONNECT_SDK, json.dumps(opcoes))
