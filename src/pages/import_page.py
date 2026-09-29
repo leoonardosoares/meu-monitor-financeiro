@@ -12,6 +12,8 @@ próxima vez.
 """
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -144,8 +146,21 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
         f"{len(ativas)} conta(s) serão consultadas. Esta etapa **não grava "
         "nada** — ela só monta a lista para você conferir."
     )
-    if st.button("🔄 Buscar lançamentos novos", type="primary"):
+    # Busca sozinho quando a última foi há mais de meio dia: a ideia é
+    # o usuário abrir o app e já encontrar a lista pronta, em vez de ter
+    # de lembrar de clicar. O carimbo evita repetir a cada rerun do
+    # Streamlit, que acontece a cada clique em qualquer lugar da página.
+    automatico = (st.session_state.get("pluggy_pendentes") is None
+                  and _stale(hours=12))
+    c1, c2 = st.columns([1, 2])
+    manual = c1.button("🔄 Buscar lançamentos novos", type="primary")
+    if automatico:
+        c2.caption("Buscando sozinho — faz isso quando passa de 12 horas.")
+    if manual or automatico:
         _fetch_into_state(ativas, destinos, df_cards, df_transactions)
+        repository.save_config_text(
+            ConfigKeys.PLUGGY_ULTIMA_SYNC, date.today().isoformat() + "T"
+            + datetime.now().strftime("%H:%M"))
 
     pendentes = st.session_state.get("pluggy_pendentes")
     if pendentes is None:
@@ -157,6 +172,18 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
         return
 
     _triage(pendentes, categories, df_credit_card, df_transactions)
+
+
+def _stale(*, hours: int) -> bool:
+    """Se a última busca é antiga o bastante para valer outra."""
+    carimbo = repository.load_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC)
+    if not carimbo:
+        return True
+    try:
+        quando = datetime.fromisoformat(carimbo)
+    except ValueError:
+        return True
+    return (datetime.now() - quando).total_seconds() >= hours * 3600
 
 
 def _fetch_into_state(ativas, destinos, df_cards, df_transactions) -> None:

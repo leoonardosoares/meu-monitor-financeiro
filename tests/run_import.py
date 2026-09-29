@@ -173,6 +173,57 @@ check("chave da conta é o id", pi.account_key(CONTA_CARTAO), "acc-cartao")
 check("rótulo legível", pi.account_label(CONTA_CARTAO), "platinum · 9366")
 check("sem número", pi.account_label({"name": "itau"}), "itau")
 
+# As compras do cartão já entram pelo cartão. Importar o débito do
+# pagamento da fatura como despesa contaria o mesmo dinheiro duas vezes.
+print("  Pagamento de fatura é quitação, não despesa nova")
+for desc in ("Pagamento de fatura", "PAGAMENTO FATURA CARTAO",
+             "Pgto fatura Nubank", "pagamento cartão de crédito"):
+    check(f"{desc!r}", pi.transfer_category(desc), "Cartão de Crédito")
+check("pela categoria da Pluggy",
+      pi.transfer_category("NU PAGAMENTOS", "Credit card payment"),
+      "Cartão de Crédito")
+
+print("  Aporte e resgate são transferência, não gasto")
+for desc in ("Aplicação CDB", "Resgate Tesouro Selic", "APLICACAO POUPANCA"):
+    check(f"{desc!r}", pi.transfer_category(desc), "Investimento")
+
+print("  Gasto de verdade não é confundido com transferência")
+for desc in ("Supermercado Extra", "Uber trip", "Farmácia São Paulo",
+             "Cartorio", "Pagamento de aluguel"):
+    check(f"{desc!r}", pi.transfer_category(desc), None)
+
+print("  A transferência vence o palpite do histórico")
+p, _ = montar([(CONTA_BANCO, pi.DESTINO_BANCO)],
+              {"acc-banco": [tx("f1", "2026-09-10", "Pagamento de fatura",
+                                -1983.53, "DEBIT")]},
+              sugerir=lambda d: "Lazer")
+check("classificada como quitação", p[0].categoria, "Cartão de Crédito")
+
+print("  Parcela vem do que a Pluggy informa")
+def tx_parcela(id_, atual, total):
+    t = tx(id_, "2026-09-05", "Link de Fotos", -266.67, "DEBIT")
+    t["creditCardMetadata"] = {"installmentNumber": atual,
+                               "totalInstallments": total}
+    return t
+
+check("3 de 6", pi.installment_label(tx_parcela("x", 3, 6)), "3/6")
+check("sem metadados", pi.installment_label(tx("y", "2026-09-05", "z", -1.0)),
+      "1/1")
+check("metadados incompletos",
+      pi.installment_label(tx_parcela("x", None, 6)), "1/1")
+check("total zero não vira divisão estranha",
+      pi.installment_label(tx_parcela("x", 1, 0)), "1/1")
+
+p, _ = montar([(CONTA_CARTAO, "Principal")],
+              {"acc-cartao": [tx_parcela("p1", 3, 6)]})
+_, cartao, _ = pi.to_rows(p)
+check("chega na linha do cartão", cartao[0]["Parcela"], "3/6")
+
+print("  Lançamento de banco nunca ganha parcela de cartão")
+p, _ = montar([(CONTA_BANCO, pi.DESTINO_BANCO)],
+              {"acc-banco": [tx_parcela("b9", 3, 6)]})
+check("fica 1/1", p[0].parcela, "1/1")
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")
