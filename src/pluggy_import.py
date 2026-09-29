@@ -11,6 +11,8 @@ categoria vira um ajuste na tela, e não uma linha errada na planilha.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
@@ -22,6 +24,53 @@ from src.dates import parse_dates
 # Onde cada conta da Pluggy pode desaguar.
 DESTINO_IGNORAR = "Ignorar"
 DESTINO_BANCO = "Entradas e Saídas"
+
+# Saídas do banco que NÃO são despesa nova. O pagamento da fatura é o
+# caso perigoso: as compras já entram pelo cartão, então importar o
+# débito como gasto contaria o mesmo dinheiro duas vezes. O app já trata
+# a categoria "Cartão de Crédito" como quitação e a exclui do orçamento
+# — basta classificar assim na entrada. Aporte de investimento segue a
+# mesma lógica: é transferência entre contas do mesmo dono.
+_TRANSFERENCIAS = (
+    ("Cartão de Crédito", re.compile(
+        r"pagamento.*(fatura|cartao)|fatura.*(cartao|paga)|"
+        r"pgto.*(fatura|cartao)|credit.?card.?payment")),
+    ("Investimento", re.compile(
+        r"\b(aplicacao|aplicac|resgate|cdb|lci|lca|tesouro|poupanca|"
+        r"investiment)\b")),
+)
+
+
+def _sem_acento(texto: str) -> str:
+    return unicodedata.normalize("NFKD", str(texto)) \
+        .encode("ascii", "ignore").decode().lower()
+
+
+def transfer_category(descricao: str, categoria_pluggy: str = "") -> str | None:
+    """Categoria de transferência, quando o lançamento é uma.
+
+    `None` quando é despesa ou receita de verdade.
+    """
+    alvo = _sem_acento(descricao) + " " + _sem_acento(categoria_pluggy)
+    for categoria, padrao in _TRANSFERENCIAS:
+        if padrao.search(alvo):
+            return categoria
+    return None
+
+
+def installment_label(tx: dict) -> str:
+    """"3/6" a partir do que a Pluggy informa; "1/1" quando não é parcelada.
+
+    Sem isso toda compra importada apareceria como parcela única, e o
+    extrato do cartão perderia a informação que explica por que o mesmo
+    nome reaparece nos meses seguintes.
+    """
+    meta = tx.get("creditCardMetadata") or {}
+    atual = pd.to_numeric(meta.get("installmentNumber"), errors="coerce")
+    total = pd.to_numeric(meta.get("totalInstallments"), errors="coerce")
+    if pd.isna(atual) or pd.isna(total) or int(total) < 1:
+        return "1/1"
+    return f"{max(int(atual), 1)}/{int(total)}"
 
 
 @dataclass
@@ -36,6 +85,7 @@ class Pendente:
     conta: str                   # conta de origem, para o usuário conferir
     categoria: str = "Outros"
     mes_fatura: str = ""         # só para cartão
+    parcela: str = "1/1"         # só para cartão
     categoria_pluggy: str = ""   # o palpite do banco, como referência
 
     @property
@@ -155,13 +205,21 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                 mes = cc.invoice_month_for_purchase(
                     quando, fechamento).strftime("%m/%Y")
 
+            cat_pluggy = str(tx.get("category") or "").strip()
+            # A transferência tem prioridade sobre o histórico: acertar
+            # que é quitação de fatura importa mais do que repetir a
+            # categoria que o usuário deu a um gasto parecido.
+            categoria = (transfer_category(descricao, cat_pluggy)
+                         or (sugerir(descricao) if sugerir else None)
+                         or "Outros")
+
             vistos.add(pid)
             pendentes.append(Pendente(
                 pluggy_id=pid, data=quando, descricao=descricao,
                 valor=valor, tipo=tipo, destino=destino, conta=rotulo,
-                categoria=(sugerir(descricao) if sugerir else None) or "Outros",
-                mes_fatura=mes,
-                categoria_pluggy=str(tx.get("category") or "").strip(),
+                categoria=categoria, mes_fatura=mes,
+                parcela=installment_label(tx) if e_cartao else "1/1",
+                categoria_pluggy=cat_pluggy,
             ))
 
     pendentes.sort(key=lambda p: (p.data, p.descricao))
@@ -186,7 +244,7 @@ def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dic
                 "Cartão": p.destino,
                 "Descrição": p.descricao,
                 "Categoria": p.categoria,
-                "Parcela": "1/1",
+                "Parcela": p.parcela,
                 "Valor": p.valor,
                 "Status": "Pendente",
             })

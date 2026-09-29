@@ -90,6 +90,9 @@ class ConfigKeys:
     # separados por ponto e vírgula. Sem isso, o importador criaria cartões
     # novos em vez de somar nos que já existem.
     PLUGGY_MAPA = "pluggy_mapa_contas"
+    # Quando a última busca rodou (ISO). Evita ir à API a cada clique do
+    # Streamlit, que recarrega a página inteira a cada interação.
+    PLUGGY_ULTIMA_SYNC = "pluggy_ultima_sync"
 
 # Defaults para configurações.
 DEFAULTS = {
