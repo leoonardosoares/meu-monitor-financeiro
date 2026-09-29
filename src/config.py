@@ -43,6 +43,10 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     ],
     # Valor bruto real de cada ativo, informado pela corretora/banco.
     "posicao_ativos": ["Data", "Investimento", "Valor"],
+    # Lançamentos já trazidos do Open Finance. A coluna "ID Pluggy" é o
+    # que impede a mesma compra de entrar duas vezes a cada sincronização.
+    "importacoes": ["ID Pluggy", "Data", "Descrição", "Valor", "Destino",
+                    "Importado em"],
 }
 
 # Categorias automáticas que sempre aparecem nos selects, mesmo que o
@@ -82,6 +86,10 @@ class ConfigKeys:
     # planilha, e não nos secrets, porque mudam a cada reconexão — e o
     # usuário consegue editá-los sem mexer na configuração do deploy.
     PLUGGY_ITEMS = "pluggy_item_ids"
+    # Para onde cada conta da Pluggy é importada: "conta da Pluggy=destino",
+    # separados por ponto e vírgula. Sem isso, o importador criaria cartões
+    # novos em vez de somar nos que já existem.
+    PLUGGY_MAPA = "pluggy_mapa_contas"
 
 # Defaults para configurações.
 DEFAULTS = {

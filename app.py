@@ -21,7 +21,8 @@ from src import auth, repository, sidebar, styles
 from src.config import APP_ICON, APP_TITLE, SYSTEM_CATEGORIES
 from src.finance import filter_by_month, list_months
 from src.pages import (
-    credit_card, dashboard, investments, settings, transactions,
+    credit_card, dashboard, import_page, investments, settings,
+    transactions,
 )
 from src.sidebar import PAGES
 
@@ -90,7 +91,14 @@ def main() -> None:
         )
     elif page == PAGES[3]:  # Investimentos
         investments.render(df_transactions=df_transactions)
-    elif page == PAGES[4]:  # Configurações e Orçamento
+    elif page == PAGES[4]:  # Importar do banco
+        import_page.render(
+            df_transactions=df_transactions,
+            df_credit_card=df_credit_card,
+            df_cards=repository.load_cards(),
+            categories=_bootstrap_categories(),
+        )
+    elif page == PAGES[5]:  # Configurações e Orçamento
         settings.render(
             df_categories=repository.load_categories(),
             df_budgets=repository.load_budgets(),

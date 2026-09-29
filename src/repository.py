@@ -344,3 +344,28 @@ def load_investment_allocation() -> pd.DataFrame:
 def save_investment_allocation(df: pd.DataFrame) -> None:
     _overwrite("alocacao_investimentos", df)
     load_investment_allocation.clear()
+
+
+# ---------------------------------------------------------------------------
+# Importações do Open Finance
+# ---------------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_imports() -> pd.DataFrame:
+    """Lançamentos já trazidos da Pluggy, para não trazer de novo."""
+    return _read("importacoes")
+
+
+def save_imports(df: pd.DataFrame) -> None:
+    _overwrite("importacoes", df)
+    load_imports.clear()
+
+
+def imported_ids() -> set[str]:
+    """Conjunto dos ids já importados, para a checagem ser O(1)."""
+    df = load_imports()
+    if df.empty or "ID Pluggy" not in df.columns:
+        return set()
+    return {
+        s for s in df["ID Pluggy"].dropna().astype(str).str.strip() if s
+    }
