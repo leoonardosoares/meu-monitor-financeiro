@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 
-from src import components, pluggy, repository
+from src import components, pluggy, repository, reset
 from src.config import ConfigKeys
 from src.format import brl
 from src.sidebar import ALL_MONTHS
@@ -25,7 +25,8 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
         "bancos. As regras de cada cartão ficam na aba **Cartão de Crédito**.",
     )
 
-    tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos", "Open Finance"])
+    tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos", "Open Finance",
+                    "Recomeçar"])
 
     with tabs[0]:
         _categories_tab(df_categories)
@@ -40,6 +41,91 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
         _fixed_costs_tab(df_fixed_costs, categories=categories)
     with tabs[3]:
         _open_finance_tab()
+    with tabs[4]:
+        _reset_tab(df_transactions_period)
+
+
+def _reset_tab(_df_period) -> None:
+    """Zera o histórico manual para o Open Finance reconstruir o mês.
+
+    É a única tela do app que apaga dados, então pede confirmação
+    escrita e mostra a contagem antes — um clique acidental aqui custa
+    caro, e desfazer depende de o usuário achar a aba de arquivo.
+    """
+    st.subheader("Recomeçar do zero")
+    st.caption(
+        "Apaga os lançamentos e as compras de cartão, e deixa o Open "
+        "Finance reconstruir a partir do dia 1 deste mês. Serve para o "
+        "app bater com o banco ao centavo: enquanto houver lançamento "
+        "digitado à mão misturado com importado, a soma nunca fecha."
+    )
+
+    df_tx = repository.load_transactions().drop(
+        columns=["Data_DT", "Mes_Ano"], errors="ignore")
+    df_cartao = repository.load_credit_card()
+    df_pag = repository.load_card_payments()
+    df_imp = repository.load_imports()
+
+    plano = reset.plan({
+        "financeiro": df_tx, "cartao": df_cartao,
+        "cartao_pagamentos": df_pag, "importacoes": df_imp,
+    })
+
+    rotulos = {
+        "financeiro": "Entradas e Saídas",
+        "cartao": "Compras no cartão",
+        "cartao_pagamentos": "Pagamentos de fatura",
+        "importacoes": "Registro de importação",
+    }
+    st.dataframe(pd.DataFrame([
+        {"Aba": rotulos[k], "Linhas que serão apagadas": v,
+         "Cópia guardada em": reset.ARQUIVOS.get(k) or "— (não precisa)"}
+        for k, v in plano.contagem.items()
+    ]), hide_index=True, use_container_width=True)
+
+    corte = reset.cutoff(date.today())
+    st.info(
+        f"Depois disso a importação passa a buscar desde **{corte:%d/%m/%Y}** "
+        "e o registro de importação é zerado, para o mês inteiro poder "
+        "voltar pelo Open Finance."
+    )
+    st.warning(
+        "Os seus **cartões cadastrados, categorias, orçamentos, custos "
+        "fixos e investimentos continuam** — só o histórico de "
+        "lançamentos é zerado."
+    )
+
+    if plano.total == 0:
+        st.success("Não há nada para apagar.")
+        return
+
+    st.divider()
+    confirmacao = st.text_input(
+        f"Para confirmar, escreva **RECOMEÇAR** — {plano.total} linha(s) "
+        "serão apagadas:", placeholder="RECOMEÇAR",
+    )
+    if st.button("🧨 Apagar e recomeçar", type="primary",
+                 disabled=confirmacao.strip().upper() != "RECOMEÇAR"):
+        hoje = date.today()
+        if not df_tx.empty:
+            repository.save_archive("arquivo_financeiro",
+                                    reset.stamp(df_tx, quando=hoje))
+        if not df_cartao.empty:
+            repository.save_archive("arquivo_cartao",
+                                    reset.stamp(df_cartao, quando=hoje))
+
+        repository.save_transactions(df_tx.iloc[0:0])
+        repository.save_credit_card(df_cartao.iloc[0:0])
+        repository.save_card_payments(df_pag.iloc[0:0])
+        repository.save_imports(df_imp.iloc[0:0])
+        repository.save_config_text(ConfigKeys.PLUGGY_DESDE, corte.isoformat())
+        repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, "")
+
+        st.success(
+            "Pronto. Vá em **Importar do banco** e busque os lançamentos "
+            f"desde {corte:%d/%m/%Y}."
+        )
+        st.rerun()
 
 
 def _open_finance_tab() -> None:
