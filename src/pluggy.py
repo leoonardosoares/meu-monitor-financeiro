@@ -194,6 +194,16 @@ MEU_PLUGGY_CONNECTOR = 200
 CONNECT_URL = "https://connect.pluggy.ai/"
 
 
+def connector(connector_id: int = MEU_PLUGGY_CONNECTOR) -> dict:
+    """Ficha de um conector, incluindo os campos que ele pede.
+
+    A tela de conexão da Pluggy monta o formulário a partir daqui. Se o
+    campo não aparece — ou aparece e não se sabe o que preencher — é esta
+    lista que diz o nome, o rótulo e o formato esperado.
+    """
+    return _get(f"/connectors/{connector_id}")
+
+
 def connect_token() -> str:
     """Token de curta duração (30 min) que autoriza a tela de conexão."""
     creds = credentials()

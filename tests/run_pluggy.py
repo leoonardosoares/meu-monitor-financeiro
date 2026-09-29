@@ -244,6 +244,28 @@ check("lista sem estourar", [i["id"] for i in pluggy.list_items()], ["i1"])
 check("nenhuma chamada levou pageSize",
       any("pageSize" in p for p in _params_vistos), False)
 
+print("  Ficha do conector")
+
+
+def _ficha(url, headers=None, params=None, timeout=None):
+    if url.endswith("/connectors/200"):
+        return Resp(200, {"id": 200, "name": "MeuPluggy", "type": "PERSONAL_BANK",
+                          "credentials": [{"name": "token", "label": "Token",
+                                           "type": "text", "optional": False}]})
+    return Resp(404, {"message": "not found"})
+
+
+requests.post, requests.get = fake_post, _ficha
+check("lê a ficha do MeuPluggy por padrão",
+      pluggy.connector()["name"], "MeuPluggy")
+check("expõe os campos pedidos",
+      [c["name"] for c in pluggy.connector()["credentials"]], ["token"])
+try:
+    pluggy.connector(999)
+    _fail.append("conector inexistente deveria levantar")
+except pluggy.PluggyError:
+    _ok += 1
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")
