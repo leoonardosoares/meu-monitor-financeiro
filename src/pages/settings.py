@@ -6,7 +6,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src import components, repository
+from src import components, pluggy, repository
 from src.config import ConfigKeys
 from src.format import brl
 from src.sidebar import ALL_MONTHS
@@ -20,11 +20,11 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
            selected_month: str) -> None:
     components.page_header(
         "Configurações e Orçamento",
-        "Personalize categorias, orçamentos e custos fixos. As regras de "
-        "cada cartão ficam na própria aba **Cartão de Crédito**.",
+        "Personalize categorias, orçamentos e custos fixos, e conecte seus "
+        "bancos. As regras de cada cartão ficam na aba **Cartão de Crédito**.",
     )
 
-    tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos"])
+    tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos", "Open Finance"])
 
     with tabs[0]:
         _categories_tab(df_categories)
@@ -37,6 +37,78 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
         )
     with tabs[2]:
         _fixed_costs_tab(df_fixed_costs, categories=categories)
+    with tabs[3]:
+        _open_finance_tab()
+
+
+def _open_finance_tab() -> None:
+    """Diagnóstico da conexão com a Pluggy.
+
+    Existe antes do importador de propósito: sem ver o que a API devolve
+    para esta conta, qualquer importador seria escrito no escuro. É aqui
+    que se descobre se as conexões feitas no Meu Pluggy estão visíveis
+    para esta aplicação.
+    """
+    st.subheader("Conexão com os bancos (Open Finance)")
+
+    if not pluggy.is_configured():
+        st.info(
+            "Ainda não configurado. Em **Manage app → Settings → Secrets**, "
+            "acrescente ao que já está lá:"
+        )
+        st.code(
+            'PLUGGY_CLIENT_ID = "..."\nPLUGGY_CLIENT_SECRET = "..."',
+            language="toml",
+        )
+        st.caption(
+            "Os dois valores ficam no dashboard da Pluggy, em **Aplicações**. "
+            "Não é preciso informar o itemId — o app descobre sozinho."
+        )
+        return
+
+    st.caption(
+        "Credenciais encontradas. O botão abaixo só lê dados: nada é "
+        "gravado na sua planilha."
+    )
+    if not st.button("🔌 Testar conexão", type="primary"):
+        return
+
+    try:
+        items = pluggy.list_items()
+    except pluggy.PluggyError as exc:
+        st.error(f"🚨 {exc}")
+        return
+
+    if not items:
+        st.warning(
+            "A Pluggy respondeu, mas **esta aplicação não enxerga nenhuma "
+            "conexão**. As conexões feitas no Meu Pluggy pertencem a ele, "
+            "não à sua aplicação — provavelmente falta autorizá-la como app "
+            "parceiro. No **meu.pluggy.ai**, procure em **Apps parceiros** "
+            "(ou em Ver detalhes de cada conexão) uma opção de conceder "
+            "acesso à aplicação *Finanças Pessoais*."
+        )
+        return
+
+    st.success(f"{len(items)} conexão(ões) visível(eis).")
+    for item in items:
+        conector = (item.get("connector") or {}).get("name") or "Banco"
+        with st.expander(f"🏦 {conector} — {item.get('status', '?')}"):
+            st.caption(f"itemId: `{item.get('id')}`")
+            try:
+                contas = pluggy.list_accounts(str(item.get("id")))
+            except pluggy.PluggyError as exc:
+                st.error(f"🚨 {exc}")
+                continue
+            if not contas:
+                st.caption("Nenhuma conta nesta conexão.")
+                continue
+            st.dataframe(pd.DataFrame([{
+                "Conta": c.get("name"),
+                "Tipo": c.get("type"),
+                "Número": c.get("number"),
+                "Saldo": brl(float(c.get("balance") or 0)),
+            } for c in contas]), hide_index=True, use_container_width=True)
 
 
 def _categories_tab(df_categories: pd.DataFrame) -> None:
