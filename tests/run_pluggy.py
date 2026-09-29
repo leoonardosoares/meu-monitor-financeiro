@@ -216,6 +216,12 @@ check("sem connector, não restringe",
       "connectorIds" in pluggy.connect_url("t", connector_id=None), False)
 check("reconectar um item existente",
       "updateItem=abc" in pluggy.connect_url("t", item_id="abc"), True)
+# Sem isso, autorizar o segundo banco atualizaria a conexão do primeiro
+# em vez de criar outra, e o primeiro sairia do ar sem aviso.
+check("cada autorização cria uma conexão nova",
+      "avoidDuplicates=false" in _url, True)
+check("mas reconectar não duplica",
+      "avoidDuplicates" in pluggy.connect_url("t", item_id="abc"), False)
 
 requests.post = lambda url, json=None, timeout=None, headers=None: (
     Resp(200, {"apiKey": "k"}) if url.endswith("/auth") else Resp(200, {}))

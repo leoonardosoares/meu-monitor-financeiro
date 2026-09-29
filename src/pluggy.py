@@ -234,12 +234,19 @@ def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
 
     Abrir a página hospedada evita embutir o widget JavaScript dentro do
     Streamlit, que não tem como devolver o `itemId` para o Python.
+
+    O Meu Pluggy deixa compartilhar um banco por autorização, então
+    conectar o segundo exige repetir o processo. `avoidDuplicates=false`
+    é o que permite isso: sem ele, a segunda autorização com o mesmo
+    conector atualizaria a conexão existente em vez de criar outra, e o
+    primeiro banco sairia do ar em silêncio.
     """
-    params = {"connect_token": token}
+    params = {"connect_token": token, "avoidDuplicates": "false"}
     if connector_id is not None:
         params["connectorIds"] = str(connector_id)
     if item_id:                       # reconectar um item existente
         params["updateItem"] = item_id
+        params.pop("avoidDuplicates")
     return CONNECT_URL + "?" + urlencode(params)
 
 
