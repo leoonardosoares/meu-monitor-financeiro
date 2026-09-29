@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date
 from urllib.parse import urlencode
 
 import requests
@@ -365,12 +364,16 @@ def list_accounts(item_id: str) -> list[dict]:
     return (_get("/accounts", {"itemId": item_id}).get("results") or [])
 
 
-def list_transactions(account_id: str, *,
-                      since: date | None = None) -> list[dict]:
-    params: dict = {"accountId": account_id}
-    if since is not None:
-        params["from"] = since.isoformat()
-    return _paginate("/v2/transactions", params)
+def list_transactions(account_id: str) -> list[dict]:
+    """Todos os lançamentos de uma conta.
+
+    Sem filtro de data de propósito. O endpoint recusou `pageSize` e
+    depois `from`, cada recusa custando um deploy para descobrir; o
+    recorte por data é feito no app, onde não depende de adivinhar o
+    nome do parâmetro. São 12 meses no máximo — volume que não justifica
+    continuar tentando.
+    """
+    return _paginate("/v2/transactions", {"accountId": account_id})
 
 
 def list_bills(account_id: str) -> list[dict]:

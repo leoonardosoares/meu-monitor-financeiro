@@ -160,6 +160,7 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                   transactions: dict[str, list[dict]],
                   ja_importados: set[str],
                   df_cards: pd.DataFrame,
+                  desde: date | None = None,
                   sugerir=None) -> tuple[list[Pendente], list[str]]:
     """Monta as pendências a partir do que a API devolveu.
 
@@ -171,6 +172,7 @@ def build_pending(*, accounts: list[tuple[dict, str]],
     avisos: list[str] = []
     vistos: set[str] = set()
     creditos = 0
+    antigos = 0
 
     for conta, destino in accounts:
         if destino in ("", DESTINO_IGNORAR):
@@ -192,6 +194,9 @@ def build_pending(*, accounts: list[tuple[dict, str]],
             if pid in ja_importados or pid in vistos:
                 continue
             quando = _data(tx)
+            if quando is not None and desde is not None and quando < desde:
+                antigos += 1
+                continue
             if quando is None:
                 avisos.append(f"{rotulo}: lançamento {pid} veio sem data "
                               "legível e ficou de fora.")
@@ -232,6 +237,11 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                 categoria_pluggy=cat_pluggy,
             ))
 
+    if antigos:
+        avisos.append(
+            f"{antigos} lançamento(s) anteriores a "
+            f"{desde:%d/%m/%Y} ficaram de fora."
+        )
     if creditos:
         avisos.append(
             f"{creditos} crédito(s) em fatura (pagamento, estorno) ficaram "
