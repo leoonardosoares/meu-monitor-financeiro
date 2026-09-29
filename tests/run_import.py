@@ -22,6 +22,8 @@ if "streamlit" not in sys.modules:
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+import pandas as pd  # noqa: E402
+
 from src import pluggy_import as pi  # noqa: E402
 from tests.fixture import CARDS  # noqa: E402
 
@@ -279,6 +281,87 @@ check("o dia do corte entra", [x.descricao for x in p],
 check("os antigos viram aviso", len(avisos), 1)
 check("o aviso diz quantos e desde quando",
       ("2 lançamento" in avisos[0] and "18/09/2026" in avisos[0]), True)
+
+# Salário cai no Itaú e vai para o Nubank: a Pluggy devolve as duas
+# pontas. Sem casar, o mês de R$ 5.000 vira R$ 10.000 de receita.
+print("  Dinheiro andando entre suas contas não é receita nem despesa")
+ITAU = {"id": "i", "name": "itau", "number": "1", "type": "BANK"}
+NU = {"id": "n", "name": "Nu", "number": "2", "type": "BANK"}
+
+
+def dois_bancos(itau_txs, nu_txs):
+    return montar([(ITAU, pi.DESTINO_BANCO), (NU, pi.DESTINO_BANCO)],
+                  {"i": itau_txs, "n": nu_txs})
+
+
+p, avisos = dois_bancos(
+    [tx("s1", "2026-09-05", "Salário", 5000.0, "CREDIT"),
+     tx("s2", "2026-09-06", "Pix enviado", -5000.0, "DEBIT")],
+    [tx("s3", "2026-09-06", "Pix recebido", 5000.0, "CREDIT")])
+categorias = {x.descricao: x.categoria for x in p}
+check("as duas pontas viram Transferência",
+      (categorias["Pix enviado"], categorias["Pix recebido"]),
+      ("Transferência", "Transferência"))
+check("o salário não é tocado", categorias["Salário"], "Outros")
+check("o par é reportado", "1 par(es)" in avisos[-1], True)
+
+print("  E some das receitas e despesas do período")
+banco, _, _ = pi.to_rows(p)
+from src.finance import compute_wealth  # noqa: E402
+_df = pd.DataFrame(banco)
+_w = compute_wealth(_df, _df)
+check("receita é só o salário", round(_w.total_income, 2), 5000.0)
+check("despesa é zero", round(_w.total_expense, 2), 0.0)
+
+print("  O que não é par continua sendo gasto de verdade")
+p, _ = dois_bancos(
+    [tx("a1", "2026-09-06", "Pix para o aluguel", -1500.0, "DEBIT")],
+    [tx("a2", "2026-09-06", "Pix recebido", 900.0, "CREDIT")])
+check("valores diferentes não casam",
+      {x.categoria for x in p}, {"Outros"})
+
+p, _ = dois_bancos(
+    [tx("b1", "2026-09-01", "Pix enviado", -300.0, "DEBIT")],
+    [tx("b2", "2026-09-20", "Pix recebido", 300.0, "CREDIT")])
+check("fora da janela de dias não casa",
+      {x.categoria for x in p}, {"Outros"})
+
+p, _ = montar([(ITAU, pi.DESTINO_BANCO)],
+              {"i": [tx("c1", "2026-09-06", "Saiu", -300.0, "DEBIT"),
+                     tx("c2", "2026-09-06", "Entrou", 300.0, "CREDIT")]})
+check("na MESMA conta não é transferência entre contas",
+      {x.categoria for x in p}, {"Outros"})
+
+print("  Uma entrada não pode quitar duas saídas")
+p, avisos = dois_bancos(
+    [tx("d1", "2026-09-06", "Pix 1", -300.0, "DEBIT"),
+     tx("d2", "2026-09-06", "Pix 2", -300.0, "DEBIT")],
+    [tx("d3", "2026-09-06", "Pix recebido", 300.0, "CREDIT")])
+check("só um par", sum(1 for x in p
+                       if x.categoria == "Transferência"), 2)
+check("a outra saída continua despesa",
+      sum(1 for x in p if x.categoria == "Outros"), 1)
+
+print("  Duas transferências iguais geram dois pares")
+p, _ = dois_bancos(
+    [tx("e1", "2026-09-06", "Pix 1", -300.0, "DEBIT"),
+     tx("e2", "2026-09-07", "Pix 2", -300.0, "DEBIT")],
+    [tx("e3", "2026-09-06", "Recebido 1", 300.0, "CREDIT"),
+     tx("e4", "2026-09-07", "Recebido 2", 300.0, "CREDIT")])
+check("todos marcados",
+      sum(1 for x in p if x.categoria == "Transferência"), 4)
+
+print("  Compra no cartão nunca vira transferência")
+p, _ = montar([(ITAU, pi.DESTINO_BANCO), (CONTA_CARTAO, "Principal")],
+              {"i": [tx("f1", "2026-09-06", "Pix enviado", -50.0, "DEBIT")],
+               "acc-cartao": [tx("f2", "2026-09-06", "Padaria", -50.0, "DEBIT")]})
+check("nenhuma marcada",
+      sum(1 for x in p if x.categoria == "Transferência"), 0)
+
+print("  A categoria é reconhecida como transferência pelo app")
+from src.config import TRANSFER_CATEGORIES, SYSTEM_CATEGORIES  # noqa: E402
+check("neutralizada nos KPIs", "Transferência" in TRANSFER_CATEGORIES, True)
+check("aparece nos selects", "Transferência" in SYSTEM_CATEGORIES, True)
 
 print()
 for _linha in _fail:

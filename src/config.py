@@ -64,6 +64,7 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
 SYSTEM_CATEGORIES = [
     "Cartão de Crédito",
     "Investimento",
+    "Transferência",
     "Receita/Salário",
     "Outros",
 ]
@@ -78,7 +79,13 @@ DEFAULT_CARD_NAME = "Principal"
 # Categorias que NÃO entram nas Receitas/Despesas do período — são
 # transferências entre contas (conta corrente ↔ conta de investimento)
 # e não afetam o patrimônio, só o local onde o dinheiro está parado.
-TRANSFER_CATEGORIES = ["Investimento"]
+# "Transferência" cobre o dinheiro que anda entre contas suas: o salário
+# que cai no Itaú e vai para o Nubank aparece como saída num extrato e
+# entrada no outro. Sem neutralizar, um mês de R$ 5.000 vira R$ 10.000
+# de receita e R$ 5.000 de despesa — o saldo continua certo, porque é
+# lido do banco, mas taxa de poupança e orçamento saem todos errados.
+TRANSFER_CATEGORIES = ["Investimento", "Transferência"]
+CATEGORIA_TRANSFERENCIA = "Transferência"
 
 # Chaves de configuração persistidas na aba `configuracoes`.
 class ConfigKeys:
@@ -125,14 +132,45 @@ DEFAULTS = {
 # pro mais escuro). Verdes funcionais (income) e cores semânticas
 # (vermelho pra despesa, âmbar pra alerta) ficam intactas.
 class Colors:
-    PRIMARY = "#317256"        # verde profundo — botões, KPIs principais
-    PRIMARY_HOVER = "#398564"  # tom acima — hover dos botões
-    PRIMARY_SOFT = "#52bf90"   # tom mais claro — acentos suaves
-    INCOME = "#49ab81"         # verde vibrante — receitas, "positivo"
-    INVESTMENT = "#419873"     # verde médio — investimentos
-    EXPENSE = "#EF4444"        # vermelho — despesas / "negativo"
-    WARNING = "#F59E0B"        # âmbar — alertas, "atenção"
-    NEUTRAL = "#64748B"        # cinza — texto secundário
+    """Paleta do tema escuro.
+
+    As seis cores de série foram escolhidas por cálculo, não por gosto:
+    passam nas checagens de banda de luminância, piso de croma, separação
+    para daltonismo e contraste sobre o fundo escuro. Trocar uma delas no
+    olho quebra a que você não está olhando — refaça a validação.
+    """
+    # Superfícies
+    BG = "#0D1117"            # fundo da página
+    SURFACE = "#161B22"       # cartões
+    SURFACE_2 = "#1C232B"     # linhas dentro do cartão
+    BORDER = "#26303B"        # contorno discreto
+
+    # Texto
+    TEXT = "#E6EDF3"          # 14.6:1 sobre o cartão
+    TEXT_MUTED = "#8B949E"    # 5.6:1
+    TEXT_FAINT = "#6E7681"    # rótulos maiúsculos
+
+    # Semântica de dinheiro
+    PRIMARY = "#52BF90"       # verde da marca — saldo, positivo (7.6:1)
+    PRIMARY_HOVER = "#6FD0A6"
+    PRIMARY_SOFT = "#2A4A3D"  # fundo de realce
+    INCOME = "#52BF90"
+    INVESTMENT = "#4ADECD"
+    EXPENSE = "#F85149"       # dívida, negativo (5.2:1)
+    WARNING = "#D29922"
+    NEUTRAL = "#8B949E"
+
+    # Séries de gráfico, em ordem fixa. Nunca cicle nem gere uma sétima:
+    # o que não couber vira "Outros".
+    SERIES = [
+        "#3CA368",  # verde
+        "#528ED9",  # azul
+        "#BA7F14",  # âmbar
+        "#A474C7",  # roxo
+        "#CF6963",  # vermelho
+        "#00A4A4",  # teal
+    ]
+
 
 # TTL (segundos) do cache de leitura. Reduz chamadas à API do Google
 # mas garante atualização razoável quando outro usuário edita a planilha.
