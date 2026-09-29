@@ -201,6 +201,18 @@ print("  Aporte e resgate são transferência, não gasto")
 for desc in ("Aplicação CDB", "Resgate Tesouro Selic", "APLICACAO POUPANCA"):
     check(f"{desc!r}", pi.transfer_category(desc), "Investimento")
 
+# Juros e rendimento aumentam o patrimônio: tratá-los como
+# transferência esconderia justamente o que o investimento rendeu.
+print("  Rendimento é receita, não movimentação entre contas")
+for desc in ("Rendimentos", "Rendimento CDB", "Juros da poupança",
+             "Dividendos ITSA4", "Remuneração da conta"):
+    check(f"{desc!r} não é transferência", pi.transfer_category(desc), None)
+
+print("  Mas aporte e resgate continuam sendo")
+for desc in ("Resgate CDB", "Resgate Tesouro Selic", "Aplicação CDB",
+             "APLICACAO AUTOMATICA", "Resgate RDB"):
+    check(f"{desc!r}", pi.transfer_category(desc), "Investimento")
+
 print("  Gasto de verdade não é confundido com transferência")
 for desc in ("Supermercado Extra", "Uber trip", "Farmácia São Paulo",
              "Cartorio", "Pagamento de aluguel"):
