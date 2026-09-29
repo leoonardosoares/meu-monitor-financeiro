@@ -6,7 +6,9 @@ from datetime import date
 
 import streamlit as st
 
+from src import repository
 from src.auth import logout
+from src.config import ConfigKeys, TEMA_PADRAO
 
 ALL_MONTHS = "Todos os Meses"
 
@@ -24,6 +26,7 @@ PAGES = [
 class SidebarState:
     selected_month: str
     selected_page: str
+    tema: str = TEMA_PADRAO
 
 
 def render(months: list[str]) -> SidebarState:
@@ -49,4 +52,15 @@ def render(months: list[str]) -> SidebarState:
     st.sidebar.subheader("Navegação")
     page = st.sidebar.radio("Escolha uma seção:", PAGES, label_visibility="collapsed")
 
-    return SidebarState(selected_month=month, selected_page=page)
+    st.sidebar.divider()
+    escuro = st.sidebar.toggle(
+        "🌙 Modo escuro", value=st.session_state.get("tema", TEMA_PADRAO) == "dark",
+        help="A preferência fica salva na sua planilha.",
+    )
+    tema = "dark" if escuro else "light"
+    if tema != st.session_state.get("tema"):
+        st.session_state["tema"] = tema
+        repository.save_config_text(ConfigKeys.TEMA, tema)
+        st.rerun()
+
+    return SidebarState(selected_month=month, selected_page=page, tema=tema)

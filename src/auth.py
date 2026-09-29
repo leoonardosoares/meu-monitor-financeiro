@@ -52,11 +52,11 @@ def render_login() -> None:
                 <div style="text-align:center; padding: 0.6rem 0 0.2rem 0;">
                     <div style="font-size: 2.6rem; line-height: 1;">💸</div>
                     <div style="font-size: 1.35rem; font-weight: 700;
-                                letter-spacing: -0.02em; color: #0F172A;
+                                letter-spacing: -0.02em; color: var(--text);
                                 margin-top: 0.5rem;">
                         {APP_TITLE}
                     </div>
-                    <div style="font-size: 0.85rem; color: #64748B;
+                    <div style="font-size: 0.85rem; color: var(--muted);
                                 margin-top: 0.25rem;">
                         Suas finanças, organizadas e seguras.
                     </div>
@@ -81,7 +81,7 @@ def render_login() -> None:
         st.markdown(
             """
             <div style="text-align:center; font-size: 0.75rem;
-                        color: #94A3B8; margin-top: 0.8rem;">
+                        color: var(--faint); margin-top: 0.8rem;">
                 🔒 Acesso protegido por senha · dados no seu Google Sheets
             </div>
             """,

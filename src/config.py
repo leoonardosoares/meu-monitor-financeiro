@@ -114,6 +114,7 @@ class ConfigKeys:
     # mão não tem identificador da Pluggy, então o app não consegue
     # reconhecê-lo e traria linha repetida.
     PLUGGY_DESDE = "pluggy_importar_desde"
+    TEMA = "tema"
 
 # Defaults para configurações.
 DEFAULTS = {
@@ -160,6 +161,14 @@ class Colors:
     WARNING = "#D29922"
     NEUTRAL = "#8B949E"
 
+    # Aliases do tema ativo — preenchidos por `apply_theme`. Mantidos
+    # como atributos de classe para o resto do app continuar lendo
+    # `Colors.TEXT` sem saber que existe troca de tema.
+    @classmethod
+    def use(cls, mode: str) -> None:
+        for chave, valor in PALETTES.get(mode, PALETTES["dark"]).items():
+            setattr(cls, chave, valor)
+
     # Séries de gráfico, em ordem fixa. Nunca cicle nem gere uma sétima:
     # o que não couber vira "Outros".
     SERIES = [
@@ -171,6 +180,35 @@ class Colors:
         "#00A4A4",  # teal
     ]
 
+
+# Duas paletas de superfície e texto. As cores de série e a semântica de
+# dinheiro (verde/vermelho) mudam só de tom: os mesmos seis hues passaram
+# na validação nos dois modos, então o que troca aqui é o fundo e o que
+# se escreve sobre ele.
+PALETTES = {
+    "dark": {
+        "BG": "#0D1117", "SURFACE": "#161B22", "SURFACE_2": "#1C232B",
+        "BORDER": "#26303B", "TEXT": "#E6EDF3", "TEXT_MUTED": "#8B949E",
+        "TEXT_FAINT": "#7D8590", "SIDEBAR": "#0A0E13",
+        "PRIMARY": "#52BF90", "PRIMARY_HOVER": "#6FD0A6",
+        "PRIMARY_SOFT": "#2A4A3D", "INCOME": "#52BF90",
+        "INVESTMENT": "#4ADECD", "EXPENSE": "#F85149", "WARNING": "#D29922",
+        "NEUTRAL": "#8B949E", "ON_PRIMARY": "#06251A",
+        "GRID": "rgba(230,237,243,0.06)", "AXIS": "rgba(230,237,243,0.10)",
+    },
+    "light": {
+        "BG": "#F7F9FC", "SURFACE": "#FFFFFF", "SURFACE_2": "#F1F5F9",
+        "BORDER": "#E2E8F0", "TEXT": "#0F172A", "TEXT_MUTED": "#475569",
+        "TEXT_FAINT": "#64748B", "SIDEBAR": "#FFFFFF",
+        "PRIMARY": "#2C7A5B", "PRIMARY_HOVER": "#317256",
+        "PRIMARY_SOFT": "#DCF2E7", "INCOME": "#2C7A5B",
+        "INVESTMENT": "#0E7490", "EXPENSE": "#C62828", "WARNING": "#A16207",
+        "NEUTRAL": "#64748B", "ON_PRIMARY": "#FFFFFF",
+        "GRID": "rgba(15,23,42,0.06)", "AXIS": "rgba(15,23,42,0.12)",
+    },
+}
+
+TEMA_PADRAO = "dark"
 
 # TTL (segundos) do cache de leitura. Reduz chamadas à API do Google
 # mas garante atualização razoável quando outro usuário edita a planilha.

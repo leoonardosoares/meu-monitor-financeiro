@@ -18,6 +18,8 @@ from urllib.parse import urlencode
 import requests
 import streamlit as st
 
+from src.config import Colors
+
 BASE_URL = "https://api.pluggy.ai"
 TIMEOUT = 30
 
@@ -229,6 +231,11 @@ def connect_token() -> str:
     return str(token)
 
 
+# O widget roda num iframe próprio e não enxerga as variáveis CSS do
+# app, então as cores vão literais — as duas saíram da paleta validada.
+COR_ERRO = Colors.SERIES[4]
+COR_OK = Colors.SERIES[0]
+
 CONNECT_SDK = "https://cdn.jsdelivr.net/npm/pluggy-connect-sdk@2.14.2/+esm"
 
 
@@ -271,9 +278,9 @@ const caixa = (cor, titulo, corpo) =>
 // Erro dentro de um iframe não aparece em lugar nenhum, então tudo que
 // pode falhar é capturado e escrito na própria caixa.
 window.addEventListener("error", (e) =>
-  estado.innerHTML = caixa("#EF4444", "Erro no widget", String(e.message)));
+  estado.innerHTML = caixa(COR_ERRO, "Erro no widget", String(e.message)));
 window.addEventListener("unhandledrejection", (e) =>
-  estado.innerHTML = caixa("#EF4444", "Erro no widget", String(e.reason)));
+  estado.innerHTML = caixa(COR_ERRO, "Erro no widget", String(e.reason)));
 
 try {
   // `import()` dinâmico, e não estático: a falha de um import estático
@@ -288,14 +295,14 @@ try {
       const item = (data && data.item) || {};
       const nome = (item.connector && item.connector.name) || "banco";
       estado.style.display = "none";
-      saida.innerHTML = caixa("#317256", "Conectado: " + nome,
+      saida.innerHTML = caixa(COR_OK, "Conectado: " + nome,
         'Copie este identificador e cole no passo 2:' +
         '<div style="margin-top:8px;font-family:monospace;font-size:18px;' +
         'user-select:all;background:#f1f5f9;padding:12px;border-radius:6px">' +
         (item.id || "(sem id)") + '</div>');
     },
     onError: (err) => {
-      estado.innerHTML = caixa("#EF4444", "Não deu certo",
+      estado.innerHTML = caixa(COR_ERRO, "Não deu certo",
         (err && (err.message || err.code)) || JSON.stringify(err));
     },
     onEvent: (evento) => {
@@ -305,12 +312,12 @@ try {
   }));
   pluggy.init();
 } catch (e) {
-  estado.innerHTML = caixa("#EF4444", "Não consegui carregar o widget",
+  estado.innerHTML = caixa(COR_ERRO, "Não consegui carregar o widget",
     String(e && e.message ? e.message : e) +
     '<br><br>Use o botão abaixo para abrir a tela da Pluggy.');
 }
 </script>
-""" % (CONNECT_SDK, json.dumps(opcoes))
+""".replace("COR_ERRO", f'"{COR_ERRO}"').replace("COR_OK", f'"{COR_OK}"') % (CONNECT_SDK, json.dumps(opcoes))
 
 
 def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
