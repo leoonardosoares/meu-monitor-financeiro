@@ -1,12 +1,14 @@
 """Página: Dashboard principal."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
-from src import components, credit_card as cc, insights, repository
+from src import (
+    components, credit_card as cc, insights, positions, repository,
+)
 from src.config import ConfigKeys
 from src.finance import (
     avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
@@ -33,6 +35,9 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
         "Visão consolidada do mês, comparação com o mês anterior e "
         "projeção do próximo período.",
     )
+
+    # ── Posição real, direto dos bancos ───────────────────────────────────
+    _real_position_section(df_transactions)
 
     # ── Insights automáticos ────────────────────────────────────────────────
     auto_insights = insights.generate(
@@ -111,6 +116,116 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
 # ---------------------------------------------------------------------------
 # Seções internas
 # ---------------------------------------------------------------------------
+
+def _real_position_section(df_transactions: pd.DataFrame) -> None:
+    """O que os bancos dizem que você tem, agora.
+
+    Fica acima de tudo porque é a resposta à pergunta que se faz ao
+    abrir o app. Os números derivados da planilha continuam logo abaixo,
+    para o período — é o que a planilha sabe fazer bem.
+    """
+    ids = [i.strip() for i in
+           repository.load_config_text(ConfigKeys.PLUGGY_ITEMS).split(",")
+           if i.strip()]
+    if not ids:
+        return
+
+    guardada = positions.from_rows(repository.load_positions())
+
+    cabecalho, botao = st.columns([4, 1])
+    cabecalho.subheader("Onde seu dinheiro está agora")
+    if botao.button("🔄 Atualizar", use_container_width=True):
+        nova = positions.fetch(ids)
+        for erro in nova.erros:
+            st.warning(f"⚠️ {erro}")
+        if not nova.vazia:
+            repository.append_position(positions.to_rows(nova))
+            st.rerun()
+
+    if guardada.vazia:
+        st.info(
+            "Ainda não li a sua posição. Clique em **Atualizar** para "
+            "buscar saldos e investimentos direto das instituições."
+        )
+        return
+
+    st.caption(
+        f"Lido das instituições em {_quando(guardada.quando)}. "
+        "Estes são os valores do banco, não uma soma de lançamentos."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Em conta", brl(guardada.em_conta))
+    c2.metric("Investido", brl(guardada.investido))
+    c3.metric("Fatura em aberto", brl(guardada.em_cartao),
+              delta="a pagar", delta_color="off")
+    c4.metric("Patrimônio 💎", brl(guardada.patrimonio))
+
+    _reconciliation(guardada, df_transactions)
+
+    with st.expander("Ver conta a conta"):
+        linhas = [{
+            "Instituição": c.instituicao, "Conta": c.nome,
+            "Tipo": "Cartão" if c.tipo == positions.TIPO_CARTAO else "Conta",
+            "Valor": brl(abs(c.saldo)),
+        } for c in guardada.contas]
+        linhas += [{
+            "Instituição": a.instituicao, "Conta": a.nome,
+            "Tipo": "Investimento", "Valor": brl(a.valor),
+        } for a in guardada.ativos]
+        st.dataframe(pd.DataFrame(linhas), hide_index=True,
+                     use_container_width=True)
+        if not guardada.ativos:
+            st.caption(
+                "Nenhum investimento veio das conexões. Nem toda "
+                "instituição publica isso no Open Finance; os ativos "
+                "cadastrados à mão continuam na aba Investimentos."
+            )
+
+    historico = positions.history(repository.load_positions())
+    if len(historico) > 1:
+        components.area_balance(historico, x="Data", y="Patrimônio",
+                                title="Evolução do patrimônio")
+
+
+def _quando(carimbo: str) -> str:
+    """Carimbo ISO em texto legível, sem quebrar se vier torto."""
+    try:
+        return datetime.fromisoformat(str(carimbo)).strftime("%d/%m/%Y às %H:%M")
+    except ValueError:
+        return str(carimbo) or "—"
+
+
+def _reconciliation(posicao, df_transactions: pd.DataFrame) -> None:
+    """Quanto a planilha difere do banco, e por quê.
+
+    A diferença não é defeito a esconder: ela mede exatamente o que
+    falta lançar. Mostrá-la é o que transforma "não está batendo" numa
+    pergunta com resposta.
+    """
+    derivado = compute_wealth(df_transactions, df_transactions).bank_balance
+    diferenca = posicao.em_conta - derivado
+    if abs(diferenca) < 0.01:
+        st.success("A planilha bate com o banco, ao centavo.")
+        return
+
+    with st.expander(
+        f"⚖️ A planilha difere do banco em {brl(abs(diferenca))}"
+    ):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Banco diz", brl(posicao.em_conta))
+        c2.metric("Planilha soma", brl(derivado))
+        c3.metric("Diferença", brl(diferenca),
+                  delta="falta lançar" if diferenca > 0 else "lançado a mais",
+                  delta_color="off")
+        st.caption(
+            "A soma da planilha só igualaria o banco se ela contivesse "
+            "toda a sua história, sem falha nem repetição. Se você "
+            "importou a partir de uma data, o que veio antes está fora "
+            "— e a diferença é justamente isso. **Os números acima, do "
+            "banco, são os corretos**; a planilha serve para explicar "
+            "para onde o dinheiro foi, não para dizer quanto você tem."
+        )
 
 def _spending_velocity_section(df_period: pd.DataFrame, df_budgets: pd.DataFrame) -> None:
     velocity = spending_velocity(df_period)

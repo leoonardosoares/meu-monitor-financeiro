@@ -1,0 +1,106 @@
+"""Posição real lida das instituições.
+
+    python tests/run_positions.py
+
+O que se verifica aqui é o dinheiro: sinal de saldo de cartão, campo de
+valor que varia por produto, e a reconstrução do retrato guardado. Um
+erro nesta camada mostra um patrimônio errado na primeira tela do app.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import types
+
+if "streamlit" not in sys.modules:
+    _st = types.ModuleType("streamlit")
+    _st.cache_data = _st.cache_resource = lambda *a, **k: (lambda f: f)
+    _st.secrets = {}
+    sys.modules["streamlit"] = _st
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pandas as pd  # noqa: E402
+
+from src import positions as ps  # noqa: E402
+
+_ok = 0
+_fail: list[str] = []
+
+
+def check(label, got, want):
+    global _ok
+    if got == want:
+        _ok += 1
+    else:
+        _fail.append(f"{label}: obtive {got!r}, esperava {want!r}")
+
+
+POS = ps.Posicao(
+    contas=[ps.Conta("Nu Pagamentos", "BANK", 222.68, "Nubank"),
+            ps.Conta("platinum", "CREDIT", -5083.68, "Nubank"),
+            ps.Conta("itau", "BANK", 0.01, "Itaú"),
+            ps.Conta("ITAU VISA", "CREDIT", 1333.30, "Itaú")],
+    ativos=[ps.Ativo("CDB Liquidez", "FIXED_INCOME", 12000.0, "Itaú")],
+    quando="2026-09-29T20:00")
+
+# Nubank devolveu o saldo do cartão negativo e o Itaú positivo. Somar o
+# valor cru daria quase zero de dívida, e o patrimônio ficaria inflado
+# em mais de dez mil reais.
+print("  Dívida de cartão é positiva venha o sinal que vier")
+check("em conta", round(POS.em_conta, 2), 222.69)
+check("dívida somada em módulo", round(POS.em_cartao, 2), 6416.98)
+check("investido", round(POS.investido, 2), 12000.0)
+check("patrimônio = conta + investido − dívida",
+      round(POS.patrimonio, 2), round(222.69 + 12000.0 - 6416.98, 2))
+
+print("  Posição vazia não finge número")
+vazia = ps.Posicao()
+check("marcada como vazia", vazia.vazia, True)
+check("tudo zero", (vazia.em_conta, vazia.investido, vazia.patrimonio),
+      (0.0, 0.0, 0.0))
+
+print("  Valor do investimento tolera o campo que a instituição usar")
+for campo in ("balance", "value", "amount"):
+    check(f"lê {campo}", ps._valor_do_ativo({campo: 1500.0}), 1500.0)
+check("prefere balance quando há vários",
+      ps._valor_do_ativo({"balance": 10.0, "value": 99.0}), 10.0)
+check("pula campo zerado e usa o próximo",
+      ps._valor_do_ativo({"balance": 0, "value": 77.0}), 77.0)
+check("sem campo nenhum", ps._valor_do_ativo({"nome": "x"}), 0.0)
+check("texto não numérico", ps._valor_do_ativo({"balance": "abc"}), 0.0)
+
+print("  Retrato guardado volta igual")
+df = pd.DataFrame(ps.to_rows(POS))
+volta = ps.from_rows(df)
+check("linhas gravadas", len(df), 5)
+check("patrimônio preservado",
+      round(volta.patrimonio, 2), round(POS.patrimonio, 2))
+check("contas e ativos separados de novo",
+      (len(volta.contas), len(volta.ativos)), (4, 1))
+check("carimbo preservado", volta.quando, "2026-09-29T20:00")
+
+print("  Só o retrato mais recente é usado")
+antigo = ps.Posicao(contas=[ps.Conta("x", "BANK", 1.0)],
+                    quando="2026-01-01T10:00")
+df2 = pd.DataFrame(ps.to_rows(antigo) + ps.to_rows(POS))
+check("pega o novo", round(ps.from_rows(df2).em_conta, 2), 222.69)
+
+print("  Histórico mede patrimônio por retrato")
+h = ps.history(df2)
+check("dois pontos", len(h), 2)
+check("em ordem", list(h["Data"]), ["2026-01-01T10:00", "2026-09-29T20:00"])
+check("o antigo", round(h["Patrimônio"].iloc[0], 2), 1.0)
+check("o novo", round(h["Patrimônio"].iloc[1], 2), round(POS.patrimonio, 2))
+
+print("  Planilha vazia não quebra")
+check("from_rows", ps.from_rows(pd.DataFrame()).vazia, True)
+check("history", list(ps.history(pd.DataFrame()).columns),
+      ["Data", "Patrimônio"])
+check("to_rows de posição vazia", ps.to_rows(ps.Posicao()), [])
+
+print()
+for _linha in _fail:
+    print(f"  FALHOU {_linha}")
+print(f"{_ok} passaram, {len(_fail)} falharam")
+sys.exit(1 if _fail else 0)

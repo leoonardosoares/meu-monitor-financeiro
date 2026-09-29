@@ -384,3 +384,22 @@ def imported_ids() -> set[str]:
     return {
         s for s in df["ID Pluggy"].dropna().astype(str).str.strip() if s
     }
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_positions() -> pd.DataFrame:
+    """Retratos da posição real, o mais recente por último."""
+    return _to_numeric(_read("posicao_real"), ["Valor"])
+
+
+def save_positions(df: pd.DataFrame) -> None:
+    _overwrite("posicao_real", df)
+    load_positions.clear()
+
+
+def append_position(rows: list[dict]) -> None:
+    """Acrescenta um retrato, mantendo os anteriores para o histórico."""
+    if not rows:
+        return
+    save_positions(pd.concat(
+        [load_positions(), pd.DataFrame(rows)], ignore_index=True))
