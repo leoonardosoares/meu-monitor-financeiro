@@ -66,10 +66,29 @@ def _open_finance_tab() -> None:
         )
         return
 
+    st.markdown("**1. Autorizar o app a ler suas conexões**")
     st.caption(
-        "Credenciais encontradas. O botão abaixo só lê dados: nada é "
-        "gravado na sua planilha."
+        "Os bancos que você ligou no Meu Pluggy pertencem a ele, não a este "
+        "app — por isso a API responde que falta autorização. O botão abaixo "
+        "abre a tela da Pluggy onde você entra com a sua conta do Meu Pluggy "
+        "e autoriza este app a ler as mesmas conexões."
     )
+    if st.button("🔗 Gerar link de autorização"):
+        try:
+            url = pluggy.connect_url(pluggy.connect_token())
+        except pluggy.PluggyError as exc:
+            st.error(f"🚨 {exc}")
+        else:
+            st.link_button("Abrir a tela de conexão da Pluggy", url,
+                           type="primary")
+            st.caption(
+                "Abre em outra aba e vale por 30 minutos. Ao terminar, "
+                "volte aqui e use o teste abaixo."
+            )
+
+    st.divider()
+    st.markdown("**2. Conferir o que o app enxerga**")
+    st.caption("Só leitura: nada é gravado na sua planilha.")
     if not st.button("🔌 Testar conexão", type="primary"):
         return
 
@@ -89,12 +108,8 @@ def _open_finance_tab() -> None:
 
     if not items:
         st.warning(
-            "A Pluggy respondeu, mas **esta aplicação não enxerga nenhuma "
-            "conexão**. As conexões feitas no Meu Pluggy pertencem a ele, "
-            "não à sua aplicação — provavelmente falta autorizá-la como app "
-            "parceiro. No **meu.pluggy.ai**, procure em **Apps parceiros** "
-            "(ou em Ver detalhes de cada conexão) uma opção de conceder "
-            "acesso à aplicação *Finanças Pessoais*."
+            "A Pluggy respondeu, mas **este app ainda não enxerga nenhuma "
+            "conexão**. Use o passo 1 acima para autorizar."
         )
         return
 
