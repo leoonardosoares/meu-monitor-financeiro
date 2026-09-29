@@ -29,7 +29,22 @@ def _empty_df(sheet_name: str) -> pd.DataFrame:
 
 
 def _read(sheet_name: str) -> pd.DataFrame:
-    rows = get_sheet(sheet_name).get_all_records()
+    """Lê uma aba; devolve vazio se ela ainda não existir.
+
+    Uma aba recém-declarada no esquema pode não existir na planilha, e o
+    Streamlit recarrega o código sem reiniciar o processo — então o mapa
+    de abas em memória pode ser mais antigo que o esquema. Ler nesse
+    intervalo não é erro: é "ainda não há nada aqui", que é a verdade. A
+    aba passa a existir na primeira gravação.
+    """
+    try:
+        rows = get_sheet(sheet_name).get_all_records()
+    except KeyError:
+        return _empty_df(sheet_name)
+    except Exception as exc:                      # gspread.WorksheetNotFound
+        if "WorksheetNotFound" not in type(exc).__name__:
+            raise
+        return _empty_df(sheet_name)
     return pd.DataFrame(rows) if rows else _empty_df(sheet_name)
 
 
