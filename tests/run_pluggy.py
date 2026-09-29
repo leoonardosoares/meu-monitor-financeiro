@@ -272,6 +272,41 @@ try:
 except pluggy.PluggyError:
     _ok += 1
 
+# A conta do usuário recusa listar conexões (403), mas lê cada uma pelo
+# id. Sem este caminho, o app ficaria cego mesmo com tudo autorizado.
+print("  Ler uma conexão pelo id quando a listagem é negada")
+
+
+def _so_por_id(url, headers=None, params=None, timeout=None):
+    if url.endswith("/v2/items") or url.endswith("/items"):
+        return Resp(403, {"code": 403,
+                          "codeDescription": "API_KEY_MISSING_OR_INVALID"})
+    if "/items/" in url:
+        uid = url.rsplit("/", 1)[-1]
+        if uid == "bom":
+            return Resp(200, {"id": "bom", "status": "UPDATED",
+                              "connector": {"name": "Nubank"}})
+        return Resp(404, {"message": "item not found"})
+    return Resp(400, {"message": "itemId should not be null"})
+
+
+requests.post, requests.get = fake_post, _so_por_id
+try:
+    pluggy.list_items()
+    _fail.append("listagem deveria levantar")
+except pluggy.PluggyError:
+    _ok += 1
+check("mas a conexão é lida pelo id", pluggy.item("bom")["connector"]["name"],
+      "Nubank")
+check("espaços em volta do id não atrapalham",
+      pluggy.item("  bom  ")["id"], "bom")
+try:
+    pluggy.item("ruim")
+    _fail.append("id inexistente deveria levantar")
+except pluggy.PluggyError as exc:
+    _ok += 1
+    check("e diz o motivo", "item not found" in str(exc), True)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

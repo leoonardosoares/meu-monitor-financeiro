@@ -255,6 +255,16 @@ def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
 # Leituras
 # ---------------------------------------------------------------------------
 
+def item(item_id: str) -> dict:
+    """Uma conexão pelo id.
+
+    Existe porque listar conexões (`/v2/items`) devolve 403 nesta conta:
+    a chave tem permissão para ler uma conexão específica e as contas
+    dela, mas não para enumerar todas. Guardar os ids é o contorno.
+    """
+    return _get(f"/items/{str(item_id).strip()}")
+
+
 def list_items() -> list[dict]:
     """Conexões (bancos) que o usuário autorizou.
 

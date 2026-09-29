@@ -78,6 +78,10 @@ class ConfigKeys:
     TAXA_SELIC = "taxa_selic"
     TAXA_IPCA = "taxa_ipca"
     TAXA_TR = "taxa_tr"
+    # Conexões do Open Finance (UUIDs separados por vírgula). Ficam na
+    # planilha, e não nos secrets, porque mudam a cada reconexão — e o
+    # usuário consegue editá-los sem mexer na configuração do deploy.
+    PLUGGY_ITEMS = "pluggy_item_ids"
 
 # Defaults para configurações.
 DEFAULTS = {
