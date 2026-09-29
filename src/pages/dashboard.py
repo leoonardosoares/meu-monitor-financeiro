@@ -154,12 +154,48 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
         "Estes são os valores do banco, não uma soma de lançamentos."
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Em conta", brl(guardada.em_conta))
-    c2.metric("Investido", brl(guardada.investido))
-    c3.metric("Fatura em aberto", brl(guardada.em_cartao),
-              delta="a pagar", delta_color="off")
-    c4.metric("Patrimônio 💎", brl(guardada.patrimonio))
+    esq, dir_ = st.columns(2)
+    with esq:
+        components.stat_card(
+            label="🏦 Contas bancárias", value=guardada.em_conta,
+            rows=[{"nome": c.instituicao, "sub": c.nome,
+                   "valor": brl(c.saldo)}
+                  for c in guardada.contas
+                  if c.tipo == positions.TIPO_BANCO],
+        )
+    with dir_:
+        limite = _limite_total()
+        components.stat_card(
+            label="💳 Cartões de crédito", value=guardada.em_cartao,
+            divida=True,
+            bar=(guardada.em_cartao / limite) if limite else None,
+            bar_label=(
+                f"{guardada.em_cartao / limite * 100:.0f}% utilizado · "
+                f"limite {brl(limite)}" if limite else ""),
+            rows=[{"nome": c.nome, "sub": c.instituicao,
+                   "valor": brl(abs(c.saldo))}
+                  for c in guardada.contas
+                  if c.tipo == positions.TIPO_CARTAO],
+        )
+
+    st.write("")
+    esq, dir_ = st.columns(2)
+    with esq:
+        components.stat_card(
+            label="📈 Investimentos", value=guardada.investido,
+            rows=[{"nome": a.nome, "sub": a.instituicao,
+                   "valor": brl(a.valor)} for a in guardada.ativos[:6]],
+        )
+    with dir_:
+        components.stat_card(
+            label="💎 Patrimônio", value=guardada.patrimonio,
+            rows=[
+                {"nome": "Em conta", "valor": brl(guardada.em_conta)},
+                {"nome": "Investido", "valor": brl(guardada.investido)},
+                {"nome": "Cartões a pagar", "valor": f"− {brl(guardada.em_cartao)}",
+                 "classe": "mf-neg"},
+            ],
+        )
 
     _reconciliation(guardada, df_transactions)
 
@@ -184,8 +220,17 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
 
     historico = positions.history(repository.load_positions())
     if len(historico) > 1:
-        components.area_balance(historico, x="Data", y="Patrimônio",
-                                title="Evolução do patrimônio")
+        st.write("")
+        st.markdown("###### Evolução do patrimônio")
+        components.area_trend(historico, x="Data", y="Patrimônio")
+
+
+def _limite_total() -> float:
+    """Soma dos limites cadastrados, para a barra de uso do cartão."""
+    df = repository.load_cards()
+    if df.empty or "Limite" not in df.columns:
+        return 0.0
+    return float(pd.to_numeric(df["Limite"], errors="coerce").fillna(0).sum())
 
 
 def _quando(carimbo: str) -> str:

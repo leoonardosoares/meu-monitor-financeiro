@@ -23,28 +23,104 @@ _brand_template = go.layout.Template(
         font=dict(
             family="Inter, 'Segoe UI', sans-serif",
             size=13,
-            color="#0F172A",
+            color=Colors.TEXT_MUTED,
         ),
+        # Transparente para o gráfico sentar dentro do cartão, sem um
+        # retângulo mais claro denunciando onde o Plotly começa.
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        colorway=[
-            Colors.PRIMARY, Colors.INCOME, Colors.INVESTMENT,
-            Colors.WARNING, Colors.EXPENSE, Colors.NEUTRAL,
-        ],
+        colorway=Colors.SERIES,
         hoverlabel=dict(
-            bgcolor="#FFFFFF",
-            bordercolor="rgba(49, 114, 86, 0.25)",
+            bgcolor=Colors.SURFACE_2,
+            bordercolor=Colors.BORDER,
             font=dict(family="Inter, 'Segoe UI', sans-serif", size=13,
-                      color="#0F172A"),
+                      color=Colors.TEXT),
         ),
-        xaxis=dict(gridcolor="rgba(226, 232, 240, 0.6)", zeroline=False),
-        yaxis=dict(gridcolor="rgba(226, 232, 240, 0.6)", zeroline=False),
-        legend=dict(font=dict(size=12)),
+        # Grade quase invisível: ela orienta, não compete com o dado.
+        xaxis=dict(gridcolor="rgba(230,237,243,0.06)", zeroline=False,
+                   linecolor="rgba(230,237,243,0.10)",
+                   tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
+        yaxis=dict(gridcolor="rgba(230,237,243,0.06)", zeroline=False,
+                   linecolor="rgba(230,237,243,0.10)",
+                   tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
+        legend=dict(font=dict(size=12, color=Colors.TEXT_MUTED),
+                    bgcolor="rgba(0,0,0,0)"),
         margin=dict(t=10, b=10, l=10, r=10),
     )
 )
 pio.templates["monitor"] = _brand_template
-pio.templates.default = "plotly_white+monitor"
+pio.templates.default = "plotly_dark+monitor"
+
+
+# ---------------------------------------------------------------------------
+# Cartões no estilo painel financeiro
+# ---------------------------------------------------------------------------
+
+def _classe(valor: float, *, divida: bool) -> str:
+    """Verde para o que é seu, vermelho para o que você deve."""
+    if divida:
+        return "mf-neg"
+    return "mf-pos" if valor >= 0 else "mf-neg"
+
+
+def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
+              divida: bool = False, bar: float | None = None,
+              bar_label: str = "") -> None:
+    """Cartão com rótulo pequeno, número grande e linhas por conta.
+
+    É a peça que dá o ar de app de banco: o número responde a pergunta
+    e as linhas abaixo mostram de onde ele vem, sem exigir um clique.
+    """
+    classe = _classe(value, divida=divida)
+    html = [
+        '<div class="mf-card">',
+        f'<div class="mf-card__label">{label}</div>',
+        f'<div class="mf-card__value {classe}">{brl(abs(value))}</div>',
+    ]
+    if bar is not None:
+        pct = max(0.0, min(bar, 1.0)) * 100
+        cor = Colors.EXPENSE if pct >= 80 else Colors.PRIMARY
+        html.append(
+            f'<div class="mf-row__sub">{bar_label}</div>'
+            f'<div class="mf-bar"><span style="width:{pct:.0f}%;'
+            f'background:{cor}"></span></div>'
+        )
+    for linha in rows or []:
+        sub = f'<div class="mf-row__sub">{linha.get("sub", "")}</div>' \
+            if linha.get("sub") else ""
+        cor = linha.get("classe") or classe
+        html.append(
+            '<div class="mf-row"><div>'
+            f'<div class="mf-row__name">{linha.get("nome", "")}</div>{sub}'
+            f'</div><div class="mf-row__val {cor}">'
+            f'{linha.get("valor", "")}</div></div>'
+        )
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
+def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
+               height: int = 220) -> None:
+    """Linha com preenchimento em degradê, para série temporal.
+
+    Uma série só, então sem legenda: o título já diz o que é. Sem
+    marcador em cada ponto — a forma da curva é o dado, não os pontos.
+    """
+    if df.empty or len(df) < 2:
+        return
+    cor = color or Colors.PRIMARY
+    r, g, b = (int(cor[i:i + 2], 16) for i in (1, 3, 5))
+    fig = go.Figure(go.Scatter(
+        x=df[x], y=df[y], mode="lines", line=dict(color=cor, width=2),
+        fill="tozeroy", fillcolor=f"rgba({r},{g},{b},0.16)",
+        hovertemplate="%{x}<br><b>%{y:,.2f}</b><extra></extra>",
+    ))
+    fig.update_layout(height=height, margin=dict(t=6, b=6, l=6, r=6),
+                      hovermode="x unified", showlegend=False)
+    fig.update_yaxes(showgrid=True)
+    fig.update_xaxes(showgrid=False)
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
 
 
 # ---------------------------------------------------------------------------
