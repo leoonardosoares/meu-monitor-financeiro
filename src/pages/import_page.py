@@ -168,7 +168,15 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
     for aviso in st.session_state.get("pluggy_avisos", []):
         st.warning(f"⚠️ {aviso}")
     if not pendentes:
-        st.success("Nada novo — sua planilha já está em dia.")
+        # "Em dia" só é verdade quando as contas realmente responderam.
+        # Dizer isso depois de todas falharem esconderia a falha.
+        if st.session_state.get("pluggy_falhou"):
+            st.error(
+                "Nenhuma conta pôde ser consultada — os avisos acima "
+                "explicam por quê. Isto **não** significa que está em dia."
+            )
+        else:
+            st.success("Nada novo — sua planilha já está em dia.")
         return
 
     _triage(pendentes, categories, df_credit_card, df_transactions)
@@ -206,6 +214,7 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions) -> None:
         )
     st.session_state["pluggy_pendentes"] = pendentes
     st.session_state["pluggy_avisos"] = avisos + mais
+    st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes
 
 
 def _triage(pendentes: list, categories: list[str],
