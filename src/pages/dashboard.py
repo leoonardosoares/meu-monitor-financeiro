@@ -11,8 +11,8 @@ from src.config import ConfigKeys
 from src.finance import (
     avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
     financial_independence_months, fixed_costs_split,
-    monthly_investment_contributions, monthly_summary, pct_change,
-    previous_month, projection_target, savings_rate, spending_velocity,
+    monthly_investment_contributions, monthly_summary, previous_month,
+    projection_target, savings_rate, spending_velocity,
 )
 from src.format import brl
 from src.sidebar import ALL_MONTHS
