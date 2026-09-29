@@ -77,6 +77,14 @@ def _open_finance_tab() -> None:
         items = pluggy.list_items()
     except pluggy.PluggyError as exc:
         st.error(f"🚨 {exc}")
+        st.caption(
+            "Abaixo, o que cada endpoint respondeu. Um **400** é chamada "
+            "malformada (problema meu); **401/403** é falta de autorização "
+            "(o app não está vinculado às suas conexões); **200** com lista "
+            "vazia é vínculo ausente."
+        )
+        st.dataframe(pd.DataFrame(pluggy.probe()), hide_index=True,
+                     use_container_width=True)
         return
 
     if not items:

@@ -123,6 +123,81 @@ check("não configurado", pluggy.is_configured(), False)
 pluggy.st.secrets = {"PLUGGY_CLIENT_ID": "  ", "PLUGGY_CLIENT_SECRET": "x"}
 check("valor em branco não conta", pluggy.is_configured(), False)
 
+# Um 400 é chamada malformada; trocar de header esconderia o erro real,
+# e engolir o corpo da resposta esconderia a única pista concreta.
+print("  Erro HTTP preserva a explicação da Pluggy")
+
+# O bloco anterior deixou as credenciais em branco de propósito; daqui
+# em diante os testes precisam de credenciais válidas de novo.
+pluggy.st.secrets = {"PLUGGY_CLIENT_ID": "cid-secreto",
+                     "PLUGGY_CLIENT_SECRET": "sec-secreto"}
+
+
+def make_status(code, body=None, text=""):
+    vistos = []
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        vistos.append(dict(headers or {}))
+        r = Resp(code, body)
+        r.text = text
+        if body is None:
+            r.json = lambda: (_ for _ in ()).throw(ValueError("no json"))
+        return r
+    return fake_get, vistos
+
+
+requests.post = fake_post
+_g, _vistos = make_status(400, {"message": "pageSize must not exceed 100"})
+requests.get = _g
+try:
+    pluggy.list_items()
+    _fail.append("HTTP 400 deveria levantar")
+except pluggy.PluggyError as exc:
+    _ok += 1
+    check("o corpo da Pluggy chega à tela",
+          "pageSize must not exceed 100" in str(exc), True)
+    check("400 não troca de header", len(_vistos), 1)
+
+_g, _vistos = make_status(403, {"message": "forbidden"})
+requests.get = _g
+try:
+    pluggy.list_items()
+    _fail.append("HTTP 403 deveria levantar")
+except pluggy.PluggyError as exc:
+    _ok += 1
+    check("403 tenta os dois headers", len(_vistos), 2)
+    check("e sugere o app parceiro", "app parceiro" in str(exc), True)
+
+_g, _ = make_status(500, None, "<html>Internal Server Error</html>")
+requests.get = _g
+try:
+    pluggy.list_items()
+    _fail.append("HTTP 500 deveria levantar")
+except pluggy.PluggyError as exc:
+    _ok += 1
+    check("corpo não-JSON não quebra o cliente",
+          "Internal Server Error" in str(exc), True)
+
+print("  Sondagem de endpoints")
+
+
+def _varia(url, headers=None, params=None, timeout=None):
+    if "/connectors" in url:
+        return Resp(200, {"results": [{"id": 1}]})
+    if "/v2/items" in url:
+        if (params or {}).get("pageSize"):
+            return Resp(200, {"results": [{"id": "i1"}], "nextCursor": None})
+        return Resp(400, {"message": "pageSize is required"})
+    return Resp(404, {"message": "not found"})
+
+
+requests.get = _varia
+_p = pluggy.probe()
+check("sonda cinco chamadas", len(_p), 5)
+check("e nunca levanta", all("Chamada" in r for r in _p), True)
+check("distingue 200 de 400 de 404",
+      [r["HTTP"] for r in _p], [200, 400, 200, 404, 404])
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

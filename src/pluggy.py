@@ -74,15 +74,21 @@ def _api_key(client_id: str, client_secret: str) -> str:
     return str(key)
 
 
-def _get(path: str, params: dict | None = None) -> dict:
-    """GET autenticado. A documentação não fixa o nome do header, então
-    tenta `X-API-KEY` e cai para `Authorization: Bearer` se for recusado.
+def _request(path: str, params: dict | None = None,
+             ) -> tuple[int, str, dict | None]:
+    """GET autenticado cru: devolve (status, corpo, json) sem levantar.
+
+    A documentação não fixa o nome do header, então tenta `X-API-KEY` e
+    só cai para `Authorization: Bearer` quando o primeiro é recusado por
+    autorização — um 400 não é motivo para trocar de header, e tentar de
+    novo só esconderia o erro real.
     """
     creds = credentials()
     if creds is None:
         raise PluggyError("Credenciais da Pluggy não configuradas.")
     key = _api_key(creds.client_id, creds.client_secret)
 
+    ultimo: tuple[int, str, dict | None] = (0, "", None)
     for header in ({"X-API-KEY": key}, {"Authorization": f"Bearer {key}"}):
         try:
             resp = requests.get(
@@ -92,21 +98,63 @@ def _get(path: str, params: dict | None = None) -> dict:
         except requests.RequestException as exc:
             raise PluggyError(
                 f"Não consegui falar com a Pluggy: {type(exc).__name__}")
-        if resp.status_code in (401, 403):
-            continue          # tenta o outro formato de header
-        if resp.status_code != 200:
-            raise PluggyError(f"GET {path} devolveu HTTP {resp.status_code}.")
-        return resp.json()
+        try:
+            corpo = resp.json()
+            texto = str(corpo)
+        except ValueError:
+            corpo, texto = None, resp.text[:400]
+        ultimo = (resp.status_code, texto, corpo)
+        if resp.status_code not in (401, 403):
+            return ultimo
+    return ultimo
 
-    raise PluggyError(
-        f"GET {path} foi recusado por falta de autorização. Se as conexões "
-        "foram feitas no Meu Pluggy, pode faltar autorizar esta aplicação "
-        "como app parceiro."
-    )
+
+def _get(path: str, params: dict | None = None) -> dict:
+    status, texto, corpo = _request(path, params)
+    if status == 200 and corpo is not None:
+        return corpo
+    if status in (401, 403):
+        raise PluggyError(
+            f"GET {path} foi recusado por falta de autorização (HTTP "
+            f"{status}). Se as conexões foram feitas no Meu Pluggy, pode "
+            f"faltar autorizar esta aplicação como app parceiro. "
+            f"Resposta: {texto}"
+        )
+    # O corpo é a descrição do erro da própria Pluggy — não carrega
+    # credencial e é a única pista concreta do que está errado.
+    raise PluggyError(f"GET {path} devolveu HTTP {status}. Resposta: {texto}")
+
+
+def probe() -> list[dict]:
+    """Bate em vários endpoints e relata o que cada um respondeu.
+
+    Serve para descobrir, numa tentativa só, qual caminho esta conta
+    aceita: a API tem variantes (`/items` e `/v2/items`) e nomes de
+    parâmetro que mudaram entre versões, e cada combinação errada
+    devolve o mesmo 400 opaco.
+    """
+    tentativas = [
+        ("GET /connectors", "/connectors", {"pageSize": 1}),
+        ("GET /v2/items", "/v2/items", None),
+        ("GET /v2/items?pageSize=100", "/v2/items", {"pageSize": 100}),
+        ("GET /items", "/items", None),
+        ("GET /accounts", "/accounts", None),
+    ]
+    out = []
+    for rotulo, path, params in tentativas:
+        try:
+            status, texto, _ = _request(path, params)
+        except PluggyError as exc:
+            out.append({"Chamada": rotulo, "HTTP": "—",
+                        "Resposta": str(exc)[:300]})
+            continue
+        out.append({"Chamada": rotulo, "HTTP": status,
+                    "Resposta": texto[:300]})
+    return out
 
 
 def _paginate(path: str, params: dict | None = None,
-              limit: int = 500) -> list[dict]:
+              limit: int = 100) -> list[dict]:
     """Percorre um endpoint paginado por cursor, juntando os resultados."""
     out: list[dict] = []
     cursor: str | None = None
