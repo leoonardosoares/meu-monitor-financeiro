@@ -224,6 +224,29 @@ p, _ = montar([(CONTA_BANCO, pi.DESTINO_BANCO)],
               {"acc-banco": [tx_parcela("b9", 3, 6)]})
 check("fica 1/1", p[0].parcela, "1/1")
 
+# A aba `cartao` só tem valor positivo e não tem coluna de tipo, então
+# um crédito viraria compra e aumentaria a fatura pelo próprio valor do
+# pagamento — o oposto do que aconteceu de verdade.
+print("  Crédito em fatura não vira compra")
+p, avisos = montar(
+    [(CONTA_CARTAO, "Principal")],
+    {"acc-cartao": [
+        tx("k1", "2026-09-05", "Padaria", -20.0, "DEBIT"),
+        tx("k2", "2026-09-05", "Pagamento recebido", 1380.0, "CREDIT"),
+        tx("k3", "2026-09-05", "Crédito de parcelamento", 46.29, "CREDIT"),
+    ]})
+check("só a compra entra", [x.descricao for x in p], ["Padaria"])
+check("os créditos são reportados", len(avisos), 1)
+check("o aviso diz o risco", "aumentaria o valor devido" in avisos[0], True)
+
+print("  No banco, crédito continua sendo receita")
+p, avisos = montar(
+    [(CONTA_BANCO, pi.DESTINO_BANCO)],
+    {"acc-banco": [tx("k4", "2026-09-05", "Salário", 5000.0, "CREDIT")]})
+check("entra normalmente", [(x.descricao, x.tipo) for x in p],
+      [("Salário", "Entrada")])
+check("sem aviso", avisos, [])
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

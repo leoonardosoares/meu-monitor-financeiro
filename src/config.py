@@ -93,6 +93,10 @@ class ConfigKeys:
     # Quando a última busca rodou (ISO). Evita ir à API a cada clique do
     # Streamlit, que recarrega a página inteira a cada interação.
     PLUGGY_ULTIMA_SYNC = "pluggy_ultima_sync"
+    # Data de corte da importação. Existe porque o que foi digitado à
+    # mão não tem identificador da Pluggy, então o app não consegue
+    # reconhecê-lo e traria linha repetida.
+    PLUGGY_DESDE = "pluggy_importar_desde"
 
 # Defaults para configurações.
 DEFAULTS = {
