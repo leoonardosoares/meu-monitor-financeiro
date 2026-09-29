@@ -198,6 +198,52 @@ check("e nunca levanta", all("Chamada" in r for r in _p), True)
 check("distingue 200 de 400 de 404",
       [r["HTTP"] for r in _p], [200, 400, 200, 404, 404])
 
+print("  Criação da conexão (connect token e URL)")
+
+requests.post = lambda url, json=None, timeout=None, headers=None: (
+    Resp(200, {"apiKey": "k"}) if url.endswith("/auth")
+    else Resp(200, {"accessToken": "tok-123"}))
+check("token de conexão", pluggy.connect_token(), "tok-123")
+
+_url = pluggy.connect_url("tok-123")
+check("aponta para a página hospedada",
+      _url.startswith("https://connect.pluggy.ai/?"), True)
+check("leva o token no parâmetro que a página lê",
+      "connect_token=tok-123" in _url, True)
+check("restringe ao conector do Meu Pluggy",
+      "connectorIds=200" in _url, True)
+check("sem connector, não restringe",
+      "connectorIds" in pluggy.connect_url("t", connector_id=None), False)
+check("reconectar um item existente",
+      "updateItem=abc" in pluggy.connect_url("t", item_id="abc"), True)
+
+requests.post = lambda url, json=None, timeout=None, headers=None: (
+    Resp(200, {"apiKey": "k"}) if url.endswith("/auth") else Resp(200, {}))
+try:
+    pluggy.connect_token()
+    _fail.append("resposta sem accessToken deveria levantar")
+except pluggy.PluggyError:
+    _ok += 1
+
+# /v2/items recusa pageSize, e a validação roda ANTES da autenticação:
+# mandar o parâmetro esconderia o 403 real atrás de um 400.
+print("  /v2/items é chamado sem pageSize")
+_params_vistos = []
+
+
+def _sem_pagesize(url, headers=None, params=None, timeout=None):
+    _params_vistos.append(dict(params or {}))
+    if "pageSize" in (params or {}):
+        return Resp(400, {"message": "property pageSize should not exist"})
+    return Resp(200, {"results": [{"id": "i1"}], "nextCursor": None})
+
+
+requests.post = fake_post
+requests.get = _sem_pagesize
+check("lista sem estourar", [i["id"] for i in pluggy.list_items()], ["i1"])
+check("nenhuma chamada levou pageSize",
+      any("pageSize" in p for p in _params_vistos), False)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

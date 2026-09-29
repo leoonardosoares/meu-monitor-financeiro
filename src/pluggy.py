@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlencode
 
 import requests
 import streamlit as st
@@ -136,7 +137,7 @@ def probe() -> list[dict]:
     tentativas = [
         ("GET /connectors", "/connectors", {"pageSize": 1}),
         ("GET /v2/items", "/v2/items", None),
-        ("GET /v2/items?pageSize=100", "/v2/items", {"pageSize": 100}),
+        ("GET /connectors (todos)", "/connectors", None),
         ("GET /items", "/items", None),
         ("GET /accounts", "/accounts", None),
     ]
@@ -154,12 +155,20 @@ def probe() -> list[dict]:
 
 
 def _paginate(path: str, params: dict | None = None,
-              limit: int = 100) -> list[dict]:
-    """Percorre um endpoint paginado por cursor, juntando os resultados."""
+              page_size: int | None = 100) -> list[dict]:
+    """Percorre um endpoint paginado por cursor, juntando os resultados.
+
+    `page_size=None` omite o parâmetro: `/v2/items` recusa `pageSize`
+    com "property pageSize should not exist", e a validação roda antes
+    da autenticação — mandar o parâmetro errado esconde qualquer outro
+    erro atrás de um 400.
+    """
     out: list[dict] = []
     cursor: str | None = None
     for _ in range(50):                     # teto de segurança
-        page = dict(params or {}, pageSize=limit)
+        page = dict(params or {})
+        if page_size is not None:
+            page["pageSize"] = page_size
         if cursor:
             page["cursor"] = cursor
         data = _get(path, page)
@@ -168,6 +177,61 @@ def _paginate(path: str, params: dict | None = None,
         if not cursor:
             break
     return out
+
+
+# ---------------------------------------------------------------------------
+# Criar a conexão (item)
+# ---------------------------------------------------------------------------
+#
+# Os bancos ligados no Meu Pluggy pertencem ao Meu Pluggy, não a esta
+# aplicação — por isso `/v2/items` responde que não há autorização. O elo
+# é feito criando um item com o conector "MeuPluggy", que a API lista
+# como o único disponível para esta aplicação: o usuário entra com a
+# conta do Meu Pluggy e autoriza, e as conexões dele passam a ser
+# visíveis aqui.
+
+MEU_PLUGGY_CONNECTOR = 200
+CONNECT_URL = "https://connect.pluggy.ai/"
+
+
+def connect_token() -> str:
+    """Token de curta duração (30 min) que autoriza a tela de conexão."""
+    creds = credentials()
+    if creds is None:
+        raise PluggyError("Credenciais da Pluggy não configuradas.")
+    key = _api_key(creds.client_id, creds.client_secret)
+    try:
+        resp = requests.post(
+            f"{BASE_URL}/connect_token", json={},
+            headers={"X-API-KEY": key}, timeout=TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise PluggyError(f"Não consegui falar com a Pluggy: {type(exc).__name__}")
+    if resp.status_code != 200:
+        raise PluggyError(
+            f"POST /connect_token devolveu HTTP {resp.status_code}. "
+            f"Resposta: {str(resp.text)[:300]}"
+        )
+    token = (resp.json() or {}).get("accessToken")
+    if not token:
+        raise PluggyError("A Pluggy respondeu sem accessToken.")
+    return str(token)
+
+
+def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
+                item_id: str | None = None) -> str:
+    """URL da tela de conexão hospedada pela Pluggy.
+
+    Abrir a página hospedada evita embutir o widget JavaScript dentro do
+    Streamlit, que não tem como devolver o `itemId` para o Python.
+    """
+    params = {"connect_token": token}
+    if connector_id is not None:
+        params["connectorIds"] = str(connector_id)
+    if item_id:                       # reconectar um item existente
+        params["updateItem"] = item_id
+    return CONNECT_URL + "?" + urlencode(params)
+
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +244,7 @@ def list_items() -> list[dict]:
     É o que dispensa o usuário de caçar o `itemId` na interface da
     Pluggy: a própria API diz quais conexões existem.
     """
-    return _paginate("/v2/items")
+    return _paginate("/v2/items", page_size=None)
 
 
 def list_accounts(item_id: str) -> list[dict]:
