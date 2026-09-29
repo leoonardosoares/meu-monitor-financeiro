@@ -19,6 +19,7 @@ from datetime import date
 import pandas as pd
 
 from src import credit_card as cc
+from src.config import CATEGORIA_TRANSFERENCIA
 from src.dates import parse_dates
 
 # Onde cada conta da Pluggy pode desaguar.
@@ -250,7 +251,60 @@ def build_pending(*, accounts: list[tuple[dict, str]],
         )
 
     pendentes.sort(key=lambda p: (p.data, p.descricao))
+
+    pares = match_transfers(pendentes)
+    if pares:
+        avisos.append(
+            f"{pares} par(es) de transferência entre suas contas foram "
+            "marcados como **Transferência** — dinheiro mudando de lugar "
+            "não conta como receita nem como despesa."
+        )
     return pendentes, avisos
+
+
+def match_transfers(pendentes: list[Pendente], *,
+                    janela_dias: int = 3) -> int:
+    """Marca como transferência o dinheiro que anda entre contas suas.
+
+    Uma saída de uma conta conectada que reaparece como entrada de mesmo
+    valor em OUTRA conta conectada, poucos dias depois, é a mesma nota
+    mudando de lugar — não é receita nem despesa. Casar por valor, por
+    direção oposta e por conta diferente é forte o bastante porque as
+    duas pontas vêm do mesmo extrato; a janela de dias existe porque TED
+    e Pix agendado não caem no mesmo instante.
+
+    Altera os pendentes no lugar e devolve quantos pares achou. Um falso
+    positivo custa um clique na triagem; um falso negativo infla a
+    receita do mês em silêncio.
+    """
+    saidas = [p for p in pendentes
+              if not p.is_cartao and p.tipo == "Saída"]
+    entradas = [p for p in pendentes
+                if not p.is_cartao and p.tipo == "Entrada"]
+    if not saidas or not entradas:
+        return 0
+
+    usadas: set[int] = set()
+    pares = 0
+    for saida in saidas:
+        melhor, distancia = None, None
+        for i, entrada in enumerate(entradas):
+            if i in usadas or entrada.conta == saida.conta:
+                continue
+            if round(entrada.valor, 2) != round(saida.valor, 2):
+                continue
+            dias = abs((entrada.data - saida.data).days)
+            if dias > janela_dias:
+                continue
+            if distancia is None or dias < distancia:
+                melhor, distancia = i, dias
+        if melhor is None:
+            continue
+        usadas.add(melhor)
+        saida.categoria = CATEGORIA_TRANSFERENCIA
+        entradas[melhor].categoria = CATEGORIA_TRANSFERENCIA
+        pares += 1
+    return pares
 
 
 def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dict]]:

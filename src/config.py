@@ -64,6 +64,7 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
 SYSTEM_CATEGORIES = [
     "Cartão de Crédito",
     "Investimento",
+    "Transferência",
     "Receita/Salário",
     "Outros",
 ]
@@ -78,7 +79,13 @@ DEFAULT_CARD_NAME = "Principal"
 # Categorias que NÃO entram nas Receitas/Despesas do período — são
 # transferências entre contas (conta corrente ↔ conta de investimento)
 # e não afetam o patrimônio, só o local onde o dinheiro está parado.
-TRANSFER_CATEGORIES = ["Investimento"]
+# "Transferência" cobre o dinheiro que anda entre contas suas: o salário
+# que cai no Itaú e vai para o Nubank aparece como saída num extrato e
+# entrada no outro. Sem neutralizar, um mês de R$ 5.000 vira R$ 10.000
+# de receita e R$ 5.000 de despesa — o saldo continua certo, porque é
+# lido do banco, mas taxa de poupança e orçamento saem todos errados.
+TRANSFER_CATEGORIES = ["Investimento", "Transferência"]
+CATEGORIA_TRANSFERENCIA = "Transferência"
 
 # Chaves de configuração persistidas na aba `configuracoes`.
 class ConfigKeys:
