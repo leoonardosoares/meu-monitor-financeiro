@@ -46,5 +46,21 @@ def get_worksheets() -> dict[str, Worksheet]:
 
 
 def get_sheet(name: str) -> Worksheet:
-    """Atalho para obter uma aba específica pelo nome."""
-    return get_worksheets()[name]
+    """Atalho para obter uma aba específica pelo nome.
+
+    O dicionário de abas é `cache_resource`, e o Streamlit recarrega o
+    código sem reiniciar o processo — então uma aba acrescentada ao
+    esquema depois fica de fora do cache montado antes dela, e o acesso
+    estoura com `KeyError`. Aqui o cache é refeito uma vez antes de
+    desistir, o que também cria a aba nova na planilha.
+    """
+    worksheets = get_worksheets()
+    if name not in worksheets:
+        get_worksheets.clear()
+        worksheets = get_worksheets()
+    if name not in worksheets:
+        raise KeyError(
+            f"A aba '{name}' não existe na planilha e não pôde ser criada. "
+            "Confira se a conta de serviço tem permissão de edição."
+        )
+    return worksheets[name]
