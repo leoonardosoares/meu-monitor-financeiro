@@ -156,13 +156,14 @@ def probe() -> list[dict]:
 
 
 def _paginate(path: str, params: dict | None = None,
-              page_size: int | None = 100) -> list[dict]:
+              page_size: int | None = None) -> list[dict]:
     """Percorre um endpoint paginado por cursor, juntando os resultados.
 
-    `page_size=None` omite o parâmetro: `/v2/items` recusa `pageSize`
-    com "property pageSize should not exist", e a validação roda antes
-    da autenticação — mandar o parâmetro errado esconde qualquer outro
-    erro atrás de um 400.
+    O padrão é NÃO mandar `pageSize`: os endpoints `/v2` recusam o
+    parâmetro com "property pageSize should not exist" — visto em
+    `/v2/items` e de novo em `/v2/transactions`. Como a validação roda
+    antes da autenticação, mandá-lo esconde qualquer outro erro atrás de
+    um 400. Quem precisa de tamanho de página passa explicitamente.
     """
     out: list[dict] = []
     cursor: str | None = None
@@ -356,7 +357,7 @@ def list_items() -> list[dict]:
     É o que dispensa o usuário de caçar o `itemId` na interface da
     Pluggy: a própria API diz quais conexões existem.
     """
-    return _paginate("/v2/items", page_size=None)
+    return _paginate("/v2/items")
 
 
 def list_accounts(item_id: str) -> list[dict]:

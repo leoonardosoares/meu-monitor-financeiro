@@ -250,6 +250,22 @@ check("lista sem estourar", [i["id"] for i in pluggy.list_items()], ["i1"])
 check("nenhuma chamada levou pageSize",
       any("pageSize" in p for p in _params_vistos), False)
 
+# O mesmo 400 apareceu depois em /v2/transactions: nenhum endpoint /v2
+# aceita o parâmetro, então o padrão é não mandar.
+_params_vistos.clear()
+check("transações também vêm sem pageSize",
+      [t["id"] for t in pluggy.list_transactions("acc-1")], ["i1"])
+check("e nenhuma levou pageSize",
+      any("pageSize" in p for p in _params_vistos), False)
+check("mas o filtro de conta vai junto",
+      _params_vistos[0].get("accountId"), "acc-1")
+
+_params_vistos.clear()
+from datetime import date as _date
+pluggy.list_transactions("acc-1", since=_date(2026, 9, 1))
+check("e a data de corte quando pedida",
+      _params_vistos[0].get("from"), "2026-09-01")
+
 print("  Ficha do conector")
 
 
