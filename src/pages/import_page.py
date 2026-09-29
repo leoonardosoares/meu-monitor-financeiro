@@ -146,6 +146,23 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
         f"{len(ativas)} conta(s) serão consultadas. Esta etapa **não grava "
         "nada** — ela só monta a lista para você conferir."
     )
+
+    # A proteção contra duplicata só conhece os ids que ESTE app já
+    # importou. O que você digitou à mão não tem id nenhum, então trazer
+    # o histórico inteiro duplicaria meses de lançamentos manuais.
+    padrao = repository.load_config_text(ConfigKeys.PLUGGY_DESDE)
+    try:
+        inicial = date.fromisoformat(padrao) if padrao else date.today()
+    except ValueError:
+        inicial = date.today()
+    desde = st.date_input(
+        "Trazer lançamentos a partir de", value=inicial, format="DD/MM/YYYY",
+        help=("A Pluggy guarda 12 meses. Como os seus lançamentos manuais "
+              "não têm identificador, o app não consegue reconhecê-los — "
+              "trazer período que você já digitou cria linha repetida."),
+    )
+    if str(desde) != padrao:
+        repository.save_config_text(ConfigKeys.PLUGGY_DESDE, str(desde))
     # Busca sozinho quando a última foi há mais de meio dia: a ideia é
     # o usuário abrir o app e já encontrar a lista pronta, em vez de ter
     # de lembrar de clicar. O carimbo evita repetir a cada rerun do
@@ -157,7 +174,8 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
     if automatico:
         c2.caption("Buscando sozinho — faz isso quando passa de 12 horas.")
     if manual or automatico:
-        _fetch_into_state(ativas, destinos, df_cards, df_transactions)
+        _fetch_into_state(ativas, destinos, df_cards, df_transactions,
+                          desde=desde)
         repository.save_config_text(
             ConfigKeys.PLUGGY_ULTIMA_SYNC, date.today().isoformat() + "T"
             + datetime.now().strftime("%H:%M"))
@@ -194,14 +212,15 @@ def _stale(*, hours: int) -> bool:
     return (datetime.now() - quando).total_seconds() >= hours * 3600
 
 
-def _fetch_into_state(ativas, destinos, df_cards, df_transactions) -> None:
+def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
+                      *, desde) -> None:
     transacoes: dict[str, list[dict]] = {}
     avisos: list[str] = []
     with st.spinner("Buscando lançamentos…"):
         for conta in ativas:
             chave = pi.account_key(conta)
             try:
-                transacoes[chave] = pluggy.list_transactions(chave)
+                transacoes[chave] = pluggy.list_transactions(chave, since=desde)
             except pluggy.PluggyError as exc:
                 avisos.append(f"{pi.account_label(conta)}: {exc}")
 
@@ -221,6 +240,13 @@ def _triage(pendentes: list, categories: list[str],
             df_credit_card: pd.DataFrame,
             df_transactions: pd.DataFrame) -> None:
     st.markdown(f"**{len(pendentes)} lançamento(s) novo(s)**")
+    if len(pendentes) > 150:
+        st.warning(
+            f"⚠️ São **{len(pendentes)}** lançamentos — muito para uma "
+            "sincronização de rotina. Se este período já foi digitado à "
+            "mão, importar agora vai **duplicar** tudo. Ajuste a data "
+            "acima para depois do seu último lançamento manual."
+        )
     st.caption(
         "Ajuste a categoria e desmarque o que não quiser importar. A "
         "coluna *Palpite do banco* é o que a Pluggy achou que era — "

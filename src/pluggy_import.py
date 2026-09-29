@@ -170,6 +170,7 @@ def build_pending(*, accounts: list[tuple[dict, str]],
     pendentes: list[Pendente] = []
     avisos: list[str] = []
     vistos: set[str] = set()
+    creditos = 0
 
     for conta, destino in accounts:
         if destino in ("", DESTINO_IGNORAR):
@@ -199,6 +200,15 @@ def build_pending(*, accounts: list[tuple[dict, str]],
             if valor <= 0:
                 continue
 
+            # Crédito numa fatura é pagamento ou estorno, não compra. A
+            # aba `cartao` só guarda valor positivo e não tem coluna de
+            # tipo, então um "Pagamento recebido" viraria uma compra e
+            # inflaria a fatura pelo valor do próprio pagamento. O app
+            # registra quitação pelo fluxo de baixa, não aqui.
+            if e_cartao and tipo == "Entrada":
+                creditos += 1
+                continue
+
             descricao = str(tx.get("description") or "").strip() or "(sem descrição)"
             mes = ""
             if e_cartao:
@@ -221,6 +231,13 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                 parcela=installment_label(tx) if e_cartao else "1/1",
                 categoria_pluggy=cat_pluggy,
             ))
+
+    if creditos:
+        avisos.append(
+            f"{creditos} crédito(s) em fatura (pagamento, estorno) ficaram "
+            "de fora: o app registra quitação pela baixa da fatura, e "
+            "trazê-los como compra aumentaria o valor devido."
+        )
 
     pendentes.sort(key=lambda p: (p.data, p.descricao))
     return pendentes, avisos
