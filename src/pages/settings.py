@@ -5,6 +5,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+from streamlit.components.v1 import html as components_html
 
 from src import components, pluggy, repository
 from src.config import ConfigKeys
@@ -104,18 +105,26 @@ def _open_finance_tab() -> None:
                     f"OAuth: {ficha.get('oauth')} · MFA: {ficha.get('hasMFA')}"
                 )
 
-    if st.button("🔗 Gerar link de autorização"):
+    if st.button("🔗 Conectar um banco"):
         try:
-            url = pluggy.connect_url(pluggy.connect_token())
+            token = pluggy.connect_token()
         except pluggy.PluggyError as exc:
             st.error(f"🚨 {exc}")
         else:
-            st.link_button("Abrir a tela de conexão da Pluggy", url,
-                           type="primary")
-            st.caption(
-                "Abre em outra aba e vale por 30 minutos. Ao terminar, "
-                "volte aqui e use o teste abaixo."
-            )
+            st.session_state["pluggy_token"] = token
+
+    token = st.session_state.get("pluggy_token")
+    if token:
+        st.caption(
+            "Conecte **um banco por vez**; o Meu Pluggy compartilha uma "
+            "conexão por autorização. Ao final o identificador aparece na "
+            "tela — copie e cole no passo 2. O link vale 30 minutos."
+        )
+        components_html(pluggy.connect_widget_html(token), height=640)
+        st.link_button(
+            "Se o widget acima não abrir, use a tela da Pluggy",
+            pluggy.connect_url(token),
+        )
 
     st.divider()
     st.markdown("**2. Informar as conexões criadas**")

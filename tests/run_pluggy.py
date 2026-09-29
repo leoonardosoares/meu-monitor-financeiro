@@ -307,6 +307,27 @@ except pluggy.PluggyError as exc:
     _ok += 1
     check("e diz o motivo", "item not found" in str(exc), True)
 
+# A tela hospedada conecta mas não revela o id criado, e esta conta não
+# lista conexões — sem o id o app fica cego mesmo com tudo autorizado.
+print("  Widget embutido revela o itemId")
+
+_h = pluggy.connect_widget_html("tok-xyz")
+check("carrega o SDK", "pluggy-connect-sdk@2.14.2/+esm" in _h, True)
+check("leva o token", "tok-xyz" in _h, True)
+check("restringe ao conector do Meu Pluggy", '"connectorIds": [200]' in _h, True)
+check("pede conexão nova", '"avoidDuplicates": true' in _h, True)
+check("trata o sucesso", "onSuccess" in _h, True)
+check("e o erro", "onError" in _h, True)
+check("um único bloco de script",
+      (_h.count("<script"), _h.count("</script>")), (1, 1))
+
+_h2 = pluggy.connect_widget_html("t", item_id="abc")
+check("modo reconexão", '"updateItem": "abc"' in _h2, True)
+check("reconectar não duplica", '"avoidDuplicates": false' in _h2, True)
+check("sem conector não restringe",
+      "connectorIds" in pluggy.connect_widget_html("t", connector_id=None),
+      False)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")
