@@ -220,7 +220,7 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
         for conta in ativas:
             chave = pi.account_key(conta)
             try:
-                transacoes[chave] = pluggy.list_transactions(chave, since=desde)
+                transacoes[chave] = pluggy.list_transactions(chave)
             except pluggy.PluggyError as exc:
                 avisos.append(f"{pi.account_label(conta)}: {exc}")
 
@@ -228,7 +228,7 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             accounts=[(c, destinos.get(pi.account_key(c), "")) for c in ativas],
             transactions=transacoes,
             ja_importados=repository.imported_ids(),
-            df_cards=df_cards,
+            df_cards=df_cards, desde=desde,
             sugerir=lambda d: suggest_category(d, df_transactions),
         )
     st.session_state["pluggy_pendentes"] = pendentes

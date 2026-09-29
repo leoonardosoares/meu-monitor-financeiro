@@ -52,10 +52,22 @@ def tx(id_, data, desc, amount, tipo=None, cat=""):
     return t
 
 
-def montar(contas, transacoes, ja=None, sugerir=None):
+def montar(contas, transacoes, ja=None, sugerir=None, desde=None):
     return pi.build_pending(
         accounts=contas, transactions=transacoes,
-        ja_importados=ja or set(), df_cards=CARDS, sugerir=sugerir)
+        ja_importados=ja or set(), df_cards=CARDS, sugerir=sugerir,
+        desde=desde)
+
+
+def _corte(quando):
+    return montar(
+        [(CONTA_BANCO, pi.DESTINO_BANCO)],
+        {"acc-banco": [
+            tx("v1", "2025-10-09", "Antigo", -33.5, "DEBIT"),
+            tx("v2", "2026-09-17", "Véspera", -10.0, "DEBIT"),
+            tx("v3", "2026-09-18", "No corte", -20.0, "DEBIT"),
+            tx("v4", "2026-09-25", "Depois", -30.0, "DEBIT"),
+        ]}, desde=quando)
 
 
 print("  Entrada e saída vêm do campo `type`, não do sinal")
@@ -246,6 +258,27 @@ p, avisos = montar(
 check("entra normalmente", [(x.descricao, x.tipo) for x in p],
       [("Salário", "Entrada")])
 check("sem aviso", avisos, [])
+
+# 12 meses de histórico colidiriam com o que foi digitado à mão, que
+# não tem identificador nenhum para o app reconhecer.
+print("  Corte por data acontece no app")
+from datetime import date as _date
+p, avisos = montar(
+    [(CONTA_BANCO, pi.DESTINO_BANCO)],
+    {"acc-banco": [
+        tx("v1", "2025-10-09", "Antigo", -33.5, "DEBIT"),
+        tx("v2", "2026-09-17", "Véspera", -10.0, "DEBIT"),
+        tx("v3", "2026-09-18", "No corte", -20.0, "DEBIT"),
+        tx("v4", "2026-09-25", "Depois", -30.0, "DEBIT"),
+    ]})
+check("sem corte, vem tudo", len(p), 4)
+
+p, avisos = _corte(_date(2026, 9, 18))
+check("o dia do corte entra", [x.descricao for x in p],
+      ["No corte", "Depois"])
+check("os antigos viram aviso", len(avisos), 1)
+check("o aviso diz quantos e desde quando",
+      ("2 lançamento" in avisos[0] and "18/09/2026" in avisos[0]), True)
 
 print()
 for _linha in _fail:

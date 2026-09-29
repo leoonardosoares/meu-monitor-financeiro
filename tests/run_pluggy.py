@@ -260,11 +260,10 @@ check("e nenhuma levou pageSize",
 check("mas o filtro de conta vai junto",
       _params_vistos[0].get("accountId"), "acc-1")
 
-_params_vistos.clear()
-from datetime import date as _date
-pluggy.list_transactions("acc-1", since=_date(2026, 9, 1))
-check("e a data de corte quando pedida",
-      _params_vistos[0].get("from"), "2026-09-01")
+# O endpoint recusou `pageSize` e depois `from`; o recorte por data é
+# feito no app, então nenhum parâmetro além da conta deve ser enviado.
+check("só accountId vai no pedido",
+      sorted(_params_vistos[0]), ["accountId"])
 
 print("  Ficha do conector")
 
