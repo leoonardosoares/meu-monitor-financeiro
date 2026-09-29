@@ -12,224 +12,234 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.config import Colors as C
+from src.config import Colors as C, TEMA_PADRAO
 
 
-_CSS = f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+def _css() -> str:
+    return f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-:root {{
-    --bg: {C.BG};
-    --surface: {C.SURFACE};
-    --surface-2: {C.SURFACE_2};
-    --border: {C.BORDER};
-    --text: {C.TEXT};
-    --muted: {C.TEXT_MUTED};
-    --faint: {C.TEXT_FAINT};
-    --green: {C.PRIMARY};
-    --green-hover: {C.PRIMARY_HOVER};
-    --red: {C.EXPENSE};
-    --amber: {C.WARNING};
-    --radius: 14px;
-}}
+    :root {{
+        --bg: {C.BG};
+        --surface: {C.SURFACE};
+        --surface-2: {C.SURFACE_2};
+        --border: {C.BORDER};
+        --text: {C.TEXT};
+        --muted: {C.TEXT_MUTED};
+        --faint: {C.TEXT_FAINT};
+        --green: {C.PRIMARY};
+        --green-hover: {C.PRIMARY_HOVER};
+        --red: {C.EXPENSE};
+        --amber: {C.WARNING};
+        --sidebar: {C.SIDEBAR};
+        --on-primary: {C.ON_PRIMARY};
+        --radius: 14px;
+    }}
 
-html, body, .stApp {{
-    font-family: 'Inter', 'Segoe UI', sans-serif;
-    -webkit-font-smoothing: antialiased;
-    background: var(--bg);
-    color: var(--text);
-}}
+    html, body, .stApp {{
+        font-family: 'Inter', 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        background: var(--bg);
+        color: var(--text);
+    }}
 
-/* A fonte de ícones do Streamlit precisa sobreviver à troca global de
-   família acima; sem isto os ícones viram texto literal. */
-[class*="material-symbols"], [class*="material-icons"],
-.material-symbols-outlined, .material-symbols-rounded, .material-icons,
-[data-testid="stIconMaterial"], [data-testid="stExpanderIcon"],
-[data-testid="stExpanderToggleIcon"],
-button[data-testid="stBaseButton-headerNoPadding"] span {{
-    font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
-                 'Material Icons', sans-serif !important;
-    font-feature-settings: 'liga' !important;
-    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
-}}
+    /* A fonte de ícones do Streamlit precisa sobreviver à troca global de
+       família acima; sem isto os ícones viram texto literal. */
+    [class*="material-symbols"], [class*="material-icons"],
+    .material-symbols-outlined, .material-symbols-rounded, .material-icons,
+    [data-testid="stIconMaterial"], [data-testid="stExpanderIcon"],
+    [data-testid="stExpanderToggleIcon"],
+    button[data-testid="stBaseButton-headerNoPadding"] span {{
+        font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
+                     'Material Icons', sans-serif !important;
+        font-feature-settings: 'liga' !important;
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
+    }}
 
-h1, h2, h3, h4 {{
-    color: var(--text);
-    font-weight: 700;
-    letter-spacing: -0.02em;
-}}
-h1 {{ font-size: 1.9rem; }}
-h2 {{ font-size: 1.35rem; }}
-h3 {{ font-size: 1.1rem; }}
+    h1, h2, h3, h4 {{
+        color: var(--text);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }}
+    h1 {{ font-size: 1.9rem; }}
+    h2 {{ font-size: 1.35rem; }}
+    h3 {{ font-size: 1.1rem; }}
 
-.stApp > header {{ background: transparent; }}
-.block-container {{ padding-top: 2.2rem; max-width: 1240px; }}
+    .stApp > header {{ background: transparent; }}
+    .block-container {{ padding-top: 2.2rem; max-width: 1240px; }}
 
-/* ── Métrica como cartão ────────────────────────────────────────────
-   É o elemento mais repetido do app; tratá-lo como cartão é o que dá
-   o ar de painel financeiro sem precisar de HTML próprio em cada tela. */
-[data-testid="stMetric"] {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.1rem 1.25rem;
-    transition: border-color .18s ease, transform .18s ease;
-}}
-[data-testid="stMetric"]:hover {{
-    border-color: #36424F;
-    transform: translateY(-2px);
-}}
-[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
-    color: var(--faint) !important;
-    font-size: .72rem !important;
-    font-weight: 600 !important;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-}}
-[data-testid="stMetricValue"] {{
-    color: var(--text) !important;
-    font-size: 1.75rem !important;
-    font-weight: 700 !important;
-    letter-spacing: -.02em;
-    /* O valor precisa caber inteiro: um saldo truncado é pior que feio. */
-    white-space: normal !important;
-    overflow: visible !important;
-}}
-[data-testid="stMetricDelta"] {{ font-size: .78rem !important; }}
+    /* ── Métrica como cartão ────────────────────────────────────────────
+       É o elemento mais repetido do app; tratá-lo como cartão é o que dá
+       o ar de painel financeiro sem precisar de HTML próprio em cada tela. */
+    [data-testid="stMetric"] {{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.1rem 1.25rem;
+        transition: border-color .18s ease, transform .18s ease;
+    }}
+    [data-testid="stMetric"]:hover {{
+        border-color: #36424F;
+        transform: translateY(-2px);
+    }}
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
+        color: var(--faint) !important;
+        font-size: .72rem !important;
+        font-weight: 600 !important;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: var(--text) !important;
+        font-size: 1.75rem !important;
+        font-weight: 700 !important;
+        letter-spacing: -.02em;
+        /* O valor precisa caber inteiro: um saldo truncado é pior que feio. */
+        white-space: normal !important;
+        overflow: visible !important;
+    }}
+    [data-testid="stMetricDelta"] {{ font-size: .78rem !important; }}
 
-/* ── Contêineres com borda viram cartão ── */
-[data-testid="stVerticalBlockBorderWrapper"] > div:has(> [data-testid="stVerticalBlock"]) {{
-    background: var(--surface);
-    border-radius: var(--radius);
-}}
+    /* ── Contêineres com borda viram cartão ── */
+    [data-testid="stVerticalBlockBorderWrapper"] > div:has(> [data-testid="stVerticalBlock"]) {{
+        background: var(--surface);
+        border-radius: var(--radius);
+    }}
 
-/* ── Botões ── */
-.stButton > button, .stFormSubmitButton > button, .stDownloadButton > button {{
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    font-weight: 600;
-    padding: .5rem 1.1rem;
-    transition: all .18s ease;
-}}
-.stButton > button:hover, .stFormSubmitButton > button:hover {{
-    border-color: var(--green);
-    color: var(--green);
-    transform: translateY(-1px);
-}}
-.stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {{
-    background: var(--green);
-    border-color: var(--green);
-    color: #06251A;
-}}
-.stButton > button[kind="primary"]:hover {{
-    background: var(--green-hover);
-    border-color: var(--green-hover);
-    color: #06251A;
-    box-shadow: 0 6px 18px rgba(82,191,144,.22);
-}}
+    /* ── Botões ── */
+    .stButton > button, .stFormSubmitButton > button, .stDownloadButton > button {{
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--surface-2);
+        color: var(--text);
+        font-weight: 600;
+        padding: .5rem 1.1rem;
+        transition: all .18s ease;
+    }}
+    .stButton > button:hover, .stFormSubmitButton > button:hover {{
+        border-color: var(--green);
+        color: var(--green);
+        transform: translateY(-1px);
+    }}
+    .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {{
+        background: var(--green);
+        border-color: var(--green);
+        color: var(--on-primary);
+    }}
+    .stButton > button[kind="primary"]:hover {{
+        background: var(--green-hover);
+        border-color: var(--green-hover);
+        color: var(--on-primary);
+        box-shadow: 0 6px 18px rgba(82,191,144,.22);
+    }}
 
-/* ── Campos ── */
-.stTextInput input, .stNumberInput input, .stDateInput input,
-.stSelectbox [data-baseweb="select"] > div, .stTextArea textarea {{
-    background: var(--surface-2) !important;
-    border-color: var(--border) !important;
-    color: var(--text) !important;
-    border-radius: 10px !important;
-}}
+    /* ── Campos ── */
+    .stTextInput input, .stNumberInput input, .stDateInput input,
+    .stSelectbox [data-baseweb="select"] > div, .stTextArea textarea {{
+        background: var(--surface-2) !important;
+        border-color: var(--border) !important;
+        color: var(--text) !important;
+        border-radius: 10px !important;
+    }}
 
-/* ── Abas ── */
-.stTabs [data-baseweb="tab-list"] {{
-    gap: .35rem;
-    border-bottom: 1px solid var(--border);
-}}
-.stTabs [data-baseweb="tab"] {{
-    color: var(--muted);
-    font-weight: 600;
-    padding: .55rem .95rem;
-}}
-.stTabs [aria-selected="true"] {{ color: var(--green) !important; }}
+    /* ── Abas ── */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: .35rem;
+        border-bottom: 1px solid var(--border);
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: var(--muted);
+        font-weight: 600;
+        padding: .55rem .95rem;
+    }}
+    .stTabs [aria-selected="true"] {{ color: var(--green) !important; }}
 
-/* ── Expander ── */
-[data-testid="stExpander"] {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-}}
-[data-testid="stExpander"] summary {{ color: var(--text); font-weight: 600; }}
+    /* ── Expander ── */
+    [data-testid="stExpander"] {{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }}
+    [data-testid="stExpander"] summary {{ color: var(--text); font-weight: 600; }}
 
-/* ── Sidebar ── */
-[data-testid="stSidebar"] {{
-    background: #0A0E13;
-    border-right: 1px solid var(--border);
-}}
-[data-testid="stSidebar"] [data-testid="stRadio"] label {{
-    padding: .45rem .7rem;
-    border-radius: 9px;
-    transition: background .15s ease, color .15s ease;
-}}
-[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{
-    background: var(--surface-2);
-    color: var(--green);
-}}
+    /* ── Sidebar ── */
+    [data-testid="stSidebar"] {{
+        background: var(--sidebar);
+        border-right: 1px solid var(--border);
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {{
+        padding: .45rem .7rem;
+        border-radius: 9px;
+        transition: background .15s ease, color .15s ease;
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{
+        background: var(--surface-2);
+        color: var(--green);
+    }}
 
-/* ── Tabelas ── */
-[data-testid="stDataFrame"], [data-testid="stDataEditor"] {{
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-}}
+    /* ── Tabelas ── */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {{
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }}
 
-/* ── Avisos ── */
-[data-testid="stAlert"] {{ border-radius: 12px; border: 1px solid var(--border); }}
+    /* ── Avisos ── */
+    [data-testid="stAlert"] {{ border-radius: 12px; border: 1px solid var(--border); }}
 
-/* ── Cartão de conta (HTML próprio, ver components.account_rows) ── */
-.mf-card {{
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 1.15rem 1.25rem;
-}}
-.mf-card__label {{
-    color: var(--faint);
-    font-size: .72rem;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
-    margin-bottom: .4rem;
-}}
-.mf-card__value {{
-    font-size: 1.9rem;
-    font-weight: 700;
-    letter-spacing: -.02em;
-    margin-bottom: .2rem;
-}}
-.mf-pos {{ color: var(--green); }}
-.mf-neg {{ color: var(--red); }}
-.mf-row {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: .75rem;
-    padding: .65rem 0;
-    border-top: 1px solid var(--border);
-}}
-.mf-row__name {{ font-weight: 600; font-size: .93rem; }}
-.mf-row__sub {{ color: var(--faint); font-size: .76rem; }}
-.mf-row__val {{ font-weight: 700; font-size: .95rem; white-space: nowrap; }}
-.mf-bar {{
-    height: 6px;
-    border-radius: 999px;
-    background: var(--surface-2);
-    overflow: hidden;
-    margin: .45rem 0 .1rem;
-}}
-.mf-bar > span {{ display: block; height: 100%; border-radius: 999px; }}
-</style>
-"""
+    /* ── Cartão de conta (HTML próprio, ver components.account_rows) ── */
+    .mf-card {{
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.15rem 1.25rem;
+    }}
+    .mf-card__label {{
+        color: var(--faint);
+        font-size: .72rem;
+        font-weight: 700;
+        letter-spacing: .09em;
+        text-transform: uppercase;
+        margin-bottom: .4rem;
+    }}
+    .mf-card__value {{
+        font-size: 1.9rem;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        margin-bottom: .2rem;
+    }}
+    .mf-pos {{ color: var(--green); }}
+    .mf-neg {{ color: var(--red); }}
+    .mf-row {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .75rem;
+        padding: .65rem 0;
+        border-top: 1px solid var(--border);
+    }}
+    .mf-row__name {{ font-weight: 600; font-size: .93rem; }}
+    .mf-row__sub {{ color: var(--faint); font-size: .76rem; }}
+    .mf-row__val {{ font-weight: 700; font-size: .95rem; white-space: nowrap; }}
+    .mf-bar {{
+        height: 6px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        overflow: hidden;
+        margin: .45rem 0 .1rem;
+    }}
+    .mf-bar > span {{ display: block; height: 100%; border-radius: 999px; }}
+    </style>
+    """
 
 
-def inject() -> None:
-    st.markdown(_CSS, unsafe_allow_html=True)
+def inject(mode: str = TEMA_PADRAO) -> None:
+    """Aplica a paleta do modo e injeta o CSS.
+
+    A troca acontece por variável CSS, e não por tema do Streamlit: o
+    tema nativo só é lido na inicialização do processo, então mudar ali
+    exigiria reiniciar o app para ver a cor mudar.
+    """
+    C.use(mode)
+    st.markdown(_css(), unsafe_allow_html=True)

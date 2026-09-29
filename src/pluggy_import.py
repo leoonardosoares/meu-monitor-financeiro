@@ -47,12 +47,20 @@ def _sem_acento(texto: str) -> str:
         .encode("ascii", "ignore").decode().lower()
 
 
+# Juros, rendimento e dividendo não são transferência: é patrimônio que
+# cresceu. Tratá-los como movimentação entre contas sumiria com o
+# rendimento da sua receita — justamente o que o investimento produziu.
+_RENDIMENTO = re.compile(r"\b(rendiment|juros|dividend|provento|remunerac)")
+
+
 def transfer_category(descricao: str, categoria_pluggy: str = "") -> str | None:
     """Categoria de transferência, quando o lançamento é uma.
 
     `None` quando é despesa ou receita de verdade.
     """
     alvo = _sem_acento(descricao) + " " + _sem_acento(categoria_pluggy)
+    if _RENDIMENTO.search(alvo):
+        return None
     for categoria, padrao in _TRANSFERENCIAS:
         if padrao.search(alvo):
             return categoria

@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import streamlit as st
 
-from src.config import Colors
+from src.config import Colors, TEMA_PADRAO
 from src.format import brl
 from src.insights import Insight
 
@@ -18,38 +18,52 @@ from src.insights import Insight
 # e o colorway da paleta da marca. Registrado uma vez na importação.
 # ---------------------------------------------------------------------------
 
-_brand_template = go.layout.Template(
-    layout=go.Layout(
-        font=dict(
-            family="Inter, 'Segoe UI', sans-serif",
-            size=13,
-            color=Colors.TEXT_MUTED,
-        ),
-        # Transparente para o gráfico sentar dentro do cartão, sem um
-        # retângulo mais claro denunciando onde o Plotly começa.
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        colorway=Colors.SERIES,
-        hoverlabel=dict(
-            bgcolor=Colors.SURFACE_2,
-            bordercolor=Colors.BORDER,
-            font=dict(family="Inter, 'Segoe UI', sans-serif", size=13,
-                      color=Colors.TEXT),
-        ),
-        # Grade quase invisível: ela orienta, não compete com o dado.
-        xaxis=dict(gridcolor="rgba(230,237,243,0.06)", zeroline=False,
-                   linecolor="rgba(230,237,243,0.10)",
-                   tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
-        yaxis=dict(gridcolor="rgba(230,237,243,0.06)", zeroline=False,
-                   linecolor="rgba(230,237,243,0.10)",
-                   tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
-        legend=dict(font=dict(size=12, color=Colors.TEXT_MUTED),
-                    bgcolor="rgba(0,0,0,0)"),
-        margin=dict(t=10, b=10, l=10, r=10),
+def _template() -> go.layout.Template:
+    """Template do Plotly com as cores do tema ativo."""
+    return go.layout.Template(
+        layout=go.Layout(
+            font=dict(
+                family="Inter, 'Segoe UI', sans-serif",
+                size=13,
+                color=Colors.TEXT_MUTED,
+            ),
+            # Transparente para o gráfico sentar dentro do cartão, sem um
+            # retângulo mais claro denunciando onde o Plotly começa.
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            colorway=Colors.SERIES,
+            hoverlabel=dict(
+                bgcolor=Colors.SURFACE_2,
+                bordercolor=Colors.BORDER,
+                font=dict(family="Inter, 'Segoe UI', sans-serif", size=13,
+                          color=Colors.TEXT),
+            ),
+            # Grade quase invisível: ela orienta, não compete com o dado.
+            xaxis=dict(gridcolor=Colors.GRID, zeroline=False,
+                       linecolor=Colors.AXIS,
+                       tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
+            yaxis=dict(gridcolor=Colors.GRID, zeroline=False,
+                       linecolor=Colors.AXIS,
+                       tickfont=dict(color=Colors.TEXT_FAINT, size=11)),
+            legend=dict(font=dict(size=12, color=Colors.TEXT_MUTED),
+                        bgcolor="rgba(0,0,0,0)"),
+            margin=dict(t=10, b=10, l=10, r=10),
+        )
     )
-)
-pio.templates["monitor"] = _brand_template
-pio.templates.default = "plotly_dark+monitor"
+def use_theme(mode: str) -> None:
+    """Refaz o template com a paleta do modo.
+
+    Precisa ser chamado a cada render: o template é global do processo e
+    o modo é escolha do usuário, então deixá-lo fixo na importação faria
+    o gráfico ficar escuro num app claro.
+    """
+    Colors.use(mode)
+    pio.templates["monitor"] = _template()
+    pio.templates.default = (
+        "plotly_dark+monitor" if mode == "dark" else "plotly_white+monitor")
+
+
+use_theme(TEMA_PADRAO)
 
 
 # ---------------------------------------------------------------------------

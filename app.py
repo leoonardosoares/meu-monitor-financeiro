@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src import auth, repository, sidebar, styles
-from src.config import APP_ICON, APP_TITLE, SYSTEM_CATEGORIES
+from src import auth, components, repository, sidebar, styles
+from src.config import (
+    APP_ICON, APP_TITLE, ConfigKeys, SYSTEM_CATEGORIES, TEMA_PADRAO,
+)
 from src.finance import filter_by_month, list_months
 from src.pages import (
     credit_card, dashboard, import_page, investments, settings,
@@ -43,7 +45,13 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    styles.inject()
+    # O tema é lido antes de tudo: o CSS precisa sair junto com a
+    # primeira renderização, senão a tela pisca clara antes de escurecer.
+    tema = st.session_state.get("tema") or repository.load_config_text(
+        ConfigKeys.TEMA, TEMA_PADRAO)
+    st.session_state["tema"] = tema
+    styles.inject(tema)
+    components.use_theme(tema)
 
     if not auth.is_logged_in():
         auth.render_login()
