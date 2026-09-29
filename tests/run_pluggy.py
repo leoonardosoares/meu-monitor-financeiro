@@ -216,6 +216,12 @@ check("sem connector, não restringe",
       "connectorIds" in pluggy.connect_url("t", connector_id=None), False)
 check("reconectar um item existente",
       "updateItem=abc" in pluggy.connect_url("t", item_id="abc"), True)
+# Sem isso, autorizar o segundo banco atualizaria a conexão do primeiro
+# em vez de criar outra, e o primeiro sairia do ar sem aviso.
+check("cada autorização cria uma conexão nova",
+      "avoidDuplicates=false" in _url, True)
+check("mas reconectar não duplica",
+      "avoidDuplicates" in pluggy.connect_url("t", item_id="abc"), False)
 
 requests.post = lambda url, json=None, timeout=None, headers=None: (
     Resp(200, {"apiKey": "k"}) if url.endswith("/auth") else Resp(200, {}))
@@ -265,6 +271,62 @@ try:
     _fail.append("conector inexistente deveria levantar")
 except pluggy.PluggyError:
     _ok += 1
+
+# A conta do usuário recusa listar conexões (403), mas lê cada uma pelo
+# id. Sem este caminho, o app ficaria cego mesmo com tudo autorizado.
+print("  Ler uma conexão pelo id quando a listagem é negada")
+
+
+def _so_por_id(url, headers=None, params=None, timeout=None):
+    if url.endswith("/v2/items") or url.endswith("/items"):
+        return Resp(403, {"code": 403,
+                          "codeDescription": "API_KEY_MISSING_OR_INVALID"})
+    if "/items/" in url:
+        uid = url.rsplit("/", 1)[-1]
+        if uid == "bom":
+            return Resp(200, {"id": "bom", "status": "UPDATED",
+                              "connector": {"name": "Nubank"}})
+        return Resp(404, {"message": "item not found"})
+    return Resp(400, {"message": "itemId should not be null"})
+
+
+requests.post, requests.get = fake_post, _so_por_id
+try:
+    pluggy.list_items()
+    _fail.append("listagem deveria levantar")
+except pluggy.PluggyError:
+    _ok += 1
+check("mas a conexão é lida pelo id", pluggy.item("bom")["connector"]["name"],
+      "Nubank")
+check("espaços em volta do id não atrapalham",
+      pluggy.item("  bom  ")["id"], "bom")
+try:
+    pluggy.item("ruim")
+    _fail.append("id inexistente deveria levantar")
+except pluggy.PluggyError as exc:
+    _ok += 1
+    check("e diz o motivo", "item not found" in str(exc), True)
+
+# A tela hospedada conecta mas não revela o id criado, e esta conta não
+# lista conexões — sem o id o app fica cego mesmo com tudo autorizado.
+print("  Widget embutido revela o itemId")
+
+_h = pluggy.connect_widget_html("tok-xyz")
+check("carrega o SDK", "pluggy-connect-sdk@2.14.2/+esm" in _h, True)
+check("leva o token", "tok-xyz" in _h, True)
+check("restringe ao conector do Meu Pluggy", '"connectorIds": [200]' in _h, True)
+check("pede conexão nova", '"avoidDuplicates": true' in _h, True)
+check("trata o sucesso", "onSuccess" in _h, True)
+check("e o erro", "onError" in _h, True)
+check("um único bloco de script",
+      (_h.count("<script"), _h.count("</script>")), (1, 1))
+
+_h2 = pluggy.connect_widget_html("t", item_id="abc")
+check("modo reconexão", '"updateItem": "abc"' in _h2, True)
+check("reconectar não duplica", '"avoidDuplicates": false' in _h2, True)
+check("sem conector não restringe",
+      "connectorIds" in pluggy.connect_widget_html("t", connector_id=None),
+      False)
 
 print()
 for _linha in _fail:

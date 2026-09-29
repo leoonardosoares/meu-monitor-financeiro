@@ -11,6 +11,7 @@ são reescritos antes de subir para a tela.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from urllib.parse import urlencode
@@ -228,18 +229,86 @@ def connect_token() -> str:
     return str(token)
 
 
+CONNECT_SDK = "https://cdn.jsdelivr.net/npm/pluggy-connect-sdk@2.14.2/+esm"
+
+
+def connect_widget_html(token: str, *,
+                        connector_id: int | None = MEU_PLUGGY_CONNECTOR,
+                        item_id: str | None = None) -> str:
+    """Página que roda o widget da Pluggy e mostra o `itemId` no fim.
+
+    A página hospedada da Pluggy conecta, mas não diz qual identificador
+    foi criado — e esta conta não permite listar conexões, então sem o
+    identificador o app fica cego mesmo com tudo autorizado. Aqui o
+    `onSuccess` do widget recebe esse valor e o imprime na tela para
+    copiar. Nada é enviado para fora: o valor só aparece.
+    """
+    opcoes = {
+        "connectToken": token,
+        "includeSandbox": False,
+        "avoidDuplicates": item_id is None,
+    }
+    if connector_id is not None:
+        opcoes["connectorIds"] = [connector_id]
+    if item_id:
+        opcoes["updateItem"] = item_id
+
+    return """
+<div id="saida" style="font-family:system-ui;padding:12px"></div>
+<script type="module">
+import PluggyConnect from "%s";
+
+const saida = document.getElementById("saida");
+const mostrar = (cor, titulo, corpo) => {
+  saida.innerHTML =
+    '<div style="border:2px solid ' + cor + ';border-radius:10px;padding:16px">' +
+    '<b>' + titulo + '</b><div style="margin-top:8px">' + corpo + '</div></div>';
+};
+
+try {
+  const pluggy = new PluggyConnect(Object.assign(%s, {
+    onSuccess: (data) => {
+      const id = (data && data.item && data.item.id) || "";
+      const banco = (data && data.item && data.item.connector &&
+                     data.item.connector.name) || "banco";
+      mostrar("#317256", "Conectado: " + banco,
+        'Copie este identificador e cole no passo 2:' +
+        '<div style="margin-top:8px;font-family:monospace;font-size:16px;' +
+        'user-select:all;background:#f1f5f9;padding:10px;border-radius:6px">' +
+        id + '</div>');
+    },
+    onError: (err) => {
+      mostrar("#EF4444", "Não deu certo",
+        (err && (err.message || err.code)) || "erro desconhecido");
+    },
+  }));
+  pluggy.init();
+} catch (e) {
+  mostrar("#EF4444", "Não consegui carregar o widget", String(e));
+}
+</script>
+""" % (CONNECT_SDK, json.dumps(opcoes))
+
+
 def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
                 item_id: str | None = None) -> str:
     """URL da tela de conexão hospedada pela Pluggy.
 
     Abrir a página hospedada evita embutir o widget JavaScript dentro do
     Streamlit, que não tem como devolver o `itemId` para o Python.
+
+    O Meu Pluggy deixa compartilhar um banco por autorização, então
+    conectar o segundo exige repetir o processo. `avoidDuplicates=false`
+    é o que permite isso: sem ele, a segunda autorização com o mesmo
+    conector atualizaria a conexão existente em vez de criar outra, e o
+    primeiro banco sairia do ar em silêncio.
     """
-    params = {"connect_token": token}
+    params = {"connect_token": token, "avoidDuplicates": "false"}
     if connector_id is not None:
         params["connectorIds"] = str(connector_id)
     if item_id:                       # reconectar um item existente
         params["updateItem"] = item_id
+        params.pop("avoidDuplicates")
     return CONNECT_URL + "?" + urlencode(params)
 
 
@@ -247,6 +316,16 @@ def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,
 # ---------------------------------------------------------------------------
 # Leituras
 # ---------------------------------------------------------------------------
+
+def item(item_id: str) -> dict:
+    """Uma conexão pelo id.
+
+    Existe porque listar conexões (`/v2/items`) devolve 403 nesta conta:
+    a chave tem permissão para ler uma conexão específica e as contas
+    dela, mas não para enumerar todas. Guardar os ids é o contorno.
+    """
+    return _get(f"/items/{str(item_id).strip()}")
+
 
 def list_items() -> list[dict]:
     """Conexões (bancos) que o usuário autorizou.

@@ -173,7 +173,23 @@ def load_config(key: str, default: float) -> float:
         return default
 
 
-def save_config(key: str, value: float) -> None:
+def load_config_text(key: str, default: str = "") -> str:
+    """Igual a `load_config`, para valores que não são número.
+
+    Os `itemId` da Pluggy são UUIDs; passar por `float` os destruiria.
+    """
+    df = _load_config_df()
+    if df.empty or key not in df["chave"].values:
+        return default
+    raw = df.loc[df["chave"] == key, "valor"].iloc[0]
+    return default if pd.isna(raw) else str(raw).strip()
+
+
+def save_config_text(key: str, value: str) -> None:
+    save_config(key, value)
+
+
+def save_config(key: str, value) -> None:
     df = _load_config_df().copy()
     if not df.empty and key in df["chave"].values:
         df.loc[df["chave"] == key, "valor"] = value
