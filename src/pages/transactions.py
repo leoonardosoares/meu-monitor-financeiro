@@ -1,4 +1,11 @@
-"""Página: Entradas e Saídas (lançamentos manuais)."""
+"""Página: Entradas e Saídas — histórico do que entrou e saiu da conta.
+
+Desde que o Open Finance alimenta o app, esta página é de leitura: os
+lançamentos chegam pela importação e aqui se confere e se corrige a
+categoria. O lançamento manual continua existindo, recolhido no fim,
+porque nem todo dinheiro passa por conta conectada — dinheiro vivo,
+empréstimo a um amigo, conta de outro banco.
+"""
 from __future__ import annotations
 
 import pandas as pd
@@ -6,6 +13,7 @@ import streamlit as st
 
 from src import components, repository
 from src.finance import suggest_category
+from src.format import brl
 
 
 _DRAFT_KEY = "transaction_draft"
@@ -14,13 +22,49 @@ _DRAFT_KEY = "transaction_draft"
 def render(*, df_transactions: pd.DataFrame, categories: list[str]) -> None:
     components.page_header(
         "Entradas e Saídas",
-        "Registre lançamentos manuais, busque registros antigos e edite "
-        "valores diretamente na tabela.",
+        "Tudo que entrou e saiu da sua conta. Chega sozinho pela "
+        "importação — aqui você confere e ajusta a categoria.",
     )
 
-    _new_transaction_form(df_transactions, categories)
-    st.divider()
+    _summary(df_transactions)
     _history_section(df_transactions)
+    st.divider()
+    with st.expander("➕ Lançar algo que não passou pelo banco"):
+        st.caption(
+            "Dinheiro vivo, empréstimo a um amigo, conta de um banco que "
+            "você não conectou. O que passa pelas contas conectadas chega "
+            "sozinho pela aba **Importar do banco** — não lance aqui, ou "
+            "vai ficar duplicado."
+        )
+        _new_transaction_form(df_transactions, categories)
+
+
+def _summary(df: pd.DataFrame) -> None:
+    """Três números do que está na tela, para dar escala ao histórico."""
+    if df.empty:
+        st.info(
+            "Nenhum lançamento ainda. Vá em **Importar do banco** para "
+            "trazer os seus."
+        )
+        return
+    valores = pd.to_numeric(df.get("Valor"), errors="coerce").fillna(0)
+    tipos = df.get("Tipo", pd.Series("", index=df.index)).astype(str)
+    entradas = float(valores[tipos == "Entrada"].sum())
+    saidas = float(valores[tipos == "Saída"].sum())
+    sem_categoria = int(
+        (df.get("Categoria", pd.Series("", index=df.index))
+         .fillna("").astype(str).str.strip().isin(["", "Outros"])).sum()
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Lançamentos", len(df))
+    c2.metric("Entradas", brl(entradas))
+    c3.metric("Saídas", brl(saidas))
+    c4.metric(
+        "Sem categoria", sem_categoria,
+        delta="revisar" if sem_categoria else "tudo categorizado",
+        delta_color="inverse" if sem_categoria else "normal",
+    )
 
 
 # ---------------------------------------------------------------------------

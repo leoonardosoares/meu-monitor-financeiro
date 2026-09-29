@@ -43,6 +43,13 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     ],
     # Valor bruto real de cada ativo, informado pela corretora/banco.
     "posicao_ativos": ["Data", "Investimento", "Valor"],
+    # Cópias guardadas antes de um recomeço. Arquivar custa nada e
+    # apagar não tem volta — o usuário decide depois se quer excluir.
+    "arquivo_financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo",
+                           "Arquivado em"],
+    "arquivo_cartao": ["Data Compra", "Mês da Fatura", "Cartão", "Descrição",
+                       "Categoria", "Parcela", "Valor", "Status",
+                       "Arquivado em"],
     # Retratos da posição real lida das instituições. É o que faz o app
     # mostrar o saldo do banco em vez de uma soma de lançamentos.
     "posicao_real": ["Data", "Origem", "Nome", "Classe", "Valor"],

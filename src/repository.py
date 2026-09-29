@@ -403,3 +403,15 @@ def append_position(rows: list[dict]) -> None:
         return
     save_positions(pd.concat(
         [load_positions(), pd.DataFrame(rows)], ignore_index=True))
+
+
+def save_archive(sheet_name: str, df: pd.DataFrame) -> None:
+    """Acrescenta linhas a uma aba de arquivo, sem apagar o que já havia.
+
+    Arquivos se acumulam de propósito: um segundo recomeço não pode
+    destruir a cópia guardada no primeiro.
+    """
+    if df.empty:
+        return
+    anterior = _read(sheet_name)
+    _overwrite(sheet_name, pd.concat([anterior, df], ignore_index=True))

@@ -19,8 +19,8 @@ def render(*, df_credit_card: pd.DataFrame,
            categories: list[str], selected_month: str) -> None:
     components.page_header(
         "Cartão de Crédito",
-        "Cadastre seus cartões, acompanhe cada fatura separadamente e pague "
-        "parcial ou integralmente.",
+        "Suas faturas, uma a uma. As compras chegam sozinhas pela "
+        "importação — aqui você acompanha e dá baixa.",
     )
 
     df_cards = repository.load_cards()
@@ -43,9 +43,17 @@ def render(*, df_credit_card: pd.DataFrame,
     st.divider()
     _payment_section(df_credit_card, df_payments, names, card)
     st.divider()
-    _purchase_form(df_cards, df_credit_card, names, categories, card)
-    st.divider()
     _cards_registry(df_cards, df_credit_card, df_payments, names)
+    st.divider()
+    # Recolhido: com a importação ligada, a compra digitada à mão é a
+    # exceção — e lançar aqui algo que o banco também vai trazer cria
+    # linha duplicada, porque a importada tem id e esta não.
+    with st.expander("➕ Lançar uma compra que não veio do banco"):
+        st.caption(
+            "Só para o que a importação não traz. O que passa no cartão "
+            "chega sozinho pela aba **Importar do banco**."
+        )
+        _purchase_form(df_cards, df_credit_card, names, categories, card)
     st.divider()
     _extract_section(df_credit_card, df_credit_card_period, names,
                      selected_month, card)
