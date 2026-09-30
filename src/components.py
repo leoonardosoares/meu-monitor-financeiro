@@ -165,11 +165,23 @@ def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
 # ---------------------------------------------------------------------------
 
 def page_header(title: str, subtitle: str | None = None) -> None:
-    """Cabeçalho padronizado das páginas."""
-    st.markdown(f"### {title}")
+    """Cabeçalho da página, um degrau acima de qualquer seção dentro dela.
+
+    Emitia `### `, que é o mesmo `h3` do `st.subheader` — então o nome da
+    página tinha exatamente o peso de cada bloco nela, e a tela não tinha
+    começo. Com os cabeçalhos de seção em 1,15rem a hierarquia chegou a
+    ficar invertida: a seção maior que a página. Aqui o título é maior que
+    tudo que vem depois, e a linha de contexto fica junto dele em vez de
+    virar um parágrafo solto seguido de divisor.
+    """
+    partes = [
+        '<div class="mf-page">',
+        f'<div class="mf-page__title">{title}</div>',
+    ]
     if subtitle:
-        st.caption(subtitle)
-    st.divider()
+        partes.append(f'<div class="mf-page__sub">{subtitle}</div>')
+    partes.append("</div>")
+    st.markdown("".join(partes), unsafe_allow_html=True)
 
 
 def section(title: str, sub: str | None = None, *,

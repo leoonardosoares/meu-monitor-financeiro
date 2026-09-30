@@ -115,6 +115,28 @@ def _css() -> str:
         margin: 1.6rem 0 1.2rem !important;
     }
 
+    /* ── Cabeçalho de página (components.page_header) ───────────────────
+       Um degrau acima de .mf-sec__title, e separado por espaço e por uma
+       linha, não por um divisor do mesmo peso dos que separam seções. */
+    .mf-page {
+        margin: 0 0 1.4rem;
+        padding-bottom: .9rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .mf-page__title {
+        color: var(--text);
+        font-size: 1.55rem;
+        font-weight: 700;
+        letter-spacing: -.028em;
+        line-height: 1.2;
+    }
+    .mf-page__sub {
+        color: var(--muted);
+        font-size: .88rem;
+        margin-top: .3rem;
+        max-width: 72ch;
+    }
+
     /* ── Cabeçalho de seção (components.section) ───────────────────────── */
     .mf-sec { margin: .2rem 0 .9rem; }
     .mf-sec__eyebrow {

@@ -272,6 +272,29 @@ for _modo, _cores in PALETTES.items():
     check(f"{_modo}: amplitude da banda de contraste abaixo de 1,5",
           round(max(_banda) - min(_banda), 2) < 1.5, True)
 
+print("  O título da página é maior que o de seção")
+# Os dois eram h3: o nome da página tinha o peso de cada bloco dentro
+# dela, e a tela não tinha começo. Depois de dar 1,15rem à seção, a
+# hierarquia chegou a ficar invertida — seção maior que página.
+_css_atual = styles._css()
+
+
+def _tamanho(classe: str) -> float:
+    """font-size da regra daquela classe, em rem.
+
+    Pela abertura da regra (`.classe {`), e não pela primeira menção ao
+    nome: um comentário que cita `.mf-sec__title` casava antes da regra.
+    """
+    _bloco = re.search(
+        r"\." + re.escape(classe) + r"\s*\{([^}]*)\}", _css_atual)
+    return float(re.search(r"font-size:\s*([\d.]+)rem", _bloco.group(1)).group(1))
+
+
+_pagina, _secao = _tamanho("mf-page__title"), _tamanho("mf-sec__title")
+check("página acima de seção", _pagina > _secao, True)
+check("e com degrau perceptível (>= 15%)",
+      round(_pagina / _secao, 2) >= 1.15, True)
+
 print("  A escada de superfícies separa página, cartão e campo")
 # O que delimita um bloco do outro é o degrau entre as superfícies. No
 # claro ele era de 1,055:1 entre a página e o cartão — imperceptível, e

@@ -221,8 +221,12 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
     extra = max(liquido - new_goal, 0.0)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Patrimônio investido", brl(liquido),
-              delta=base_label, delta_color="off")
+    c1.metric("Carteira cadastrada (líquido)", brl(liquido),
+              delta=base_label, delta_color="off",
+              help="Soma dos ativos que você cadastrou aqui, já "
+                   "descontado IOF/IR. É outra conta que o "
+                   "\"Patrimônio\" do Dashboard, que soma conta + "
+                   "investimentos − cartões.")
     c2.metric("Fundo de emergência", brl(reserve))
     c3.metric("Acima da meta", brl(extra))
 
