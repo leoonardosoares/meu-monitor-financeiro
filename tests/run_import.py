@@ -250,10 +250,11 @@ p, _ = montar([(CONTA_BANCO, pi.DESTINO_BANCO)],
               {"acc-banco": [tx_parcela("b9", 3, 6)]})
 check("fica 1/1", p[0].parcela, "1/1")
 
-# A aba `cartao` só tem valor positivo e não tem coluna de tipo, então
-# um crédito viraria compra e aumentaria a fatura pelo próprio valor do
-# pagamento — o oposto do que aconteceu de verdade.
-print("  Crédito em fatura não vira compra")
+# O banco monta a fatura como gasto do mês menos os créditos —
+# "Pagamento antecipado" de R$ 75,01 numa fatura de R$ 2.356,48 dá os
+# R$ 2.281,47 cobrados. Descartar o crédito deixava o app acima do
+# banco pelo valor de cada pagamento feito antes do fechamento.
+print("  Crédito em fatura abate, como no extrato do banco")
 p, avisos = montar(
     [(CONTA_CARTAO, "Principal")],
     {"acc-cartao": [
@@ -261,11 +262,22 @@ p, avisos = montar(
         tx("k2", "2026-09-05", "Pagamento recebido", 1380.0, "CREDIT"),
         tx("k3", "2026-09-05", "Crédito de parcelamento", 46.29, "CREDIT"),
     ]})
-check("só a compra entra", [x.descricao for x in p], ["Padaria"])
+check("compra e créditos entram", len(p), 3)
+check("a compra é positiva",
+      next(x.valor for x in p if x.descricao == "Padaria"), 20.0)
+check("o pagamento entra negativo",
+      next(x.valor for x in p if x.descricao == "Pagamento recebido"),
+      -1380.0)
+check("o estorno também",
+      next(x.valor for x in p if x.descricao == "Crédito de parcelamento"),
+      -46.29)
+# A soma é a fatura: gasto menos crédito, como o banco mostra.
+check("a soma reproduz a fatura", round(sum(x.valor for x in p), 2),
+      round(20.0 - 1380.0 - 46.29, 2))
 check("os créditos são reportados",
       sum("crédito(s) em fatura" in a for a in avisos), 1)
-check("o aviso diz o risco",
-      any("aumentaria o valor devido" in a for a in avisos), True)
+check("o aviso explica o abatimento",
+      any("abatem a fatura" in a for a in avisos), True)
 
 print("  No banco, crédito continua sendo receita")
 p, avisos = montar(

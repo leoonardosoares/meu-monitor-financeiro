@@ -534,6 +534,8 @@ class ScheduledInvoice:
         return month_label(self.due)
 
 
+
+
 def has_registered_dates(df_cards: pd.DataFrame, card: str) -> bool:
     """Se o cartão tem fechamento E vencimento realmente cadastrados.
 
@@ -612,6 +614,45 @@ def overdue_invoices(scheduled: list[ScheduledInvoice],
                      ) -> list[ScheduledInvoice]:
     """Faturas vencidas que ainda têm saldo."""
     return [i for i in scheduled if i.overdue]
+
+
+def situations(scheduled: list[ScheduledInvoice],
+               hoje: date) -> dict[tuple[str, str], str]:
+    """Como o banco chamaria cada fatura, por cartão.
+
+    São os estados que o app do cartão mostra: paga, a atual que ainda
+    está aberta, as que já fecharam e esperam pagamento, e as futuras.
+    "Aberta" para tudo escondia a diferença entre dever agora e dever
+    em março.
+
+    "Atual" é decidida por cartão, não por data isolada: é a primeira
+    que ainda não fechou. Sem olhar a sequência, todas as parcelas dos
+    próximos meses passariam por atuais.
+    """
+    dia = pd.Timestamp(hoje).normalize()
+    out: dict[tuple[str, str], str] = {}
+
+    por_cartao: dict[str, list[ScheduledInvoice]] = {}
+    for i in scheduled:
+        por_cartao.setdefault(i.card, []).append(i)
+
+    for cartao, faturas in por_cartao.items():
+        abertas = sorted((f for f in faturas if f.closing >= dia),
+                         key=lambda f: f.closing)
+        atual = (abertas[0].month if abertas else None)
+        for f in faturas:
+            chave = (f.card, f.month)
+            if f.balance <= 1e-6:
+                out[chave] = "Paga"
+            elif f.due < dia:
+                out[chave] = "Vencida"
+            elif f.month == atual:
+                out[chave] = "Atual"
+            elif f.closing < dia:
+                out[chave] = "Fechada · a pagar"
+            else:
+                out[chave] = "Futura"
+    return out
 
 
 def invoices_due_through(scheduled: list[ScheduledInvoice],
