@@ -109,6 +109,43 @@ for pasta, _, arquivos in os.walk(os.path.join(raiz, "src")):
                         suspeitos.append(f"{rel}:{n} {hexa}")
 check("sem hex fora da paleta", suspeitos, [])
 
+# O Streamlit lê `$...$` como LaTeX: dois valores em reais na mesma
+# frase viram fórmula, o "R$" some e o **negrito** para de funcionar.
+print("  Dinheiro em texto markdown passa por md()")
+from src.format import brl, md  # noqa: E402
+
+exemplo = f"**{brl(2119.44)} em fatura** — venceu, {brl(10.0)} de multa."
+check("md escapa os cifrões", md(exemplo).count("\\$"), 2)
+check("sem md, o Streamlit veria dois delimitadores",
+      exemplo.count("$"), 2)
+
+ALVOS = ("st.warning(", "st.caption(", "st.info(", "st.error(",
+         "st.success(", "st.markdown(")
+desprotegidos = []
+for pasta, _, arquivos in os.walk(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")):
+    if "__pycache__" in pasta:
+        continue
+    for nome in sorted(arquivos):
+        if not nome.endswith(".py"):
+            continue
+        caminho = os.path.join(pasta, nome)
+        texto = open(caminho, encoding="utf-8").read()
+        for alvo in ALVOS:
+            pos = 0
+            while (pos := texto.find(alvo, pos)) != -1:
+                abre = pos + len(alvo)
+                prof, k = 1, abre
+                while k < len(texto) and prof:
+                    prof += (texto[k] == "(") - (texto[k] == ")")
+                    k += 1
+                corpo = texto[abre:k - 1]
+                if "brl(" in corpo and not corpo.lstrip().startswith("md("):
+                    linha = texto[:pos].count("\n") + 1
+                    desprotegidos.append(f"{nome}:{linha} {alvo}")
+                pos = k
+check("nenhuma mensagem com dinheiro fora de md()", desprotegidos, [])
+
 print("  O template do Plotly segue o tema")
 cp.use_theme("light")
 check("claro", pio.templates.default, "plotly_white+monitor")

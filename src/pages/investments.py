@@ -8,10 +8,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src import components, investments as inv, repository
+from src import (
+    components, investments as inv, positions as positions_mod, repository,
+)
 from src.config import Colors, ConfigKeys
 from src.finance import compute_wealth, monthly_investment_contributions
-from src.format import brl
+from src.format import brl, md
 
 
 def _market_rates() -> inv.MarketRates:
@@ -26,11 +28,88 @@ def _market_rates() -> inv.MarketRates:
 
 def render(*, df_transactions: pd.DataFrame) -> None:
     components.page_header(
-        "Meus Investimentos",
-        "Cadastre cada ativo, acompanhe a posição líquida de impostos e "
-        "projete o melhor momento para resgatar.",
+        "Investimentos",
+        "O que as suas instituições reportam, e o quanto você aportou.",
     )
 
+    _posicao_automatica(df_transactions)
+
+    st.divider()
+    with st.expander(
+        "⚙️ Cadastro manual, projeção de imposto e metas",
+        expanded=False,
+    ):
+        st.caption(
+            "O Open Finance entrega posição e valor, mas não taxa, "
+            "indexador, vencimento nem isenção de IR — e é disso que "
+            "vive a projeção. Cadastre um ativo aqui só se quiser "
+            "projetar rendimento e imposto dele."
+        )
+        _abas_manuais(df_transactions)
+
+
+def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
+    """O que vem das conexões, sem nada para preencher.
+
+    É a tela que responde "quanto eu tenho investido" sem depender de
+    cadastro. Quando a instituição não publica investimentos no Open
+    Finance, dizer isso é melhor do que mostrar zero sem explicação.
+    """
+    guardada = positions_mod.from_rows(repository.load_positions())
+    aportado = compute_wealth(df_transactions, df_transactions).invested
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Posição nas instituições", brl(guardada.investido))
+    c2.metric("Você aportou (líquido)", brl(aportado),
+              help="Aportes menos resgates, segundo os seus lançamentos.")
+    ganho = guardada.investido - aportado
+    c3.metric(
+        "Diferença", brl(ganho),
+        delta=("rendimento" if ganho >= 0 else "abaixo do aportado"),
+        delta_color="normal" if ganho >= 0 else "inverse",
+        help=("Só é rendimento de verdade se todos os aportes estiverem "
+              "lançados. Com histórico parcial, compara dois períodos "
+              "diferentes."),
+    )
+
+    if not guardada.ativos:
+        st.info(md(
+            "Nenhum investimento veio das suas conexões. Nem toda "
+            "instituição publica essa informação no Open Finance — o "
+            "Nubank e o Itaú costumam publicar conta e cartão, mas não "
+            "a carteira. Atualize a posição no **Dashboard** e, se "
+            "continuar zerado, é limitação da instituição, não do app."
+        ))
+        return
+
+    st.write("")
+    esq, dir_ = st.columns([1, 1])
+    with esq:
+        components.stat_card(
+            label="📈 Carteira", value=guardada.investido,
+            rows=[{"nome": a.nome, "sub": a.instituicao,
+                   "valor": brl(a.valor), "bruto": a.valor}
+                  for a in guardada.ativos],
+        )
+    with dir_:
+        porc = {}
+        for a in guardada.ativos:
+            porc[a.classe or "Outros"] = porc.get(a.classe or "Outros", 0) + a.valor
+        components.stat_card(
+            label="🍰 Por classe", value=guardada.investido,
+            rows=[{"nome": k, "bruto": v,
+                   "valor": f"{brl(v)}  ·  {v / guardada.investido * 100:.0f}%"}
+                  for k, v in sorted(porc.items(), key=lambda x: -x[1])],
+        )
+
+    historico = positions_mod.history(repository.load_positions())
+    if len(historico) > 1:
+        st.write("")
+        st.markdown("###### Evolução do patrimônio")
+        components.area_trend(historico, x="Data", y="Patrimônio")
+
+
+def _abas_manuais(df_transactions: pd.DataFrame) -> None:
     tabs = st.tabs([
         "🧾 Carteira",
         "💸 Movimentações",
@@ -103,7 +182,7 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
         )
     else:
         falta = new_goal - reserve
-        st.info(f"Faltam **{brl(falta)}** para completar a reserva.")
+        st.info(md(f"Faltam **{brl(falta)}** para completar a reserva."))
 
     st.divider()
     st.subheader("Aportes mensais (últimos 12 meses)")
@@ -507,29 +586,29 @@ def _reconciliation_panel(df_transactions: pd.DataFrame,
                 "atribuído a um ativo."
             )
         else:
-            st.info(
+            st.info(md(
                 f"Há **{brl(abs(pendente))}** em lançamentos de investimento "
                 "sem ativo atribuído. Use a seção abaixo para vinculá-los."
-            )
+            ))
 
         # Descasamento de totais com tudo pareado significa movimentação sem
         # lançamento de caixa — esperado para dinheiro já aplicado antes do app.
         if abs(pendente) < 0.01 and abs(descasamento) > 0.01:
             if descasamento < 0:
-                st.caption(
+                st.caption(md(
                     f"As movimentações somam {brl(abs(descasamento))} a mais "
                     "que o razão de caixa. É o esperado para investimentos que "
                     "já estavam aplicados antes de você usar o app "
                     "(registrados sem marcar *Lançar também em Entradas e "
                     "Saídas*)."
-                )
+                ))
             else:
-                st.caption(
+                st.caption(md(
                     f"O razão de caixa soma {brl(descasamento)} a mais que as "
                     "movimentações, mas cada linha já tem par. Costuma ser "
                     "diferença entre principal resgatado e valor creditado "
                     "após impostos."
-                )
+                ))
         st.caption(
             "O Dashboard continua lendo os lançamentos de **Entradas e "
             "Saídas** (categoria Investimento) para saldo bancário, "
@@ -617,10 +696,10 @@ def _new_move_form(names: list[str], positions: list[inv.Position]) -> None:
         if st.form_submit_button("Registrar movimentação"):
             aplicado = saldo.get(ativo, 0.0)
             if tipo == "Resgate" and valor > aplicado + 1e-9:
-                st.error(
+                st.error(md(
                     f"Resgate maior que o capital aplicado em '{ativo}' "
                     f"({brl(aplicado)}). Ajuste o valor."
-                )
+                ))
             else:
                 repository.append_asset_move({
                     "Data": data_mov, "Investimento": ativo,
@@ -632,9 +711,9 @@ def _new_move_form(names: list[str], positions: list[inv.Position]) -> None:
                         investimento=ativo,
                     ))
                 destino = " e no fluxo de caixa" if lancar_caixa else ""
-                st.success(
+                st.success(md(
                     f"{tipo} de {brl(valor)} em '{ativo}' registrado{destino}."
-                )
+                ))
                 st.rerun()
 
 
@@ -890,11 +969,11 @@ def _redemption_scenarios(position: inv.Position,
     for col in ("Bruto", "IOF", "IR", "Líquido", "Ganho líquido"):
         display[col] = display[col].apply(brl)
     st.dataframe(display, hide_index=True, use_container_width=True)
-    st.caption(
+    st.caption(md(
         f"Maior valor líquido: **{best['Cenário']}** "
         f"({best['Data']}) — {brl(best['Líquido'])}. Projeção assume que a "
         "taxa contratada se mantém e que não há novos aportes."
-    )
+    ))
 
 
 def _tax_composition(position: inv.Position, rates: inv.MarketRates,
@@ -1075,7 +1154,7 @@ def _position_tab(*, positions: list[inv.Position],
             repository.append_asset_snapshot({
                 "Data": data_snap, "Investimento": ativo, "Valor": valor,
             })
-            st.success(f"Posição de '{ativo}' atualizada para {brl(valor)}.")
+            st.success(md(f"Posição de '{ativo}' atualizada para {brl(valor)}."))
             st.rerun()
 
     com_real = [p for p in positions if p.has_real]
@@ -1177,12 +1256,12 @@ def _real_vs_projected_chart(position: inv.Position,
         if primeiro["Valor"] > 0 and dias > 0:
             pct = var / primeiro["Valor"] * 100
             ao_ano = ((1 + pct / 100) ** (365 / dias) - 1) * 100
-            st.caption(
+            st.caption(md(
                 f"Entre {primeiro['Data']:%d/%m/%Y} e {ultimo['Data']:%d/%m/%Y} "
                 f"({dias} dias) a posição variou {brl(var)} ({pct:+.2f}%), "
                 f"o equivalente a **{ao_ano:+.2f}% ao ano** — compare com a "
                 f"taxa contratada ({_rate_label(position)})."
-            )
+            ))
 
 
 def _total_performance(positions: list[inv.Position]) -> None:

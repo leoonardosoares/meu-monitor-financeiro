@@ -16,7 +16,7 @@ from src.finance import (
     monthly_investment_contributions, monthly_summary, previous_month,
     projection_target, savings_rate, spending_velocity,
 )
-from src.format import brl
+from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
 
@@ -159,7 +159,7 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
         components.stat_card(
             label="🏦 Contas bancárias", value=guardada.em_conta,
             rows=[{"nome": c.instituicao, "sub": c.nome,
-                   "valor": brl(c.saldo)}
+                   "valor": brl(c.saldo), "bruto": c.saldo}
                   for c in guardada.contas
                   if c.tipo == positions.TIPO_BANCO],
         )
@@ -173,7 +173,7 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
                 f"{guardada.em_cartao / limite * 100:.0f}% utilizado · "
                 f"limite {brl(limite)}" if limite else ""),
             rows=[{"nome": c.nome, "sub": c.instituicao,
-                   "valor": brl(abs(c.saldo))}
+                   "valor": brl(abs(c.saldo)), "divida": True}
                   for c in guardada.contas
                   if c.tipo == positions.TIPO_CARTAO],
         )
@@ -184,16 +184,19 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
         components.stat_card(
             label="📈 Investimentos", value=guardada.investido,
             rows=[{"nome": a.nome, "sub": a.instituicao,
-                   "valor": brl(a.valor)} for a in guardada.ativos[:6]],
+                   "valor": brl(a.valor), "bruto": a.valor}
+                  for a in guardada.ativos[:6]],
         )
     with dir_:
         components.stat_card(
             label="💎 Patrimônio", value=guardada.patrimonio,
             rows=[
-                {"nome": "Em conta", "valor": brl(guardada.em_conta)},
-                {"nome": "Investido", "valor": brl(guardada.investido)},
-                {"nome": "Cartões a pagar", "valor": f"− {brl(guardada.em_cartao)}",
-                 "classe": "mf-neg"},
+                {"nome": "Em conta", "valor": brl(guardada.em_conta),
+                 "bruto": guardada.em_conta},
+                {"nome": "Investido", "valor": brl(guardada.investido),
+                 "bruto": guardada.investido},
+                {"nome": "Cartões a pagar",
+                 "valor": f"− {brl(guardada.em_cartao)}", "divida": True},
             ],
         )
 
@@ -443,23 +446,23 @@ def _projection_warnings(atrasadas: list, antes: list, agendadas: list,
             f"{i.card} {i.month} ({brl(i.balance)}, vence {i.due:%d/%m})"
             for i in antes
         )
-        st.info(
+        st.info(md(
             f"💳 **{brl(sum(i.balance for i in antes))} vencem antes disso** "
             f"— {linhas}. Sai da conta antes do mês projetado, então não "
             "está somado abaixo."
-        )
+        ))
 
     if atrasadas:
         linhas = " · ".join(
             f"{i.card} {i.month} ({brl(i.balance)}, venceu {i.due:%d/%m})"
             for i in atrasadas
         )
-        st.warning(
+        st.warning(md(
             f"⚠️ **{brl(sum(i.balance for i in atrasadas))} em fatura "
             f"vencida e não paga** — {linhas}. Esse valor é dívida "
             "acumulada, não despesa do mês, então fica **fora** da conta "
             "abaixo. Dê baixa na aba Cartão de Crédito."
-        )
+        ))
 
     estimados = sorted({i.card for i in agendadas if i.estimated})
     if estimados:
@@ -488,18 +491,18 @@ def _projection_footnotes(*, df_transactions: pd.DataFrame, projected: float,
         df_transactions, months=6, exclude_card_invoices=True,
     )
     if variavel > 0:
-        st.caption(
+        st.caption(md(
             f"O saldo livre conta apenas receita, custos fixos e faturas. "
             f"Seu gasto variável no banco — sem contar pagamento de fatura, "
             f"que já está acima — tem média de **{brl(variavel)}/mês** nos "
             f"últimos 6 meses; descontando isso, sobrariam "
             f"**{brl(projected - variavel)}**."
-        )
+        ))
     if fixed_card > 0:
-        st.caption(
+        st.caption(md(
             f"{brl(fixed_card)} de custos fixos na categoria *Cartão de "
             "Crédito* foram excluídos para não descontar a fatura duas vezes."
-        )
+        ))
 
     if not do_mes:
         st.caption(f"Nenhuma fatura vence em {alvo}.")
