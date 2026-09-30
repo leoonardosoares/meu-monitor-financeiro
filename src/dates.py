@@ -54,9 +54,28 @@ def parse_dates(series: pd.Series) -> pd.Series:
 
     out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
     if iso_like.any():
-        out.loc[iso_like] = pd.to_datetime(s[iso_like], errors="coerce")
+        # `format="mixed"` faz cada valor ser lido por si. Sem isso o
+        # pandas infere um formato do primeiro elemento e descarta os
+        # demais — "2026-09-08" virava NaT ao lado de um valor com fuso.
+        out.loc[iso_like] = _sem_fuso(pd.to_datetime(
+            s[iso_like], errors="coerce", utc=True, format="mixed"))
     if (~iso_like).any():
-        out.loc[~iso_like] = pd.to_datetime(
-            s[~iso_like], errors="coerce", dayfirst=True,
-        )
+        out.loc[~iso_like] = _sem_fuso(pd.to_datetime(
+            s[~iso_like], errors="coerce", dayfirst=True, utc=True,
+            format="mixed"))
     return out
+
+
+def _sem_fuso(serie: pd.Series) -> pd.Series:
+    """Remove o fuso, mantendo a hora escrita.
+
+    A Pluggy envia `2026-09-08T00:00:00.000Z` e a planilha envia
+    `2026-09-08`. Misturar os dois estoura com "Cannot compare tz-naive
+    and tz-aware", e o que se quer aqui é a data — não o instante. Ler
+    tudo como UTC e depois soltar o fuso preserva o dia escrito, que é
+    o que o banco quis dizer.
+    """
+    try:
+        return serie.dt.tz_localize(None)
+    except (TypeError, AttributeError):
+        return serie

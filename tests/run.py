@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pandas as pd  # noqa: E402
 
 from src import credit_card as cc  # noqa: E402
-from src.dates import parse_month_label  # noqa: E402
+from src.dates import parse_dates, parse_month_label  # noqa: E402
 from src.finance import (  # noqa: E402
     avg_monthly_expense, fixed_costs_split, projection_target,
 )
@@ -422,6 +422,24 @@ check("e a vencida entra só no segundo",
 
 # São os estados que o app do cartão mostra. "Aberta" para tudo
 # escondia a diferença entre dever agora e dever em 2027.
+# A Pluggy envia "2026-09-08T00:00:00.000Z" e a planilha envia
+# "2026-09-08". Misturar os dois estourava com "Cannot compare tz-naive
+# and tz-aware", e inferir um formato do primeiro valor fazia o outro
+# virar NaT — a fatura sumia por causa do fuso.
+section("Datas do banco e da planilha convivem")
+_mix = parse_dates(pd.Series([
+    "2026-09-08T00:00:00.000Z", "2026-09-08", "08/09/2026",
+    "2026-09-08T12:30:00-03:00", "2026-2-3", None, "lixo",
+]))
+check("com fuso Z", _mix.iloc[0], pd.Timestamp(2026, 9, 8))
+check("ISO simples ao lado do com fuso", _mix.iloc[1], pd.Timestamp(2026, 9, 8))
+check("brasileiro na mesma leva", _mix.iloc[2], pd.Timestamp(2026, 9, 8))
+check("fuso negativo vira hora UTC",
+      _mix.iloc[3], pd.Timestamp(2026, 9, 8, 15, 30))
+check("sem zero à esquerda", _mix.iloc[4], pd.Timestamp(2026, 2, 3))
+check("nulo e lixo viram NaT",
+      [bool(pd.isna(v)) for v in _mix.iloc[5:]], [True, True])
+
 section("Faturas classificadas como o banco classifica")
 _hoje = date(2026, 9, 30)
 _ag2, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)

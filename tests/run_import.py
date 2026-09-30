@@ -415,6 +415,35 @@ p, _ = com_fatura("b2", "y", [{"id": "y", "dueDate": "2026-10-15"}],
                   cartao="Principal")
 check("Principal: vence 15/10 -> fatura 10/2026", p[0].mes_fatura, "10/2026")
 
+# Faturas reais do Nubank, com os nomes e o formato que a Pluggy usa.
+print("  Faturas reais do banco, campo por campo")
+from datetime import date as _d  # noqa: E402
+REAIS = [
+    {"id": "8739f2ec", "dueDate": "2026-09-15T00:00:00.000Z",
+     "billClosingDate": "2026-09-08T00:00:00.000Z",
+     "totalAmount": 2281.4697},
+    {"id": "7f051f1f", "dueDate": "2026-08-17T00:00:00.000Z",
+     "billClosingDate": "2026-08-08T00:00:00.000Z",
+     "totalAmount": 2081.7916},
+]
+_linhas = pi.bill_rows(REAIS, cartao="Principal", closing_day=8, due_day=15,
+                       lido_em=_d(2026, 9, 30))
+check("mês pelo fechamento", [x["Mês"] for x in _linhas],
+      ["09/2026", "08/2026"])
+check("total arredondado como o app do banco mostra",
+      _linhas[0]["Total"], 2281.47)
+check("fechamento preservado", _linhas[0]["Fechamento"], "2026-09-08")
+check("vencimento preservado", _linhas[0]["Vencimento"], "2026-09-15")
+# Vencimento 15 num mês e 17 no outro. No empate fica o menor: o dia
+# maior é feriado empurrando para frente, nunca o contrário.
+check("dias deduzidos do próprio banco",
+      pi.infer_card_days(REAIS, []), (8, 15))
+check("com o 15 dominando, não muda",
+      pi.infer_card_days(REAIS + [dict(REAIS[0], id="c",
+                                       dueDate="2026-07-15T00:00:00.000Z",
+                                       billClosingDate="2026-07-08T00:00:00.000Z")],
+                         []), (8, 15))
+
 print("  Data de fechamento informada manda sobre tudo")
 p, _ = com_fatura("b3", "z", [{"id": "z", "closeDate": "2026-08-30",
                                "dueDate": "2026-10-07"}])
