@@ -37,6 +37,11 @@ def _css() -> str:
         --radius: 14px;
     }}
 
+    /* Diz ao navegador qual é o esquema, para scrollbar, seleção de
+       texto e controles nativos seguirem o tema em vez de ficarem
+       escuros num app claro. */
+    :root {{ color-scheme: {"dark" if C.BG == "#0D1117" else "light"}; }}
+
     html, body, .stApp {{
         font-family: 'Inter', 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
@@ -66,7 +71,15 @@ def _css() -> str:
     h2 {{ font-size: 1.35rem; }}
     h3 {{ font-size: 1.1rem; }}
 
-    .stApp > header {{ background: transparent; }}
+    /* A barra do topo e a decoração são do Streamlit e seguem o tema
+       nativo, que é fixo. Sem forçar aqui, elas ficam pretas num app
+       claro — foi o que deixou o topo escuro no modo claro. */
+    .stApp > header, [data-testid="stHeader"] {{
+        background: var(--bg) !important;
+    }}
+    [data-testid="stHeader"] * {{ color: var(--muted) !important; }}
+    [data-testid="stDecoration"] {{ display: none; }}
+    [data-testid="stToolbar"] {{ background: transparent !important; }}
     .block-container {{ padding-top: 2.2rem; max-width: 1240px; }}
 
     /* ── Métrica como cartão ────────────────────────────────────────────
@@ -168,7 +181,21 @@ def _css() -> str:
         background: var(--sidebar);
         border-right: 1px solid var(--border);
     }}
-    [data-testid="stSidebar"] [data-testid="stRadio"] label {{
+    /* O texto da sidebar não herdava a cor do tema e sumia no claro. */
+[data-testid="stSidebar"] *:not([class*="material"]):not([data-testid="stIconMaterial"]) {{
+    color: var(--text);
+}}
+[data-testid="stSidebar"] label p,
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {{
+    color: var(--muted) !important;
+}}
+[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {{ color: var(--text) !important; }}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
+    color: var(--faint) !important;
+}}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] label {{
         padding: .45rem .7rem;
         border-radius: 9px;
         transition: background .15s ease, color .15s ease;
@@ -186,7 +213,23 @@ def _css() -> str:
     }}
 
     /* ── Avisos ── */
-    [data-testid="stAlert"] {{ border-radius: 12px; border: 1px solid var(--border); }}
+    [data-testid="stAlert"] {{
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}}
+[data-testid="stAlert"] p, [data-testid="stAlert"] li {{
+    color: var(--text) !important;
+}}
+/* Legenda e texto auxiliar precisam de cor própria: o padrão do
+   Streamlit é calculado a partir do tema nativo, que está fixo. */
+[data-testid="stCaptionContainer"] p {{ color: var(--muted) !important; }}
+.stMarkdown p, .stMarkdown li {{ color: var(--text); }}
+code {{
+    background: var(--surface-2) !important;
+    color: var(--green) !important;
+    border-radius: 5px;
+    padding: .1rem .35rem;
+}}
 
     /* ── Cartão de conta (HTML próprio, ver components.account_rows) ── */
     .mf-card {{

@@ -84,12 +84,18 @@ def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
 
     É a peça que dá o ar de app de banco: o número responde a pergunta
     e as linhas abaixo mostram de onde ele vem, sem exigir um clique.
+
+    O sinal do total é preservado. Só o cartão de dívida mostra valor
+    absoluto, porque ali o rótulo já diz que é o que se deve — em
+    qualquer outro, esconder o menos faz um patrimônio negativo parecer
+    positivo, que é o erro mais caro que esta tela pode cometer.
     """
     classe = _classe(value, divida=divida)
+    texto = brl(abs(value)) if divida else brl(value)
     html = [
         '<div class="mf-card">',
         f'<div class="mf-card__label">{label}</div>',
-        f'<div class="mf-card__value {classe}">{brl(abs(value))}</div>',
+        f'<div class="mf-card__value {classe}">{texto}</div>',
     ]
     if bar is not None:
         pct = max(0.0, min(bar, 1.0)) * 100
@@ -102,7 +108,11 @@ def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
     for linha in rows or []:
         sub = f'<div class="mf-row__sub">{linha.get("sub", "")}</div>' \
             if linha.get("sub") else ""
-        cor = linha.get("classe") or classe
+        # Cada linha é colorida pelo próprio valor: herdar a cor do
+        # total pintaria "Em conta R$ 222,69" de vermelho só porque o
+        # patrimônio ficou negativo.
+        cor = linha.get("classe") or _classe(
+            linha.get("bruto", 0.0), divida=bool(linha.get("divida")))
         html.append(
             '<div class="mf-row"><div>'
             f'<div class="mf-row__name">{linha.get("nome", "")}</div>{sub}'

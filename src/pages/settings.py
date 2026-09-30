@@ -9,7 +9,7 @@ from streamlit.components.v1 import html as components_html
 
 from src import components, pluggy, repository, reset
 from src.config import ConfigKeys
-from src.format import brl
+from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
 
@@ -433,10 +433,10 @@ def _render_category_transactions(*, category: str,
         return
 
     if not bank_in_cat.empty:
-        st.markdown(
+        st.markdown(md(
             f"**Banco** · {len(bank_in_cat)} lançamento(s) · "
             f"total {brl(bank_total)}"
-        )
+        ))
         df = bank_in_cat[["Data", "Descrição", "Valor"]].copy()
         if "Data_DT" in bank_in_cat.columns:
             df = df.assign(_ord=bank_in_cat["Data_DT"]).sort_values(
@@ -446,10 +446,10 @@ def _render_category_transactions(*, category: str,
         st.dataframe(df, hide_index=True, use_container_width=True)
 
     if not card_in_cat.empty:
-        st.markdown(
+        st.markdown(md(
             f"**Cartão** · {len(card_in_cat)} lançamento(s) · "
             f"total {brl(card_total)}"
-        )
+        ))
         cols = [c for c in (
             "Data Compra", "Descrição", "Parcela", "Valor", "Status"
         ) if c in card_in_cat.columns]

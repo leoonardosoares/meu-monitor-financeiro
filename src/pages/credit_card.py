@@ -6,9 +6,9 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src import components, credit_card as cc, repository
+from src import components, credit_card as cc, positions, repository
 from src.config import Colors, ConfigKeys, DEFAULT_CARD_NAME
-from src.format import brl
+from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
 _ALL_CARDS = "Todos os cartões"
@@ -134,6 +134,8 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     c3.metric("Disponível", brl(total_disp),
               delta_color="normal" if total_disp >= 0 else "inverse")
 
+    _confronto_com_banco(total_saldo)
+
     df = pd.DataFrame(rows)
     display = df.copy()
     for col in ("Limite", "Em aberto", "Já adiantado", "Disponível"):
@@ -153,6 +155,51 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     } for i in abertas]
     st.dataframe(pd.DataFrame(inv_rows), hide_index=True,
                  use_container_width=True)
+
+
+def _confronto_com_banco(total_app: float) -> None:
+    """Compara o total calculado com o saldo que o banco informa.
+
+    O app soma as compras que estão na planilha; o banco sabe quanto
+    você deve. Divergência grande quase sempre é lançamento duplicado —
+    histórico manual que ficou para trás convivendo com o importado — e
+    sem este confronto ela passa despercebida, porque os dois números
+    moram em telas diferentes.
+    """
+    ids = [i.strip() for i in
+           repository.load_config_text(ConfigKeys.PLUGGY_ITEMS).split(",")
+           if i.strip()]
+    if not ids:
+        return
+    guardada = positions.from_rows(repository.load_positions())
+    if guardada.vazia or guardada.em_cartao <= 0:
+        return
+
+    diferenca = total_app - guardada.em_cartao
+    if abs(diferenca) < 1.0:
+        st.success(md(
+            f"Bate com o banco: {brl(guardada.em_cartao)} em aberto."))
+        return
+
+    st.error(md(
+        f"⚠️ **A planilha diz {brl(total_app)} e o banco diz "
+        f"{brl(guardada.em_cartao)}** — diferença de "
+        f"{brl(abs(diferenca))}."
+    ))
+    with st.expander("O que costuma causar isso"):
+        st.markdown(md(
+            "**Compra lançada duas vezes** é a causa mais comum: o "
+            "histórico digitado à mão continua na planilha e a "
+            "importação trouxe as mesmas compras de novo. O sintoma é "
+            "a planilha somar perto do **dobro** do banco.\n\n"
+            "Se for o seu caso, use **Configurações e Orçamento → "
+            "Recomeçar**: ele zera o histórico e deixa o Open Finance "
+            "reconstruir o mês, sem duplicata.\n\n"
+            "Também conta como diferença legítima a compra parcelada: "
+            "o banco mostra o que já foi faturado, e a planilha soma "
+            "todas as parcelas futuras. Nesse caso a planilha fica "
+            "maior, mas não o dobro."
+        ))
 
 
 def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
@@ -331,10 +378,10 @@ def _payment_section(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
                     "Categoria": "Cartão de Crédito",
                     "Valor": valor, "Tipo": "Saída",
                 })
-                st.success(
+                st.success(md(
                     f"{brl(valor)} pagos em {inv.card}. "
                     f"Faltam {brl(inv.balance - valor)} nessa fatura."
-                )
+                ))
                 st.rerun()
 
     with aba_total:
@@ -360,10 +407,10 @@ def _payment_section(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
                     "Categoria": "Cartão de Crédito",
                     "Valor": a_lancar, "Tipo": "Saída",
                 })
-            st.success(
+            st.success(md(
                 f"Fatura de {inv.card} ({inv.month}) quitada. "
                 f"Lançado no caixa: {brl(a_lancar)}."
-            )
+            ))
             st.rerun()
 
     if not df_pay.empty:
