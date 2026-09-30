@@ -9,6 +9,7 @@ import streamlit as st
 from src import (
     components, credit_card as cc, positions, reconcile, repository,
 )
+from src import pluggy_import as pi
 from src.config import Colors, ConfigKeys, DEFAULT_CARD_NAME
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
@@ -105,83 +106,18 @@ def _first_card_setup() -> None:
 # Visões
 # ---------------------------------------------------------------------------
 
-def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
-                        df_pay: pd.DataFrame, names: list[str]) -> None:
-    st.subheader("Visão consolidada")
+def _saldo_do_banco() -> dict[str, float]:
+    """{cartão cadastrado: dívida informada pela instituição}.
 
-    total_limite = total_disp = total_saldo = 0.0
-    rows = []
-    for name in names:
-        limite, disp = cc.available_limit(df_cards, df_tx, df_pay, name)
-        abertas = cc.open_invoices(df_tx, df_pay, card=name)
-        saldo = sum(i.balance for i in abertas)
-        adiantado = sum(i.advances for i in abertas)
-        total_limite += limite
-        total_disp += disp
-        total_saldo += saldo
-        rows.append({
-            "Cartão": name,
-            "Limite": limite,
-            "Em aberto": saldo,
-            "Já adiantado": adiantado,
-            "Disponível": disp,
-            "Uso": (saldo / limite * 100) if limite else 0.0,
-            "Faturas abertas": len(abertas),
-        })
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Limite total", brl(total_limite))
-    c2.metric("Em aberto", brl(total_saldo),
-              delta=f"{len(names)} cartão(ões)", delta_color="off")
-    c3.metric("Disponível", brl(total_disp),
-              delta_color="normal" if total_disp >= 0 else "inverse")
-
-    _confronto_com_banco(total_saldo)
-
-    df = pd.DataFrame(rows)
-    display = df.copy()
-    for col in ("Limite", "Em aberto", "Já adiantado", "Disponível"):
-        display[col] = display[col].apply(brl)
-    display["Uso"] = df["Uso"].apply(lambda v: f"{v:.0f}%")
-    st.dataframe(display, hide_index=True, use_container_width=True)
-
-    st.markdown("**Próximas faturas por cartão**")
-    abertas = cc.open_invoices(df_tx, df_pay)
-    if not abertas:
-        st.success("Nenhuma fatura em aberto.")
-        return
-    banco = _faturas_do_banco()
-    inv_rows = []
-    divergentes = 0
-    for i in abertas:
-        do_banco = banco.get((i.card, i.month))
-        # A coluna do banco é a referência; a nossa é a soma das linhas
-        # que chegaram. Onde diferem, falta compra na planilha.
-        difere = do_banco is not None and abs(do_banco - i.total) >= 0.01
-        divergentes += bool(difere)
-        inv_rows.append({
-            "Cartão": i.card, "Mês": i.month,
-            "Banco diz": brl(do_banco) if do_banco is not None else "—",
-            "Soma das linhas": brl(i.total),
-            "Adiantado": brl(i.advances), "Falta pagar": brl(i.balance),
-            "Status": ("⚠️ " if difere else "") + i.status,
-        })
-    st.dataframe(pd.DataFrame(inv_rows), hide_index=True,
-                 use_container_width=True)
-
-    if not banco:
-        st.caption(
-            "A coluna **Banco diz** fica vazia até a primeira "
-            "sincronização em **Importar do banco** — é de lá que vêm "
-            "os totais informados pela instituição."
-        )
-    elif divergentes:
-        st.warning(md(
-            f"⚠️ {divergentes} fatura(s) com total diferente do que o "
-            "banco informa. **Vale o que o banco diz**; a soma das "
-            "linhas fica menor quando alguma compra ainda não foi "
-            "importada — sincronize em **Importar do banco**."
-        ))
+    Casa pelo id da conta na Pluggy, guardado quando o usuário escolheu
+    o destino de cada uma. Casar por nome quebraria no dia em que o
+    banco renomeasse "platinum" para outra coisa.
+    """
+    return positions.card_balances(
+        positions.from_rows(repository.load_positions()),
+        pi.parse_mapping(
+            repository.load_config_text(ConfigKeys.PLUGGY_MAPA)),
+    )
 
 
 def _faturas_do_banco() -> dict[tuple[str, str], float]:
@@ -199,51 +135,150 @@ def _faturas_do_banco() -> dict[tuple[str, str], float]:
     return out
 
 
-def _confronto_com_banco(total_app: float) -> None:
-    """Compara o total calculado com o saldo que o banco informa.
+def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                        df_pay: pd.DataFrame, names: list[str]) -> None:
+    """Visão consolidada, com a dívida lida das instituições.
 
-    O app soma as compras que estão na planilha; o banco sabe quanto
-    você deve. Divergência grande quase sempre é lançamento duplicado —
-    histórico manual que ficou para trás convivendo com o importado — e
-    sem este confronto ela passa despercebida, porque os dois números
-    moram em telas diferentes.
+    Somar as linhas da planilha dá o total certo só quando nenhuma
+    compra falta e nenhuma sobra — e as duas coisas acontecem. O banco
+    sabe quanto se deve, então é dele que vem o número; a soma das
+    linhas vira conferência, não fonte.
     """
-    ids = [i.strip() for i in
-           repository.load_config_text(ConfigKeys.PLUGGY_ITEMS).split(",")
-           if i.strip()]
-    if not ids:
-        return
-    guardada = positions.from_rows(repository.load_positions())
-    if guardada.vazia or guardada.em_cartao <= 0:
-        return
+    st.subheader("Visão consolidada")
 
-    diferenca = total_app - guardada.em_cartao
-    if abs(diferenca) < 1.0:
-        st.success(md(
-            f"Bate com o banco: {brl(guardada.em_cartao)} em aberto."))
-        return
+    do_banco = _saldo_do_banco()
+    banco_faturas = _faturas_do_banco()
 
-    st.error(md(
-        f"⚠️ **A planilha diz {brl(total_app)} e o banco diz "
-        f"{brl(guardada.em_cartao)}** — diferença de "
-        f"{brl(abs(diferenca))}."
-    ))
-    _remover_duplicatas()
+    total_limite = total_banco = total_linhas = 0.0
+    linhas = []
+    for name in names:
+        limite = float(cc.card_settings(df_cards, name)["limite"])
+        abertas = cc.open_invoices(df_tx, df_pay, card=name)
+        soma = sum(i.balance for i in abertas)
+        saldo = do_banco.get(name)
+        devido = saldo if saldo is not None else soma
 
-    with st.expander("O que costuma causar isso"):
-        st.markdown(md(
-            "**Compra lançada duas vezes** é a causa mais comum: o "
-            "histórico digitado à mão continua na planilha e a "
-            "importação trouxe as mesmas compras de novo. O sintoma é "
-            "a planilha somar perto do **dobro** do banco.\n\n"
-            "Se for o seu caso, use **Configurações e Orçamento → "
-            "Recomeçar**: ele zera o histórico e deixa o Open Finance "
-            "reconstruir o mês, sem duplicata.\n\n"
-            "Também conta como diferença legítima a compra parcelada: "
-            "o banco mostra o que já foi faturado, e a planilha soma "
-            "todas as parcelas futuras. Nesse caso a planilha fica "
-            "maior, mas não o dobro."
+        total_limite += limite
+        total_banco += devido
+        total_linhas += soma
+        linhas.append({
+            "Cartão": name,
+            "Limite": brl(limite),
+            "Em aberto": brl(devido),
+            "Fonte": "banco" if saldo is not None else "soma das linhas",
+            "Disponível": brl(limite - devido),
+            "Uso": f"{(devido / limite * 100) if limite else 0:.0f}%",
+        })
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Limite total", brl(total_limite))
+    c2.metric("Em aberto", brl(total_banco),
+              delta=f"{len(names)} cartão(ões)", delta_color="off")
+    disponivel = total_limite - total_banco
+    c3.metric("Disponível", brl(disponivel),
+              delta_color="normal" if disponivel >= 0 else "inverse")
+
+    if do_banco:
+        st.caption(
+            "Valores lidos das instituições. Atualize no **Dashboard** "
+            "para buscar de novo."
+        )
+    else:
+        st.info(md(
+            "Ainda não li a dívida nas instituições — os números acima "
+            "são a soma das suas linhas. Vá ao **Dashboard** e clique em "
+            "**Atualizar**."
         ))
+
+    st.dataframe(pd.DataFrame(linhas), hide_index=True,
+                 use_container_width=True)
+
+    _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
+    _remover_duplicatas()
+    _faturas_emitidas(names, banco_faturas)
+    _parcelas_futuras(df_tx, df_pay, banco_faturas)
+
+
+def _confronto_de_linhas(total_banco: float, total_linhas: float,
+                         tem_banco: bool) -> None:
+    """Quanto a planilha difere do banco, e o que isso significa.
+
+    O sinal diz a causa: a mais é compra repetida, a menos é compra que
+    não chegou. Sem separar os dois, o usuário não sabe se limpa ou se
+    importa.
+    """
+    if not tem_banco:
+        return
+    diferenca = total_linhas - total_banco
+    if abs(diferenca) < 1.0:
+        st.success(md(f"As linhas somam o mesmo que o banco: "
+                      f"{brl(total_banco)}."))
+        return
+    if diferenca > 0:
+        st.warning(md(
+            f"As suas linhas somam {brl(diferenca)} **a mais** que o "
+            "banco. Isso é compra lançada duas vezes — use o removedor "
+            "de duplicatas abaixo."
+        ))
+    else:
+        st.info(md(
+            f"As suas linhas somam {brl(abs(diferenca))} **a menos** que "
+            "o banco. Falta importar: vá em **Importar do banco** e "
+            "confira a data de corte."
+        ))
+
+
+def _faturas_emitidas(names: list[str],
+                      banco: dict[tuple[str, str], float]) -> None:
+    """Faturas que o banco já emitiu, com o total dele."""
+    st.markdown("**Faturas emitidas pelo banco**")
+    if not banco:
+        st.caption(
+            "Aparecem depois da primeira sincronização em **Importar do "
+            "banco** — é de lá que vêm os totais da instituição."
+        )
+        return
+    df = repository.load_bank_bills()
+    if df.empty:
+        st.caption("Nenhuma fatura lida ainda.")
+        return
+    mostra = df[df["Cartão"].astype(str).isin(names)].copy()
+    mostra["_ord"] = pd.to_datetime(mostra["Mês"], format="%m/%Y",
+                                    errors="coerce")
+    mostra = mostra.sort_values("_ord", ascending=False)
+    st.dataframe(pd.DataFrame([{
+        "Cartão": r["Cartão"], "Mês": r["Mês"],
+        "Total": brl(float(pd.to_numeric(r["Total"], errors="coerce") or 0)),
+        "Fecha": r.get("Fechamento", ""), "Vence": r.get("Vencimento", ""),
+        "Situação": r.get("Situação", ""),
+    } for _, r in mostra.iterrows()]), hide_index=True,
+        use_container_width=True)
+
+
+def _parcelas_futuras(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
+                      banco: dict[tuple[str, str], float]) -> None:
+    """Meses que o banco ainda não faturou, vindos das parcelas.
+
+    Separado das faturas emitidas de propósito: isto é compromisso
+    futuro, não dívida cobrada. Misturar os dois foi o que fazia o "em
+    aberto" passar do limite do cartão.
+    """
+    futuras = [i for i in cc.open_invoices(df_tx, df_pay)
+               if (i.card, i.month) not in banco and i.balance > 1e-6]
+    if not futuras:
+        return
+    total = sum(i.balance for i in futuras)
+    with st.expander(
+        md(f"📅 Parcelas já compradas que o banco ainda não faturou — "
+           f"{brl(total)}")
+    ):
+        st.caption(
+            "Compras parceladas que vão virar fatura nos próximos meses. "
+            "Não entram no **Em aberto** acima, que é a dívida de hoje."
+        )
+        st.dataframe(pd.DataFrame([{
+            "Cartão": i.card, "Mês": i.month, "Valor": brl(i.balance),
+        } for i in futuras]), hide_index=True, use_container_width=True)
 
 
 def _remover_duplicatas() -> None:

@@ -103,6 +103,35 @@ h2 = ps.history(pd.DataFrame(ps.to_rows(manha) + ps.to_rows(tarde)))
 check("um ponto por dia", len(h2), 1)
 check("vale o último do dia", round(h2["Patrimônio"].iloc[0], 2), 99.0)
 
+# O saldo do cartão precisa chegar ao cartão certo. Casar por nome
+# quebraria em silêncio no dia em que o banco renomeasse a conta.
+print("  Dívida do banco chega ao cartão cadastrado")
+POS_CHAVE = ps.Posicao(contas=[
+    ps.Conta("platinum", "CREDIT", -5083.68, "Nubank", "acc-1"),
+    ps.Conta("ITAU VISA", "CREDIT", 1333.30, "Itaú", "acc-2"),
+    ps.Conta("Nu conta", "BANK", 222.68, "Nubank", "acc-3"),
+])
+mapa = {"acc-1": "Principal", "acc-2": "Cartão Itaú", "acc-3": "Entradas e Saídas"}
+saldos = ps.card_balances(POS_CHAVE, mapa)
+check("dois cartões", sorted(saldos), ["Cartão Itaú", "Principal"])
+check("sinal normalizado", round(saldos["Principal"], 2), 5083.68)
+check("o outro também", round(saldos["Cartão Itaú"], 2), 1333.30)
+check("conta corrente não entra", "Entradas e Saídas" in saldos, False)
+
+check("sem mapa, nada casa", ps.card_balances(POS_CHAVE, {}), {})
+check("mapa None", ps.card_balances(POS_CHAVE, None), {})
+check("conta sem destino é ignorada",
+      ps.card_balances(POS_CHAVE, {"acc-9": "X"}), {})
+
+# Cartão adicional: duas contas da Pluggy para o mesmo cartão daqui.
+dois = ps.Posicao(contas=[
+    ps.Conta("titular", "CREDIT", -100.0, "Nubank", "a"),
+    ps.Conta("adicional", "CREDIT", -50.0, "Nubank", "b"),
+])
+check("somam no mesmo cartão",
+      ps.card_balances(dois, {"a": "Principal", "b": "Principal"}),
+      {"Principal": 150.0})
+
 print("  Planilha vazia não quebra")
 check("from_rows", ps.from_rows(pd.DataFrame()).vazia, True)
 check("history", list(ps.history(pd.DataFrame()).columns),
