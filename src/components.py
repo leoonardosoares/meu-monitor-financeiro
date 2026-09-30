@@ -123,6 +123,20 @@ def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
     st.markdown("".join(html), unsafe_allow_html=True)
 
 
+def tint(color: str, alpha: float) -> str:
+    """Um hex da paleta como `rgba(...)`, para preenchimento de área.
+
+    Existe para o preenchimento seguir o tema: escrito à mão, ele fica
+    com a cor de um modo só — havia um verde e um vermelho fixos que não
+    tinham relação com a paleta ativa.
+    """
+    c = color.lstrip("#")
+    if len(c) == 3:
+        c = "".join(ch * 2 for ch in c)
+    r, g, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
+    return f"rgba({r},{g},{b},{alpha})"
+
+
 def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
                height: int = 220) -> None:
     """Linha com preenchimento em degradê, para série temporal.
@@ -133,10 +147,9 @@ def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
     if df.empty or len(df) < 2:
         return
     cor = color or Colors.PRIMARY
-    r, g, b = (int(cor[i:i + 2], 16) for i in (1, 3, 5))
     fig = go.Figure(go.Scatter(
         x=df[x], y=df[y], mode="lines", line=dict(color=cor, width=2),
-        fill="tozeroy", fillcolor=f"rgba({r},{g},{b},0.16)",
+        fill="tozeroy", fillcolor=tint(cor, 0.16),
         hovertemplate="%{x}<br><b>%{y:,.2f}</b><extra></extra>",
     ))
     fig.update_layout(height=height, margin=dict(t=6, b=6, l=6, r=6),
@@ -159,6 +172,54 @@ def page_header(title: str, subtitle: str | None = None) -> None:
     st.divider()
 
 
+def section(title: str, sub: str | None = None, *,
+            eyebrow: str | None = None) -> None:
+    """Cabeçalho de seção: sobrancelha, título e uma linha de contexto.
+
+    Substitui o trio `subheader` + `caption` + `divider` que se repetia
+    em cada bloco. Nove seções separadas por divisor viram nove faixas do
+    mesmo peso, e a página perde o começo: nada indica o que é a resposta
+    e o que é o detalhe. Aqui a hierarquia está no tipo, não no traço.
+    """
+    partes = ['<div class="mf-sec">']
+    if eyebrow:
+        partes.append(f'<div class="mf-sec__eyebrow">{eyebrow}</div>')
+    partes.append(f'<div class="mf-sec__title">{title}</div>')
+    if sub:
+        partes.append(f'<div class="mf-sec__sub">{sub}</div>')
+    partes.append("</div>")
+    st.markdown("".join(partes), unsafe_allow_html=True)
+
+
+def invoice_card(*, card: str, month: str, value: str, state: str,
+                 accent: str, dates: str = "", source: str = "",
+                 negative: bool = False) -> None:
+    """Uma fatura como bloco, não como linha de tabela.
+
+    A lista de faturas eram quatro dataframes empilhados, um por
+    situação, cada um com título em negrito e legenda: seis colunas para
+    dizer três coisas. Aqui cada fatura é um cartão com a situação numa
+    etiqueta colorida, as datas embaixo do nome e o valor à direita — que
+    é a ordem em que se lê.
+    """
+    classe = "mf-neg" if negative else "mf-pos"
+    html = [
+        f'<div class="mf-inv" style="--accent:{accent}">',
+        "<div>",
+        f'<span class="mf-tag" style="color:{accent}">{state}</span>',
+        f'<div class="mf-inv__who">{card} · {month}</div>',
+    ]
+    if dates:
+        html.append(f'<div class="mf-inv__when">{dates}</div>')
+    html.append("</div><div>")
+    html.append(f'<div class="mf-inv__val {classe}">{value}</div>')
+    if source:
+        html.append(f'<div class="mf-inv__src" style="text-align:right">'
+                    f'{source}</div>')
+    html.append("</div></div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # Charts
 # ---------------------------------------------------------------------------
@@ -177,7 +238,7 @@ def _apply_layout(fig, *, x_title: str = "", y_title: str = "") -> None:
 
 
 def horizontal_bar_expenses(df: pd.DataFrame, *,
-                             color: str = Colors.EXPENSE,
+                             color: str | None = None,
                              empty_msg: str = "Sem despesas.") -> None:
     if df.empty:
         st.info(empty_msg)
@@ -186,35 +247,37 @@ def horizontal_bar_expenses(df: pd.DataFrame, *,
     df["Label"] = df["Valor"].apply(brl)
     fig = px.bar(
         df, x="Valor", y="Categoria", orientation="h", text="Label",
-        color_discrete_sequence=[color],
+        color_discrete_sequence=[color or Colors.EXPENSE],
     )
     fig.update_traces(textposition="outside")
     _apply_layout(fig)
-    fig.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+    fig.update_xaxes(tickprefix="R$ ", gridcolor=Colors.GRID)
     st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def vertical_bar(df: pd.DataFrame, x: str, y: str, *,
-                 color: str = Colors.INVESTMENT,
+                 color: str | None = None,
                  empty_msg: str = "Sem dados.") -> None:
     if df.empty:
         st.info(empty_msg)
         return
     df = df.copy()
     df["Label"] = df[y].apply(brl)
-    fig = px.bar(df, x=x, y=y, text="Label", color_discrete_sequence=[color])
+    fig = px.bar(df, x=x, y=y, text="Label",
+                 color_discrete_sequence=[color or Colors.INVESTMENT])
     fig.update_traces(textposition="outside")
     _apply_layout(fig)
     st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def area_balance(df: pd.DataFrame, x: str, y: str, *,
-                 color: str = Colors.INCOME,
+                 color: str | None = None,
                  y_title: str = "Saldo (R$)") -> None:
     df = df.copy()
     df["Label"] = df[y].apply(brl)
     fig = px.area(df, x=x, y=y, text="Label", markers=True,
-                  line_shape="spline", color_discrete_sequence=[color])
+                  line_shape="spline",
+                  color_discrete_sequence=[color or Colors.INCOME])
     fig.update_traces(textposition="top center", mode="lines+markers+text")
     _apply_layout(fig, x_title="Dia", y_title=y_title)
     st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
@@ -246,10 +309,11 @@ def budget_overview(df_status: pd.DataFrame, *,
 
     fig = go.Figure()
 
-    # Trilha: barra cinza clara representando 0–100% como referência
+    # Trilha: o "vazio" que a barra preenche, na cor de trilha do tema.
+    # Estava fixa num cinza-gelo claro, invisível no modo escuro.
     fig.add_trace(go.Bar(
         x=[100] * len(df), y=df["Categoria"], orientation="h",
-        marker=dict(color="rgba(226, 232, 240, 0.55)", line=dict(width=0)),
+        marker=dict(color=Colors.TRACK, line=dict(width=0)),
         hoverinfo="skip", showlegend=False, width=0.55,
     ))
 
@@ -258,7 +322,7 @@ def budget_overview(df_status: pd.DataFrame, *,
         x=df["Pct_capped"], y=df["Categoria"], orientation="h",
         marker=dict(color=bar_colors, line=dict(width=0)),
         text=labels, textposition="outside",
-        textfont=dict(size=13, color="#0F172A", family="Inter, sans-serif"),
+        textfont=dict(size=13, color=Colors.TEXT, family="Inter, sans-serif"),
         hovertemplate="<b>%{y}</b><br>%{text}<extra></extra>",
         cliponaxis=False, showlegend=False, width=0.55,
     ))
@@ -295,10 +359,11 @@ def budget_overview(df_status: pd.DataFrame, *,
             ticksuffix="%",
             range=[0, max(145, df["Pct_capped"].max() * 1.12)],
             tickfont=dict(size=12, color=Colors.NEUTRAL),
-            gridcolor="rgba(226, 232, 240, 0.7)", showgrid=True, zeroline=False,
+            gridcolor=Colors.GRID, showgrid=True, zeroline=False,
         ),
         yaxis=dict(
-            tickfont=dict(size=13, color="#0F172A", family="Inter, sans-serif"),
+            tickfont=dict(size=13, color=Colors.TEXT,
+                          family="Inter, sans-serif"),
             showgrid=False, zeroline=False,
         ),
         legend=dict(
@@ -327,7 +392,7 @@ def annual_bars(df_monthly: pd.DataFrame, *,
     )
     fig.update_traces(hovertemplate="%{x}<br>%{y:,.2f}")
     _apply_layout(fig, x_title="", y_title="R$")
-    fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+    fig.update_yaxes(tickprefix="R$ ", gridcolor=Colors.GRID)
     st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
@@ -370,7 +435,7 @@ def monthly_contributions_bars(df_monthly: pd.DataFrame, *,
         )
 
     _apply_layout(fig, x_title="", y_title="R$")
-    fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
+    fig.update_yaxes(tickprefix="R$ ", gridcolor=Colors.GRID)
     st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
     if show_summary:

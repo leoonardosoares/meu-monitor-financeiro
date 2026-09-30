@@ -1,53 +1,74 @@
-"""CSS global do tema escuro.
+"""CSS global do app, gerado a partir da paleta do modo ativo.
 
-O alvo é o visual de app financeiro: fundo quase preto, cartões com
-contorno discreto, rótulo pequeno em maiúscula e o número grande como
-protagonista. Verde para o que é seu, vermelho para o que você deve.
+O alvo é o visual de app financeiro: fundo calmo, cartões com hierarquia
+clara, rótulo pequeno em maiúscula e o número grande como protagonista.
+Verde para o que é seu, vermelho para o que você deve.
 
-Cuidado ao mexer: o bloco de Material Symbols não é decorativo. Sem ele
-o Streamlit perde a fonte de ícones e os chevrons de expander viram as
-palavras "arrow_right" na tela.
+Duas regras ao mexer aqui:
+
+1. **Nenhuma cor literal.** Toda cor sai de `var(--algo)`, e todo
+   `--algo` sai da paleta. Um hex escrito à mão fica certo num modo e
+   errado no outro — foi o que deixou a borda de hover cinza-chumbo num
+   app claro e o texto do gráfico de orçamento invisível no escuro.
+2. **O bloco de Material Symbols não é decorativo.** Sem ele o Streamlit
+   perde a fonte de ícones e os chevrons de expander viram as palavras
+   "arrow_right" na tela.
 """
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
-from src.config import Colors as C, TEMA_PADRAO
+from src.config import Colors as C, PALETTES, TEMA_PADRAO
+
+# Nome da paleta -> nome da variável CSS. Gerar as duas coisas da mesma
+# lista é o que garante que não exista variável citada sem valor.
+_VARS = {
+    "BG": "bg", "SURFACE": "surface", "SURFACE_2": "surface-2",
+    "BORDER": "border", "BORDER_HOVER": "border-hover",
+    "TEXT": "text", "TEXT_MUTED": "muted", "TEXT_FAINT": "faint",
+    "SIDEBAR": "sidebar",
+    "PRIMARY": "green", "PRIMARY_HOVER": "green-hover",
+    "PRIMARY_SOFT": "green-soft", "ON_PRIMARY": "on-primary",
+    "INCOME": "income", "INVESTMENT": "investment",
+    "EXPENSE": "red", "WARNING": "amber", "INFO": "blue",
+    "NEUTRAL": "neutral", "TRACK": "track",
+    "SHADOW": "shadow", "SHADOW_LIFT": "shadow-lift", "GLOW": "glow",
+    "OK_SOFT": "ok-soft", "OK_LINE": "ok-line",
+    "WARN_SOFT": "warn-soft", "WARN_LINE": "warn-line",
+    "ERR_SOFT": "err-soft", "ERR_LINE": "err-line",
+    "INFO_SOFT": "info-soft", "INFO_LINE": "info-line",
+}
+
+
+def _root() -> str:
+    """Bloco `:root` com uma variável por cor da paleta ativa."""
+    linhas = [f"        --{css}: {getattr(C, chave)};"
+              for chave, css in _VARS.items()]
+    # Diz ao navegador qual é o esquema, para scrollbar, seleção de texto
+    # e controles nativos seguirem o tema em vez de ficarem escuros num
+    # app claro. Vem da paleta: deduzir do hex do fundo quebra no dia em
+    # que o fundo mudar de tom.
+    linhas.append(f"        color-scheme: {C.SCHEME};")
+    linhas.append("        --radius: 14px;")
+    linhas.append("        --radius-sm: 10px;")
+    return ":root {\n" + "\n".join(linhas) + "\n    }"
 
 
 def _css() -> str:
-    return f"""
+    return """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-    :root {{
-        --bg: {C.BG};
-        --surface: {C.SURFACE};
-        --surface-2: {C.SURFACE_2};
-        --border: {C.BORDER};
-        --text: {C.TEXT};
-        --muted: {C.TEXT_MUTED};
-        --faint: {C.TEXT_FAINT};
-        --green: {C.PRIMARY};
-        --green-hover: {C.PRIMARY_HOVER};
-        --red: {C.EXPENSE};
-        --amber: {C.WARNING};
-        --sidebar: {C.SIDEBAR};
-        --on-primary: {C.ON_PRIMARY};
-        --radius: 14px;
-    }}
+    __ROOT__
 
-    /* Diz ao navegador qual é o esquema, para scrollbar, seleção de
-       texto e controles nativos seguirem o tema em vez de ficarem
-       escuros num app claro. */
-    :root {{ color-scheme: {"dark" if C.BG == "#0D1117" else "light"}; }}
-
-    html, body, .stApp {{
+    html, body, .stApp {
         font-family: 'Inter', 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
         background: var(--bg);
         color: var(--text);
-    }}
+    }
 
     /* A fonte de ícones do Streamlit precisa sobreviver à troca global de
        família acima; sem isto os ícones viram texto literal. */
@@ -55,106 +76,148 @@ def _css() -> str:
     .material-symbols-outlined, .material-symbols-rounded, .material-icons,
     [data-testid="stIconMaterial"], [data-testid="stExpanderIcon"],
     [data-testid="stExpanderToggleIcon"],
-    button[data-testid="stBaseButton-headerNoPadding"] span {{
+    button[data-testid="stBaseButton-headerNoPadding"] span {
         font-family: 'Material Symbols Outlined', 'Material Symbols Rounded',
                      'Material Icons', sans-serif !important;
         font-feature-settings: 'liga' !important;
         font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24 !important;
-    }}
+    }
 
-    h1, h2, h3, h4 {{
+    /* ── Tipografia ─────────────────────────────────────────────────────
+       Escala fechada e com contraste entre degraus. Antes h2 e h3 estavam
+       a 0,25rem um do outro, então subtítulo e sub-subtítulo pareciam o
+       mesmo nível e a página perdia hierarquia. */
+    h1, h2, h3, h4, h5, h6 {
         color: var(--text);
         font-weight: 700;
         letter-spacing: -0.02em;
-    }}
-    h1 {{ font-size: 1.9rem; }}
-    h2 {{ font-size: 1.35rem; }}
-    h3 {{ font-size: 1.1rem; }}
+    }
+    h1 { font-size: 1.85rem; line-height: 1.2; }
+    h2 { font-size: 1.4rem;  margin-top: .2rem; }
+    h3 { font-size: 1.05rem; }
+    h4, h5, h6 { font-size: .95rem; font-weight: 600; }
 
     /* A barra do topo e a decoração são do Streamlit e seguem o tema
        nativo, que é fixo. Sem forçar aqui, elas ficam pretas num app
        claro — foi o que deixou o topo escuro no modo claro. */
-    .stApp > header, [data-testid="stHeader"] {{
+    .stApp > header, [data-testid="stHeader"] {
         background: var(--bg) !important;
-    }}
-    [data-testid="stHeader"] * {{ color: var(--muted) !important; }}
-    [data-testid="stDecoration"] {{ display: none; }}
-    [data-testid="stToolbar"] {{ background: transparent !important; }}
-    .block-container {{ padding-top: 2.2rem; max-width: 1240px; }}
+    }
+    [data-testid="stHeader"] * { color: var(--muted) !important; }
+    [data-testid="stDecoration"] { display: none; }
+    [data-testid="stToolbar"] { background: transparent !important; }
+    .block-container { padding-top: 2rem; max-width: 1240px; }
+
+    /* Espaçamento vertical: o divisor separava tanto quanto o próprio
+       bloco, e a página virava uma pilha de faixas iguais. */
+    hr, [data-testid="stDivider"] {
+        border-color: var(--border) !important;
+        margin: 1.6rem 0 1.2rem !important;
+    }
+
+    /* ── Cabeçalho de seção (components.section) ───────────────────────── */
+    .mf-sec { margin: .2rem 0 .9rem; }
+    .mf-sec__eyebrow {
+        color: var(--faint);
+        font-size: .68rem;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        margin-bottom: .25rem;
+    }
+    .mf-sec__title {
+        color: var(--text);
+        font-size: 1.15rem;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        line-height: 1.25;
+    }
+    .mf-sec__sub {
+        color: var(--muted);
+        font-size: .85rem;
+        margin-top: .2rem;
+        max-width: 62ch;
+    }
 
     /* ── Métrica como cartão ────────────────────────────────────────────
        É o elemento mais repetido do app; tratá-lo como cartão é o que dá
        o ar de painel financeiro sem precisar de HTML próprio em cada tela. */
-    [data-testid="stMetric"] {{
+    [data-testid="stMetric"] {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius);
-        padding: 1.1rem 1.25rem;
-        transition: border-color .18s ease, transform .18s ease;
-    }}
-    [data-testid="stMetric"]:hover {{
-        border-color: #36424F;
+        padding: 1.05rem 1.2rem;
+        box-shadow: var(--shadow);
+        transition: border-color .18s ease, transform .18s ease,
+                    box-shadow .18s ease;
+    }
+    [data-testid="stMetric"]:hover {
+        border-color: var(--border-hover);
+        box-shadow: var(--shadow-lift);
         transform: translateY(-2px);
-    }}
-    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {{
+    }
+    [data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {
         color: var(--faint) !important;
-        font-size: .72rem !important;
+        font-size: .71rem !important;
         font-weight: 600 !important;
         letter-spacing: .08em;
         text-transform: uppercase;
-    }}
-    [data-testid="stMetricValue"] {{
+    }
+    [data-testid="stMetricValue"] {
         color: var(--text) !important;
         /* Encolhe conforme a coluna aperta: cinco métricas lado a lado
            cortavam o valor, e um saldo pela metade é pior que feio. */
-        font-size: clamp(1.05rem, 2.1vw, 1.75rem) !important;
+        font-size: clamp(1.05rem, 2.1vw, 1.7rem) !important;
         font-weight: 700 !important;
         letter-spacing: -.02em;
-        /* O valor precisa caber inteiro: um saldo truncado é pior que feio. */
         white-space: normal !important;
         overflow: visible !important;
-    }}
+    }
     /* O delta é uma pilha cinza sobre cinza no tema nativo; sem cor
        própria ele fica ilegível nos dois modos. */
-    [data-testid="stMetricDelta"] {{
-        font-size: .76rem !important;
+    [data-testid="stMetricDelta"] {
+        font-size: .75rem !important;
         font-weight: 600 !important;
         color: var(--muted) !important;
-    }}
-    [data-testid="stMetricDelta"] svg {{ fill: currentColor !important; }}
+    }
+    [data-testid="stMetricDelta"] svg { fill: currentColor !important; }
 
     /* ── Contêineres com borda viram cartão ── */
-    [data-testid="stVerticalBlockBorderWrapper"] > div:has(> [data-testid="stVerticalBlock"]) {{
+    [data-testid="stVerticalBlockBorderWrapper"] > div:has(> [data-testid="stVerticalBlock"]) {
         background: var(--surface);
         border-radius: var(--radius);
-    }}
+        box-shadow: var(--shadow);
+    }
 
     /* ── Botões ── */
-    .stButton > button, .stFormSubmitButton > button, .stDownloadButton > button {{
-        border-radius: 10px;
+    .stButton > button, .stFormSubmitButton > button, .stDownloadButton > button {
+        border-radius: var(--radius-sm);
         border: 1px solid var(--border);
-        background: var(--surface-2);
+        background: var(--surface);
         color: var(--text);
         font-weight: 600;
         padding: .5rem 1.1rem;
+        box-shadow: var(--shadow);
         transition: all .18s ease;
-    }}
-    .stButton > button:hover, .stFormSubmitButton > button:hover {{
+    }
+    .stButton > button:hover, .stFormSubmitButton > button:hover,
+    .stDownloadButton > button:hover {
         border-color: var(--green);
         color: var(--green);
         transform: translateY(-1px);
-    }}
-    .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {{
+    }
+    .stButton > button[kind="primary"], .stFormSubmitButton > button[kind="primary"] {
         background: var(--green);
         border-color: var(--green);
         color: var(--on-primary);
-    }}
-    .stButton > button[kind="primary"]:hover {{
+    }
+    .stButton > button[kind="primary"]:hover,
+    .stFormSubmitButton > button[kind="primary"]:hover {
         background: var(--green-hover);
         border-color: var(--green-hover);
         color: var(--on-primary);
-        box-shadow: 0 6px 18px rgba(82,191,144,.22);
-    }}
+        box-shadow: var(--glow);
+    }
 
     /* ── Campos ──────────────────────────────────────────────────────
        Os widgets vêm do BaseWeb e seguem o tema nativo do Streamlit,
@@ -163,161 +226,281 @@ def _css() -> str:
     [data-baseweb="select"] > div,
     [data-baseweb="select"] div[role="button"],
     [data-baseweb="input"], [data-baseweb="base-input"],
-    [data-baseweb="textarea"], [data-baseweb="datepicker"] input {{
+    [data-baseweb="textarea"], [data-baseweb="datepicker"] input {
         background: var(--surface-2) !important;
         border-color: var(--border) !important;
         color: var(--text) !important;
-    }}
-    [data-baseweb="select"] *, [data-baseweb="input"] * {{
+    }
+    [data-baseweb="select"] *, [data-baseweb="input"] * {
         color: var(--text) !important;
-    }}
-    [data-baseweb="select"] svg {{ fill: var(--muted) !important; }}
+    }
+    [data-baseweb="select"] svg { fill: var(--muted) !important; }
     /* A lista que abre é renderizada fora da árvore do componente. */
     [data-baseweb="popover"] [role="listbox"],
-    [data-baseweb="menu"], [data-baseweb="calendar"] {{
+    [data-baseweb="menu"], [data-baseweb="calendar"] {
         background: var(--surface) !important;
         border: 1px solid var(--border) !important;
-    }}
-    [role="option"], [data-baseweb="menu"] li {{
+        box-shadow: var(--shadow-lift) !important;
+    }
+    [role="option"], [data-baseweb="menu"] li {
         background: var(--surface) !important;
         color: var(--text) !important;
-    }}
-    [role="option"]:hover, [data-baseweb="menu"] li:hover {{
+    }
+    [role="option"]:hover, [data-baseweb="menu"] li:hover {
         background: var(--surface-2) !important;
-    }}
-    [data-baseweb="tag"] {{
-        background: var(--primary-soft) !important;
+    }
+    /* A etiqueta do multiselect citava uma variável que não existia e
+       ficava sem fundo nenhum. */
+    [data-baseweb="tag"] {
+        background: var(--green-soft) !important;
         color: var(--text) !important;
-    }}
+        border-color: transparent !important;
+    }
+    [data-baseweb="tag"] span, [data-baseweb="tag"] svg {
+        color: var(--text) !important;
+        fill: var(--text) !important;
+    }
 
-    /* ── Campos ── */
     .stTextInput input, .stNumberInput input, .stDateInput input,
-    .stSelectbox [data-baseweb="select"] > div, .stTextArea textarea {{
+    .stSelectbox [data-baseweb="select"] > div, .stTextArea textarea {
         background: var(--surface-2) !important;
         border-color: var(--border) !important;
         color: var(--text) !important;
-        border-radius: 10px !important;
-    }}
+        border-radius: var(--radius-sm) !important;
+    }
+    [data-testid="stWidgetLabel"] p, .stCheckbox label p, .stRadio label p {
+        color: var(--muted) !important;
+        font-size: .85rem;
+    }
 
-    /* ── Abas ── */
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: .35rem;
+    /* ── Abas ───────────────────────────────────────────────────────────
+       Viraram a navegação de primeiro nível das páginas grandes, então
+       precisam parecer navegação: pílula no selecionado, não só cor de
+       texto — que era indistinguível de um link no modo claro. */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: .25rem;
         border-bottom: 1px solid var(--border);
-    }}
-    .stTabs [data-baseweb="tab"] {{
+        padding-bottom: .1rem;
+        margin-bottom: .4rem;
+    }
+    .stTabs [data-baseweb="tab"] {
         color: var(--muted);
         font-weight: 600;
-        padding: .55rem .95rem;
-    }}
-    .stTabs [aria-selected="true"] {{ color: var(--green) !important; }}
+        font-size: .9rem;
+        padding: .5rem .9rem;
+        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background: var(--surface-2);
+        color: var(--text);
+    }
+    .stTabs [aria-selected="true"] {
+        color: var(--green) !important;
+        background: var(--green-soft);
+    }
+    .stTabs [data-baseweb="tab-highlight"] { background: var(--green); }
+    .stTabs [data-baseweb="tab-border"] { background: transparent; }
 
     /* ── Expander ── */
-    [data-testid="stExpander"] {{
+    [data-testid="stExpander"] {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius);
-    }}
-    [data-testid="stExpander"] summary {{ color: var(--text); font-weight: 600; }}
+        box-shadow: var(--shadow);
+    }
+    [data-testid="stExpander"] summary { color: var(--text); font-weight: 600; }
+    [data-testid="stExpander"] summary:hover { color: var(--green); }
 
     /* ── Sidebar ── */
-    [data-testid="stSidebar"] {{
+    [data-testid="stSidebar"] {
         background: var(--sidebar);
         border-right: 1px solid var(--border);
-    }}
+    }
     /* O texto da sidebar não herdava a cor do tema e sumia no claro. */
-[data-testid="stSidebar"] *:not([class*="material"]):not([data-testid="stIconMaterial"]) {{
-    color: var(--text);
-}}
-[data-testid="stSidebar"] label p,
-[data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {{
-    color: var(--muted) !important;
-}}
-[data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {{ color: var(--text) !important; }}
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
-    color: var(--faint) !important;
-}}
-
-[data-testid="stSidebar"] [data-testid="stRadio"] label {{
+    [data-testid="stSidebar"] *:not([class*="material"]):not([data-testid="stIconMaterial"]) {
+        color: var(--text);
+    }
+    [data-testid="stSidebar"] label p,
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
+        color: var(--muted) !important;
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 { color: var(--text) !important; }
+    [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+        color: var(--faint) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label {
         padding: .45rem .7rem;
         border-radius: 9px;
         transition: background .15s ease, color .15s ease;
-    }}
-    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {{
+    }
+    [data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
         background: var(--surface-2);
         color: var(--green);
-    }}
+    }
 
     /* ── Tabelas ── */
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {{
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
         border: 1px solid var(--border);
         border-radius: var(--radius);
         overflow: hidden;
-    }}
+    }
 
-    /* ── Avisos ── */
-    [data-testid="stAlert"] {{
-    border-radius: 12px;
-    border: 1px solid var(--border);
-}}
-[data-testid="stAlert"] p, [data-testid="stAlert"] li {{
-    color: var(--text) !important;
-}}
-/* Legenda e texto auxiliar precisam de cor própria: o padrão do
-   Streamlit é calculado a partir do tema nativo, que está fixo. */
-[data-testid="stCaptionContainer"] p {{ color: var(--muted) !important; }}
-.stMarkdown p, .stMarkdown li {{ color: var(--text); }}
-code {{
-    background: var(--surface-2) !important;
-    color: var(--green) !important;
-    border-radius: 5px;
-    padding: .1rem .35rem;
-}}
+    /* ── Avisos ─────────────────────────────────────────────────────────
+       O Streamlit pinta os alertas com a paleta nativa dele, que é fixa:
+       no modo claro vinham quatro azuis e vermelhos de outra família,
+       sem relação com as cores do app. Cada um recebe a tinta calculada
+       da sua própria cor semântica. */
+    [data-testid="stAlert"] {
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        box-shadow: none;
+    }
+    [data-testid="stAlert"] p, [data-testid="stAlert"] li,
+    [data-testid="stAlert"] strong {
+        color: var(--text) !important;
+    }
+    [data-testid="stAlertContentSuccess"] {
+        background: var(--ok-soft) !important;
+        border: 1px solid var(--ok-line) !important;
+    }
+    [data-testid="stAlertContentWarning"] {
+        background: var(--warn-soft) !important;
+        border: 1px solid var(--warn-line) !important;
+    }
+    [data-testid="stAlertContentError"] {
+        background: var(--err-soft) !important;
+        border: 1px solid var(--err-line) !important;
+    }
+    [data-testid="stAlertContentInfo"] {
+        background: var(--info-soft) !important;
+        border: 1px solid var(--info-line) !important;
+    }
+    [data-testid="stAlert"] [data-testid="stIconMaterial"] {
+        color: var(--muted) !important;
+    }
 
-    /* ── Cartão de conta (HTML próprio, ver components.account_rows) ── */
-    .mf-card {{
+    /* Legenda e texto auxiliar precisam de cor própria: o padrão do
+       Streamlit é calculado a partir do tema nativo, que está fixo. */
+    [data-testid="stCaptionContainer"] p {
+        color: var(--muted) !important;
+        font-size: .82rem;
+    }
+    .stMarkdown p, .stMarkdown li { color: var(--text); }
+    code {
+        background: var(--surface-2) !important;
+        color: var(--green) !important;
+        border-radius: 5px;
+        padding: .1rem .35rem;
+    }
+
+    /* Barra de progresso: a trilha nativa é cinza fixo. */
+    [data-testid="stProgress"] > div > div { background: var(--track) !important; }
+    [data-testid="stProgress"] > div > div > div > div {
+        background: var(--green) !important;
+    }
+
+    /* ── Cartão de conta (HTML próprio, ver components.stat_card) ── */
+    .mf-card {
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius);
         padding: 1.15rem 1.25rem;
-    }}
-    .mf-card__label {{
+        box-shadow: var(--shadow);
+        height: 100%;
+    }
+    .mf-card__label {
         color: var(--faint);
-        font-size: .72rem;
+        font-size: .71rem;
         font-weight: 700;
         letter-spacing: .09em;
         text-transform: uppercase;
-        margin-bottom: .4rem;
-    }}
-    .mf-card__value {{
-        font-size: 1.9rem;
+        margin-bottom: .35rem;
+    }
+    .mf-card__value {
+        font-size: 1.85rem;
         font-weight: 700;
-        letter-spacing: -.02em;
+        letter-spacing: -.025em;
         margin-bottom: .2rem;
-    }}
-    .mf-pos {{ color: var(--green); }}
-    .mf-neg {{ color: var(--red); }}
-    .mf-row {{
+    }
+    .mf-pos { color: var(--green); }
+    .mf-neg { color: var(--red); }
+    .mf-mut { color: var(--muted); }
+    .mf-row {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: .75rem;
-        padding: .65rem 0;
+        padding: .6rem 0;
         border-top: 1px solid var(--border);
-    }}
-    .mf-row__name {{ font-weight: 600; font-size: .93rem; }}
-    .mf-row__sub {{ color: var(--faint); font-size: .76rem; }}
-    .mf-row__val {{ font-weight: 700; font-size: .95rem; white-space: nowrap; }}
-    .mf-bar {{
+    }
+    .mf-row__name { font-weight: 600; font-size: .9rem; color: var(--text); }
+    .mf-row__sub { color: var(--faint); font-size: .75rem; }
+    .mf-row__val { font-weight: 700; font-size: .92rem; white-space: nowrap; }
+    .mf-bar {
         height: 6px;
         border-radius: 999px;
-        background: var(--surface-2);
+        background: var(--track);
         overflow: hidden;
         margin: .45rem 0 .1rem;
-    }}
-    .mf-bar > span {{ display: block; height: 100%; border-radius: 999px; }}
+    }
+    .mf-bar > span { display: block; height: 100%; border-radius: 999px; }
+
+    /* ── Fatura como cartão (components.invoice_card) ───────────────────
+       Substitui a pilha de dataframes: cada fatura é um bloco com estado,
+       datas e valor, e o estado é uma etiqueta colorida em vez de um
+       emoji no meio de um texto em negrito. */
+    .mf-inv {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent, var(--border));
+        border-radius: var(--radius);
+        padding: .85rem 1.1rem;
+        margin-bottom: .55rem;
+        box-shadow: var(--shadow);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .mf-inv__who { font-weight: 700; font-size: .95rem; color: var(--text); }
+    .mf-inv__when { color: var(--faint); font-size: .76rem; margin-top: .15rem; }
+    .mf-inv__val {
+        font-weight: 700;
+        font-size: 1.15rem;
+        letter-spacing: -.02em;
+        white-space: nowrap;
+        text-align: right;
+    }
+    .mf-inv__src { color: var(--faint); font-size: .7rem; font-weight: 500; }
+    .mf-tag {
+        display: inline-block;
+        font-size: .67rem;
+        font-weight: 700;
+        letter-spacing: .07em;
+        text-transform: uppercase;
+        padding: .16rem .5rem;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        margin-bottom: .3rem;
+    }
     </style>
+    """.replace("__ROOT__", _root())
+
+
+def missing_vars() -> set[str]:
+    """Variáveis citadas no CSS que a paleta não define.
+
+    Existe para o teste: uma `var(--x)` sem valor não dá erro nenhum — o
+    navegador descarta a regra em silêncio e o elemento volta ao visual
+    nativo do Streamlit, que é justamente o que se está tentando trocar.
     """
+    css = _css()
+    corpo = css.split("}", 1)[1] if "}" in css else css
+    citadas = set(re.findall(r"var\(--([a-z0-9-]+)", corpo))
+    definidas = set(_VARS.values()) | {"radius", "radius-sm", "accent"}
+    return citadas - definidas
 
 
 def inject(mode: str = TEMA_PADRAO) -> None:
@@ -329,3 +512,14 @@ def inject(mode: str = TEMA_PADRAO) -> None:
     """
     C.use(mode)
     st.markdown(_css(), unsafe_allow_html=True)
+
+
+# Cada paleta tem de declarar tudo que `_VARS` mapeia; um nome que falta
+# num modo vira variável vazia só naquele modo, que é o defeito mais
+# difícil de ver — o app fica certo no tema em que você desenvolveu.
+def palette_gaps() -> dict[str, set[str]]:
+    """{modo: chaves que faltam} — vazio quando as paletas estão completas."""
+    exigidas = set(_VARS) | {"SCHEME", "SERIES"}
+    return {modo: exigidas - set(cores)
+            for modo, cores in PALETTES.items()
+            if exigidas - set(cores)}

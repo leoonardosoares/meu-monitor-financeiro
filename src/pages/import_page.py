@@ -89,7 +89,7 @@ def _load_accounts(ids: list[str]) -> tuple[list[dict], list[str]]:
 def _mapping_section(contas: list[dict], df_cards: pd.DataFrame,
                      df_credit_card: pd.DataFrame) -> dict[str, str]:
     """Para onde cada conta da Pluggy é importada."""
-    st.subheader("Para onde vai cada conta")
+    components.section("Para onde vai cada conta")
     st.caption(
         "Diga uma vez e o app lembra. Sem isso ele não teria como saber "
         "que o *platinum* da Pluggy é o seu cartão cadastrado aqui — e "
@@ -134,7 +134,7 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
                   df_cards: pd.DataFrame, df_transactions: pd.DataFrame,
                   df_credit_card: pd.DataFrame,
                   categories: list[str]) -> None:
-    st.subheader("Sincronizar")
+    components.section("Sincronizar")
     ativas = [c for c in contas
               if destinos.get(pi.account_key(c), "") not in
               ("", pi.DESTINO_IGNORAR)]

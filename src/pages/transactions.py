@@ -73,7 +73,7 @@ def _summary(df: pd.DataFrame) -> None:
 
 def _new_transaction_form(df_transactions: pd.DataFrame,
                            categories: list[str]) -> None:
-    st.subheader("Novo lançamento")
+    components.section("Novo lançamento")
     st.caption(
         "Após salvar, se sua descrição combinar com lançamentos anteriores "
         "categorizados de outra forma, o app te dá uma dica."
@@ -123,8 +123,9 @@ def _new_transaction_form(df_transactions: pd.DataFrame,
 # ---------------------------------------------------------------------------
 
 def _history_section(df_transactions: pd.DataFrame) -> None:
-    st.subheader("Histórico completo")
-    st.caption("Use os filtros para encontrar registros — depois edite ou apague.")
+    components.section(
+        "Histórico completo",
+        "Use os filtros para encontrar registros, depois edite ou apague.")
 
     editable_full = df_transactions.drop(
         columns=[c for c in ("Data_DT", "Mes_Ano") if c in df_transactions.columns]

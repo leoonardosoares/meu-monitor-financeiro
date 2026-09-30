@@ -150,7 +150,7 @@ def _grafico_crescimento(aportado: float) -> None:
         x=dados["Data"], y=dados["Investido"], mode="lines",
         name="Posição", line=dict(color=Colors.PRIMARY, width=2),
         fill="tonexty",
-        fillcolor="rgba(82,191,144,0.14)",
+        fillcolor=components.tint(Colors.PRIMARY, 0.14),
         hovertemplate="%{x}<br>posição <b>%{y:,.2f}</b><extra></extra>"))
     fig.update_layout(height=240, margin=dict(t=6, b=6, l=6, r=6),
                       hovermode="x unified",
@@ -203,7 +203,7 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
                positions: list[inv.Position]) -> None:
     """Visão das metas — sem formulários: aportes e resgates agora são
     registrados por ativo na aba Movimentações."""
-    st.subheader("Reserva de emergência")
+    components.section("Reserva de emergência")
     current_goal = repository.load_config(ConfigKeys.META_RESERVA, 10000.0)
     new_goal = st.number_input(
         "Meta da reserva (R$):", min_value=100.0, value=current_goal, step=500.0,
@@ -238,8 +238,7 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
         falta = new_goal - reserve
         st.info(md(f"Faltam **{brl(falta)}** para completar a reserva."))
 
-    st.divider()
-    st.subheader("Aportes mensais (últimos 12 meses)")
+    components.section("Aportes mensais (últimos 12 meses)")
     st.caption(
         "Quanto entrou na carteira mês a mês, segundo os lançamentos de "
         "investimento em Entradas e Saídas."
@@ -258,7 +257,7 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
 def _wallet_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                 positions: list[inv.Position],
                 rates: inv.MarketRates) -> None:
-    st.subheader("Minha carteira")
+    components.section("Minha carteira")
     st.caption(
         "Cadastre cada investimento que você tem. A posição é calculada a "
         "partir das movimentações, projetada pela taxa do papel e já "
@@ -560,7 +559,7 @@ def _assets_editor(df_assets: pd.DataFrame) -> None:
 def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
                positions: list[inv.Position],
                df_transactions: pd.DataFrame) -> None:
-    st.subheader("Movimentações por ativo")
+    components.section("Movimentações por ativo")
     st.caption(
         "Cada aporte vira um lote com data própria — é o que permite calcular "
         "o IR regressivo corretamente, já que a alíquota depende de há quanto "
@@ -819,7 +818,7 @@ def _moves_history(df_moves: pd.DataFrame, names: list[str]) -> None:
 def _projection_tab(*, positions: list[inv.Position],
                     rates: inv.MarketRates,
                     df_snapshots: pd.DataFrame) -> None:
-    st.subheader("Projeção e melhor momento de resgate")
+    components.section("Projeção e melhor momento de resgate")
     st.caption(
         "Quanto cada ativo vale ao longo do tempo, bruto e já líquido de IOF "
         "e IR. Use para decidir se vale esperar o próximo degrau da tabela "
@@ -953,7 +952,7 @@ def _gross_net_chart(curve: pd.DataFrame, *, title: str) -> None:
     fig.add_trace(go.Scatter(
         x=x, y=curve["Líquido"], name="Valor líquido (após IOF/IR)",
         mode="lines", line=dict(color=Colors.PRIMARY, width=3),
-        fill="tonexty", fillcolor="rgba(239, 68, 68, 0.10)",
+        fill="tonexty", fillcolor=components.tint(Colors.EXPENSE, 0.10),
         hovertemplate="Líquido: R$ %{y:,.2f}<extra></extra>",
     ))
 
@@ -1171,7 +1170,7 @@ def _manage_asset_section(df_assets: pd.DataFrame,
 def _position_tab(*, positions: list[inv.Position],
                   df_snapshots: pd.DataFrame) -> None:
     """Lançamento da posição real por ativo + desempenho individual e total."""
-    st.subheader("Posição atual dos investimentos")
+    components.section("Posição atual dos investimentos")
     st.caption(
         "Informe o valor bruto que a corretora mostra para cada ativo. Ele "
         "substitui a projeção — inclusive na base dos impostos — e a curva "

@@ -190,7 +190,8 @@ class Colors:
             setattr(cls, chave, valor)
 
     # Séries de gráfico, em ordem fixa. Nunca cicle nem gere uma sétima:
-    # o que não couber vira "Outros".
+    # o que não couber vira "Outros". O valor abaixo é só o inicial —
+    # `use()` troca a lista pela do modo ativo.
     SERIES = [
         "#3CA368",  # verde
         "#528ED9",  # azul
@@ -201,30 +202,78 @@ class Colors:
     ]
 
 
-# Duas paletas de superfície e texto. As cores de série e a semântica de
-# dinheiro (verde/vermelho) mudam só de tom: os mesmos seis hues passaram
-# na validação nos dois modos, então o que troca aqui é o fundo e o que
-# se escreve sobre ele.
+# Duas paletas completas. "Completa" aqui é requisito, não elegância: o
+# CSS lê cada nome como variável, e um nome que falta num modo vira
+# `var(--x)` sem valor — a regra é descartada pelo navegador e o elemento
+# volta ao visual nativo do Streamlit. Foi assim que a etiqueta de
+# multiselect ficou sem fundo: `--primary-soft` era usada e nunca
+# definida. O teste `run_theme` confirma que os dois modos declaram o
+# mesmo conjunto de chaves e que o CSS não cita nenhuma fora dele.
+#
+# As duas paletas não são uma a inversão da outra. No escuro, o que
+# separa um cartão do fundo é a borda; no claro, é a sombra — um cartão
+# branco delimitado só por um traço de 1px lê como formulário, não como
+# painel. Por isso SHADOW muda de peso e não só de cor.
 PALETTES = {
     "dark": {
+        "SCHEME": "dark",
         "BG": "#0D1117", "SURFACE": "#161B22", "SURFACE_2": "#1C232B",
-        "BORDER": "#26303B", "TEXT": "#E6EDF3", "TEXT_MUTED": "#8B949E",
+        "BORDER": "#26303B", "BORDER_HOVER": "#36424F",
+        "TEXT": "#E6EDF3", "TEXT_MUTED": "#8B949E",
         "TEXT_FAINT": "#7D8590", "SIDEBAR": "#0A0E13",
         "PRIMARY": "#52BF90", "PRIMARY_HOVER": "#6FD0A6",
         "PRIMARY_SOFT": "#2A4A3D", "INCOME": "#52BF90",
         "INVESTMENT": "#4ADECD", "EXPENSE": "#F85149", "WARNING": "#D29922",
+        "INFO": "#528ED9",
         "NEUTRAL": "#8B949E", "ON_PRIMARY": "#06251A",
         "GRID": "rgba(230,237,243,0.06)", "AXIS": "rgba(230,237,243,0.10)",
+        # Trilha de barra e de progresso: o "vazio" que a cor preenche.
+        "TRACK": "#232C36",
+        "SHADOW": "0 1px 2px rgba(0,0,0,.28)",
+        "SHADOW_LIFT": "0 8px 24px rgba(0,0,0,.36)",
+        "GLOW": "0 6px 18px rgba(82,191,144,.22)",
+        # Tintas de alerta, calculadas: a cor semântica diluída no
+        # cartão, no ponto em que o texto do corpo ainda passa de 11:1 e
+        # a própria cor se destaca sobre a tinta.
+        "OK_SOFT": "#1E3231", "OK_LINE": "#2A5347",
+        "WARN_SOFT": "#302D22", "WARN_LINE": "#564622",
+        "ERR_SOFT": "#362327", "ERR_LINE": "#632D2F",
+        "INFO_SOFT": "#1E2B3C", "INFO_LINE": "#2A4260",
+        "SERIES": ["#3CA368", "#528ED9", "#BA7F14",
+                   "#A474C7", "#CF6963", "#00A4A4"],
     },
     "light": {
+        "SCHEME": "light",
         "BG": "#F7F9FC", "SURFACE": "#FFFFFF", "SURFACE_2": "#F1F5F9",
-        "BORDER": "#E2E8F0", "TEXT": "#0F172A", "TEXT_MUTED": "#475569",
+        "BORDER": "#E2E8F0", "BORDER_HOVER": "#CBD5E1",
+        "TEXT": "#0F172A", "TEXT_MUTED": "#475569",
         "TEXT_FAINT": "#64748B", "SIDEBAR": "#FFFFFF",
-        "PRIMARY": "#2C7A5B", "PRIMARY_HOVER": "#317256",
+        # O hover anterior (#317256) estava a 1,10:1 do próprio primário:
+        # mudança que não se vê é hover quebrado. Este está a 1,51:1.
+        "PRIMARY": "#2C7A5B", "PRIMARY_HOVER": "#1F5C43",
         "PRIMARY_SOFT": "#DCF2E7", "INCOME": "#2C7A5B",
         "INVESTMENT": "#0E7490", "EXPENSE": "#C62828", "WARNING": "#A16207",
+        # Um tom abaixo do azul da série: INFO também rotula texto, e o
+        # azul da série para em 3,99:1 sobre o branco — abaixo do piso.
+        "INFO": "#3C76C0",
         "NEUTRAL": "#64748B", "ON_PRIMARY": "#FFFFFF",
         "GRID": "rgba(15,23,42,0.06)", "AXIS": "rgba(15,23,42,0.12)",
+        "TRACK": "#E2E8F0",
+        "SHADOW": "0 1px 2px rgba(15,23,42,.04), 0 2px 8px rgba(15,23,42,.05)",
+        "SHADOW_LIFT": "0 2px 4px rgba(15,23,42,.05), "
+                       "0 12px 28px rgba(15,23,42,.10)",
+        "GLOW": "0 6px 18px rgba(44,122,91,.20)",
+        "OK_SOFT": "#ECF3F0", "OK_LINE": "#C4DAD1",
+        "WARN_SOFT": "#F7F1E9", "WARN_LINE": "#E5D3BA",
+        "ERR_SOFT": "#FAECEC", "ERR_LINE": "#EFC3C3",
+        "INFO_SOFT": "#EEF4FA", "INFO_LINE": "#CBDCF1",
+        # Os mesmos seis hues, escurecidos até todos darem ~3,6:1 sobre a
+        # superfície interna clara. A série do escuro fica entre 2,80 e
+        # 3,59:1 no claro — três abaixo do piso de 3:1 para objeto
+        # gráfico, e é isso que fazia o gráfico parecer desbotado. Aqui a
+        # amplitude é de 0,06, então nenhuma cor grita mais que a outra.
+        "SERIES": ["#309159", "#4581CC", "#AF7409",
+                   "#9D6CC1", "#C9605A", "#008F8F"],
     },
 }
 
