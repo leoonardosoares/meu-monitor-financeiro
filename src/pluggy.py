@@ -128,17 +128,18 @@ def _get(path: str, params: dict | None = None) -> dict:
     raise PluggyError(f"GET {path} devolveu HTTP {status}. Resposta: {texto}")
 
 
-def probe() -> list[dict]:
+def probe(item_ids: list[str] | None = None) -> list[dict]:
     """Bate em vários endpoints e relata o que cada um respondeu.
 
     Serve para descobrir, numa tentativa só, qual caminho esta conta
     aceita: a API tem variantes (`/items` e `/v2/items`) e nomes de
     parâmetro que mudaram entre versões, e cada combinação errada
     devolve o mesmo 400 opaco.
+
+    Recebe os ids por parâmetro, e não do estado da tela: o cliente não
+    deve depender do Streamlit para ser exercitado.
     """
-    ids = [i.strip() for i in
-           st.session_state.get("pluggy_items", "").split(",") if i.strip()]
-    um = ids[0] if ids else None
+    um = (item_ids or [None])[0]
     tentativas = [
         ("GET /connectors", "/connectors", {"pageSize": 1}),
         *([("GET /investments?itemId=…", "/investments", {"itemId": um}),
