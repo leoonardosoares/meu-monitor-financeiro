@@ -190,6 +190,78 @@ check("colunas", sorted(linha),
 check("valor sempre positivo", linha["Valor"] > 0, True)
 check("data em ISO", linha["Data"], "2026-09-30")
 
+
+# ---------------------------------------------------------------------------
+# O lançamento manual parcelado cria N linhas futuras de uma vez, todas
+# com a mesma data de compra e sem identificador. A importação traz cada
+# parcela no mês em que o banco a cobra. Convivendo, a mesma parcela
+# existe duas vezes — e como a data difere, o comparador de duplicatas
+# não as reconhece. É o que enche o app de faturas até 2028.
+# ---------------------------------------------------------------------------
+from src import credit_card as _cc  # noqa: E402
+
+print("  Parcelas projetadas à mão são reconhecidas")
+_manuais = _cc.installments_for_purchase(
+    purchase_date=date(2026, 8, 22), description="Compra antiga",
+    category="Outros", total_amount=2400.0, installments=24, closing_day=8)
+_df_manual = pd.DataFrame(
+    [dict(m, **{"Cartão": "Principal", "ID Pluggy": ""}) for m in _manuais])
+check("24 parcelas alcançam 2028",
+      (_df_manual["Mês da Fatura"].iloc[0],
+       _df_manual["Mês da Fatura"].iloc[-1]), ("09/2026", "08/2028"))
+
+_idx = rc.manual_future_rows(_df_manual, today=date(2026, 9, 30))
+check("as futuras são apontadas", len(_idx), 23)
+check("a do mês corrente fica",
+      sorted(set(_df_manual.drop(index=_idx)["Mês da Fatura"])), ["09/2026"])
+
+print("  O que veio do banco nunca é removido")
+_importadas = _df_manual.copy()
+_importadas["ID Pluggy"] = ["p" + str(i) for i in range(len(_importadas))]
+check("nenhuma linha com id é tocada",
+      len(rc.manual_future_rows(_importadas, today=date(2026, 9, 30))), 0)
+
+_misto = pd.concat([_df_manual, _importadas], ignore_index=True)
+check("na mistura, só as sem id saem",
+      len(rc.manual_future_rows(_misto, today=date(2026, 9, 30))), 23)
+
+print("  Passado e mês corrente ficam intactos")
+_passado = pd.DataFrame([
+    {"Cartão": "P", "Mês da Fatura": "01/2026", "ID Pluggy": "",
+     "Valor": 10.0},
+    {"Cartão": "P", "Mês da Fatura": "09/2026", "ID Pluggy": "",
+     "Valor": 10.0},
+])
+check("nada a remover",
+      len(rc.manual_future_rows(_passado, today=date(2026, 9, 30))), 0)
+check("planilha vazia",
+      len(rc.manual_future_rows(pd.DataFrame(), today=date(2026, 9, 30))), 0)
+
+print("  Sequência de parcelas com buraco é denunciada")
+_furado = pd.DataFrame([
+    {"Cartão": "P", "Descrição": "TV", "Parcela": "1/4",
+     "Mês da Fatura": "10/2026", "Valor": 100},
+    {"Cartão": "P", "Descrição": "TV", "Parcela": "2/4",
+     "Mês da Fatura": "11/2026", "Valor": 100},
+    {"Cartão": "P", "Descrição": "TV", "Parcela": "4/4",
+     "Mês da Fatura": "02/2027", "Valor": 100},
+])
+_falhas = rc.parcel_gaps(_furado)
+check("um parcelamento acusado", len(_falhas), 1)
+check("aponta a parcela e o mês esperado",
+      "parcela 4/4 em 02/2027, esperada em 12/2026" in
+      _falhas["Problema"].iloc[0], True)
+
+_certo = pd.DataFrame([
+    {"Cartão": "P", "Descrição": "TV", "Parcela": f"{i}/3",
+     "Mês da Fatura": f"{9 + i:02d}/2026", "Valor": 100}
+    for i in range(1, 4)])
+check("sequência correta não acusa", rc.parcel_gaps(_certo).empty, True)
+check("compra à vista não entra", rc.parcel_gaps(pd.DataFrame([
+    {"Cartão": "P", "Descrição": "x", "Parcela": "1/1",
+     "Mês da Fatura": "10/2026", "Valor": 1}])).empty, True)
+check("planilha vazia", rc.parcel_gaps(pd.DataFrame()).empty, True)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

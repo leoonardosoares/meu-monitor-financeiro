@@ -21,7 +21,7 @@ from src import components, credit_card as cc, pluggy, repository
 from src import pluggy_import as pi
 from src.config import ConfigKeys
 from src.finance import suggest_category
-from src.format import brl
+from src.format import brl, md
 
 
 def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
@@ -290,6 +290,30 @@ def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
             f"✅ {quantas} parcela(s) de faturas já fechadas e vencidas "
             "foram marcadas como pagas — o banco não as cobra mais."
         )
+    _baixar_pelo_extrato()
+
+
+def _baixar_pelo_extrato() -> None:
+    """Dá baixa na fatura que tem pagamento correspondente na conta.
+
+    Cobre o cartão que não publica fatura — ali a regra do vencimento
+    não se aplica, mas o pagamento está no extrato da conta corrente e
+    diz a mesma coisa.
+    """
+    df_tx = repository.load_credit_card()
+    df_mov = repository.load_transactions()
+    agendadas, _ = cc.schedule_invoices(
+        df_tx, repository.load_card_payments(), repository.load_cards(),
+        today=date.today())
+    novo, quitadas = cc.match_payments(df_tx, df_mov, agendadas)
+    if not quitadas:
+        return
+    repository.save_credit_card(novo)
+    st.success(md(
+        f"✅ {len(quitadas)} fatura(s) quitada(s) pelo pagamento "
+        "encontrado no extrato: "
+        + " · ".join(f"{c} {m} ({brl(v)})" for c, m, v in quitadas)
+    ))
 
 
 def _aprender_datas(ativas, destinos, transacoes, faturas,

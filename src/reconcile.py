@@ -20,6 +20,7 @@ from datetime import date
 import pandas as pd
 
 from src.config import CATEGORIA_AJUSTE, CATEGORIA_INVESTIMENTO
+from src.dates import parse_month_label
 
 # Uma compra é a mesma compra quando coincide em tudo que a descreve.
 # Data e parcela entram na chave para não fundir a parcela 2/6 com a
@@ -171,3 +172,103 @@ def adjustments(*, saldo_real: float, saldo_planilha: float,
         out.append(ajuste_conta)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# Parcelas projetadas à mão
+# ---------------------------------------------------------------------------
+#
+# O lançamento manual de uma compra parcelada cria, de uma vez, uma linha
+# por parcela nos meses seguintes — todas com a mesma data de compra e
+# sem identificador. A importação não faz isso: cada parcela chega como
+# uma transação própria, no mês em que o banco a cobra.
+#
+# Convivendo, as duas projetam a mesma parcela: a linha inventada e a
+# que o banco mandou. E como a data de compra difere, o comparador de
+# duplicatas não as reconhece.
+
+
+def manual_future_rows(df: pd.DataFrame, *, today: date) -> pd.Index:
+    """Linhas de cartão sem origem no banco, em meses ainda por vir.
+
+    São as parcelas projetadas pelo lançamento manual. Removê-las deixa
+    o futuro com o que o banco de fato vai cobrar — e só o que ele vai
+    cobrar.
+
+    O mês corrente fica de fora: a fatura atual ainda é cobrada, e
+    apagar dela uma compra digitada tiraria gasto real.
+    """
+    if df.empty or "Mês da Fatura" not in df.columns:
+        return pd.Index([])
+
+    corte = pd.Timestamp(today).normalize().replace(day=1) + \
+        pd.DateOffset(months=1)
+    if COLUNA_ID in df.columns:
+        sem_id = df[COLUNA_ID].fillna("").astype(str).str.strip() == ""
+    else:
+        sem_id = pd.Series(True, index=df.index)
+
+    meses = df["Mês da Fatura"].map(parse_month_label)
+    futura = meses.map(lambda m: m is not None and m >= corte)
+    return df.index[sem_id & futura]
+
+
+def parcel_gaps(df: pd.DataFrame) -> pd.DataFrame:
+    """Parcelamentos cujos meses não formam uma sequência.
+
+    A parcela 4/10 tem de cair um mês depois da 3/10. Um buraco ou uma
+    repetição aponta linha faltando ou linha inventada — e é o tipo de
+    erro que o total esconde, porque a soma continua parecendo
+    plausível.
+    """
+    vazio = pd.DataFrame(columns=["Cartão", "Descrição", "Parcelas",
+                                  "Meses", "Problema"])
+    precisa = {"Cartão", "Descrição", "Parcela", "Mês da Fatura"}
+    if df.empty or not precisa.issubset(df.columns):
+        return vazio
+
+    base = df.copy()
+    base["_n"] = base["Parcela"].map(_indice_parcela)
+    base["_total"] = base["Parcela"].map(_total_parcelas)
+    base = base[(base["_total"] > 1) & base["_n"].notna()]
+    if base.empty:
+        return vazio
+    base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
+    base = base[base["_mes"].notna()]
+
+    problemas = []
+    for (cartao, desc, total), grupo in base.groupby(
+            ["Cartão", "Descrição", "_total"], dropna=False):
+        grupo = grupo.sort_values("_n")
+        esperado = None
+        falha = None
+        for _, linha in grupo.iterrows():
+            mes = linha["_mes"]
+            if esperado is None:
+                esperado = mes
+            elif mes != esperado:
+                falha = (f"parcela {int(linha['_n'])}/{int(total)} em "
+                         f"{mes:%m/%Y}, esperada em {esperado:%m/%Y}")
+                break
+            esperado = esperado + pd.DateOffset(months=1)
+        if falha:
+            problemas.append({
+                "Cartão": cartao, "Descrição": desc,
+                "Parcelas": int(total), "Meses": len(grupo),
+                "Problema": falha,
+            })
+    return pd.DataFrame(problemas) if problemas else vazio
+
+
+def _indice_parcela(valor) -> float:
+    try:
+        return float(str(valor).split("/")[0].strip())
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+def _total_parcelas(valor) -> int:
+    try:
+        return int(str(valor).split("/")[1].strip())
+    except (TypeError, ValueError, IndexError):
+        return 0
