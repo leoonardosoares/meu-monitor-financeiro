@@ -463,6 +463,39 @@ check("cartão sem fatura publicada fica intacto",
 check("rodar duas vezes não muda nada",
       cc.settle_closed_bills(_tx_pago, _venc, today=date(2026, 9, 30))[1], 0)
 
+# O cartão que não publica fatura não é alcançado pela regra do
+# vencimento — mas o pagamento está no extrato da conta e diz o mesmo.
+section("Fatura com pagamento no extrato conta como paga")
+_ag_p, _ = cc.schedule_invoices(TX, PAY, CARDS, today=date(2026, 9, 30))
+_extrato = pd.DataFrame([{
+    "Data": "2026-09-07", "Descrição": "Pagamento de fatura",
+    "Categoria": "Cartão de Crédito", "Valor": 266.67, "Tipo": "Saída"}])
+_tx_q, _quitadas = cc.match_payments(TX, _extrato, _ag_p)
+check("casou com a fatura vencida", [(c, m) for c, m, _ in _quitadas],
+      [("Cartão Itaú", "08/2026")])
+check("e ela sai das vencidas",
+      cc.overdue_invoices(cc.schedule_invoices(
+          _tx_q, PAY, CARDS, today=date(2026, 9, 30))[0]), [])
+
+# Um pagamento parcial não quitou nada — dizer que quitou esconderia
+# dívida real.
+check("pagamento parcial não quita",
+      cc.match_payments(TX, _extrato.assign(Valor=100.0), _ag_p)[1], [])
+check("pagamento longe do vencimento não casa",
+      cc.match_payments(TX, _extrato.assign(Data="2026-08-01"), _ag_p)[1], [])
+check("saída de outra categoria não casa",
+      cc.match_payments(TX, _extrato.assign(Categoria="Lazer"), _ag_p)[1], [])
+check("entrada de mesmo valor não casa",
+      cc.match_payments(TX, _extrato.assign(Tipo="Entrada"), _ag_p)[1], [])
+
+# Um débito não pode baixar duas faturas de mesmo valor.
+check("cada pagamento serve a uma fatura só",
+      len(cc.match_payments(
+          TX, _extrato,
+          [i for i in _ag_p if i.card == "Cartão Itaú"][:2])[1]), 1)
+check("extrato vazio", cc.match_payments(TX, pd.DataFrame(), _ag_p)[1], [])
+
+
 section("Faturas classificadas como o banco classifica")
 _hoje = date(2026, 9, 30)
 _ag2, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)

@@ -653,6 +653,72 @@ def settle_closed_bills(df_credit_card: pd.DataFrame,
     return df, int(alvo.sum())
 
 
+def match_payments(df_credit_card: pd.DataFrame,
+                   df_transactions: pd.DataFrame,
+                   scheduled: list[ScheduledInvoice], *,
+                   janela_dias: int = 7,
+                   ) -> tuple[pd.DataFrame, list[tuple[str, str, float]]]:
+    """Dá baixa na fatura que tem um pagamento correspondente no extrato.
+
+    O pagamento sai da conta com categoria "Cartão de Crédito"; a
+    fatura fica no extrato do cartão. Nada ligava os dois, então uma
+    fatura paga em dia seguia constando como vencida — e entrava na
+    projeção como dinheiro ainda a sair.
+
+    O casamento exige valor igual e data perto do vencimento. Só isso:
+    um pagamento parcial não quita, porque não quitou mesmo, e cada
+    pagamento serve a uma fatura só, para um débito não baixar duas.
+
+    Devolve (compras atualizadas, [(cartão, mês, valor) quitados]).
+    """
+    if df_credit_card.empty or df_transactions.empty or not scheduled:
+        return df_credit_card, []
+    if not {"Categoria", "Valor", "Tipo"}.issubset(df_transactions.columns):
+        return df_credit_card, []
+
+    pagamentos = df_transactions[
+        (df_transactions["Tipo"].astype(str).str.strip() == "Saída")
+        & (df_transactions["Categoria"].astype(str).str.strip()
+           == "Cartão de Crédito")
+    ].copy()
+    if pagamentos.empty:
+        return df_credit_card, []
+    pagamentos["_valor"] = pd.to_numeric(
+        pagamentos["Valor"], errors="coerce").fillna(0)
+    pagamentos["_dt"] = parse_dates(pagamentos["Data"])
+    pagamentos = pagamentos[pagamentos["_dt"].notna()]
+
+    usados: set = set()
+    quitadas: list[tuple[str, str, float]] = []
+    for fatura in sorted(scheduled, key=lambda i: i.due):
+        if fatura.balance <= 1e-6:
+            continue
+        for idx, pg in pagamentos.iterrows():
+            if idx in usados:
+                continue
+            if abs(float(pg["_valor"]) - fatura.balance) > 0.05:
+                continue
+            dias = (pg["_dt"].normalize()
+                    - pd.Timestamp(fatura.due).normalize()).days
+            if abs(dias) > janela_dias:
+                continue
+            usados.add(idx)
+            quitadas.append((fatura.card, fatura.month, fatura.balance))
+            break
+
+    if not quitadas:
+        return df_credit_card, []
+
+    df = df_credit_card.copy()
+    chaves = {(c, m) for c, m, _ in quitadas}
+    alvo = pd.Series(
+        [(c, m) in chaves for c, m in
+         zip(_card_series(df), _month_series(df))], index=df.index,
+    ) & ~_is_settled(df)
+    df.loc[alvo, "Status"] = "Pago"
+    return df, quitadas
+
+
 def situations(scheduled: list[ScheduledInvoice],
                hoje: date) -> dict[tuple[str, str], str]:
     """Como o banco chamaria cada fatura, por cartão.
