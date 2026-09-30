@@ -28,18 +28,28 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
            df_cards: pd.DataFrame,
            df_card_payments: pd.DataFrame,
            selected_month: str) -> None:
-    period_label = (f"({selected_month})" if selected_month != ALL_MONTHS
-                    else "(todo o período)")
+    """O Dashboard em quatro abas, da pergunta mais imediata à mais ampla.
+
+    Eram nove seções numa coluna só, separadas por divisores idênticos:
+    posição real, insights, ritmo, quatro KPIs, quatro indicadores de
+    saúde, barras do ano, projeção, orçamento, aportes e despesas por
+    categoria. Dezessete cartões de número na mesma tela não formam um
+    painel — formam uma parede, e nada nela indica onde começar.
+
+    As abas separam por horizonte: **Agora** é o que existe neste
+    instante, lido do banco; **Mês** é o desempenho do período filtrado;
+    **Próximo mês** é a projeção; **Histórico** é a série longa.
+    """
+    period_label = (selected_month if selected_month != ALL_MONTHS
+                    else "todo o período")
     components.page_header(
-        f"Resumo {period_label}",
-        "Visão consolidada do mês, comparação com o mês anterior e "
-        "projeção do próximo período.",
+        "Resumo",
+        f"Período em análise: {period_label}. A aba **Próximo mês** "
+        "sempre olha para frente, independente do filtro.",
     )
 
-    # ── Posição real, direto dos bancos ───────────────────────────────────
-    _real_position_section(df_transactions)
-
-    # ── Insights automáticos ────────────────────────────────────────────────
+    # Os insights ficam acima das abas: são avisos, e um aviso escondido
+    # numa aba que não se abriu não é aviso.
     auto_insights = insights.generate(
         df_transactions=df_transactions,
         df_credit_card=df_credit_card,
@@ -48,69 +58,72 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
     )
     if auto_insights:
         components.insight_chips(auto_insights)
+
+    aba_agora, aba_mes, aba_proximo, aba_hist = st.tabs(
+        ["💰 Agora", "📊 O mês", "🔭 Próximo mês", "📈 Histórico"])
+
+    with aba_agora:
+        _real_position_section(df_transactions)
+
+    with aba_mes:
+        _spending_velocity_section(df_transactions_period, df_budgets)
+        components.section(
+            "Receitas, despesas e patrimônio",
+            f"Números de {period_label}, com a variação sobre o mês "
+            "anterior quando há um mês selecionado.",
+            eyebrow="Desempenho do período",
+        )
+        _kpi_section(df_transactions, df_transactions_period, selected_month)
         st.write("")
+        components.section(
+            "Saúde financeira",
+            "Quanto você guarda, quanto tempo a reserva cobre e quanto da "
+            "renda já está comprometida.",
+        )
+        _health_section(df_transactions, df_transactions_period)
 
-    # ── Velocidade de gasto (só se o mês corrente está selecionado) ────────
-    _spending_velocity_section(df_transactions_period, df_budgets)
+        st.write("")
+        components.section(
+            "Status do orçamento",
+            f"Quanto cada categoria consumiu do limite definido em "
+            f"Configurações ({period_label}). A linha tracejada marca "
+            "os 100%.",
+        )
+        components.budget_overview(budget_status(
+            df_budgets, df_transactions_period, df_credit_card_period))
 
-    # ── KPIs principais com delta MoM ──────────────────────────────────────
-    _kpi_section(df_transactions, df_transactions_period, selected_month)
+        st.write("")
+        components.section(
+            "Despesas por categoria",
+            "Soma das saídas do banco com as compras do cartão.")
+        components.horizontal_bar_expenses(expenses_by_category(
+            df_transactions_period, df_credit_card_period))
 
-    # ── Indicadores de saúde financeira ────────────────────────────────────
-    _health_section(df_transactions, df_transactions_period)
+    with aba_proximo:
+        _projection_section(
+            df_credit_card=df_credit_card,
+            df_card_payments=df_card_payments,
+            df_cards=df_cards,
+            df_fixed_costs=df_fixed_costs,
+            df_transactions=df_transactions,
+            selected_month=selected_month,
+        )
 
-    st.divider()
+    with aba_hist:
+        components.section(
+            "Receitas e despesas mês a mês",
+            "Últimos 12 meses. Barras lado a lado para comparar o que "
+            "entrou com o que saiu.",
+            eyebrow="Histórico",
+        )
+        components.annual_bars(monthly_summary(df_transactions, months=12))
 
-    # ── Visão anual: últimos 12 meses ──────────────────────────────────────
-    st.subheader("Visão anual (últimos 12 meses)")
-    df_annual = monthly_summary(df_transactions, months=12)
-    components.annual_bars(df_annual)
-
-    st.divider()
-
-    # ── Projeção próximo mês ───────────────────────────────────────────────
-    _projection_section(
-        df_credit_card=df_credit_card,
-        df_card_payments=df_card_payments,
-        df_cards=df_cards,
-        df_fixed_costs=df_fixed_costs,
-        df_transactions=df_transactions,
-        selected_month=selected_month,
-    )
-
-    st.divider()
-
-    # ── Status do orçamento por categoria ──────────────────────────────────
-    st.subheader("Status do orçamento")
-    period_label = (
-        selected_month if selected_month != ALL_MONTHS else "todo o período"
-    )
-    st.caption(
-        f"Quanto cada categoria já consumiu do limite definido em "
-        f"Configurações ({period_label}). A linha tracejada marca os 100%."
-    )
-    df_budget_status = budget_status(
-        df_budgets, df_transactions_period, df_credit_card_period,
-    )
-    components.budget_overview(df_budget_status)
-
-    st.divider()
-
-    # ── Aportes mensais em investimento (12 meses) ─────────────────────────
-    st.subheader("Aportes em investimento")
-    st.caption(
-        "Quanto entrou na sua conta de investimento por mês nos últimos 12 meses."
-    )
-    df_contrib = monthly_investment_contributions(df_transactions, months=12)
-    components.monthly_contributions_bars(df_contrib)
-
-    st.divider()
-
-    # ── Despesas por categoria (banco + cartão) ────────────────────────────
-    st.subheader("Despesas por categoria")
-    st.caption("Soma das saídas do banco com o cartão, agrupadas por categoria.")
-    df_total = expenses_by_category(df_transactions_period, df_credit_card_period)
-    components.horizontal_bar_expenses(df_total)
+        st.write("")
+        components.section(
+            "Aportes em investimento",
+            "Quanto entrou na sua conta de investimento por mês.")
+        components.monthly_contributions_bars(
+            monthly_investment_contributions(df_transactions, months=12))
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +146,13 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
     guardada = positions.from_rows(repository.load_positions())
 
     cabecalho, botao = st.columns([4, 1])
-    cabecalho.subheader("Onde seu dinheiro está agora")
+    with cabecalho:
+        components.section(
+            "Onde seu dinheiro está agora",
+            "Lido direto das instituições. Estes são os valores do banco, "
+            "não uma soma de lançamentos.",
+            eyebrow="Posição real",
+        )
     if botao.button("🔄 Atualizar", use_container_width=True):
         nova = positions.fetch(ids)
         for erro in nova.erros:
@@ -149,10 +168,7 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
         )
         return
 
-    st.caption(
-        f"Lido das instituições em {_quando(guardada.quando)}. "
-        "Estes são os valores do banco, não uma soma de lançamentos."
-    )
+    st.caption(f"Última leitura: {_quando(guardada.quando)}.")
 
     esq, dir_ = st.columns(2)
     with esq:
@@ -224,7 +240,9 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
     historico = positions.history(repository.load_positions())
     if len(historico) > 1:
         st.write("")
-        st.markdown("###### Evolução do patrimônio")
+        components.section(
+            "Evolução do patrimônio",
+            "Um ponto por dia em que a posição foi lida.")
         components.area_trend(historico, x="Data", y="Patrimônio")
 
 
@@ -425,8 +443,6 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     se faz olhando o mês seguinte; "quanto sobra do salário" responde
     outra coisa e some com o que já está na conta.
     """
-    st.subheader("Visão do próximo mês")
-
     hoje = date.today()
     alvo, veio_do_filtro = projection_target(selected_month, today=hoje)
 
@@ -443,23 +459,49 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
         df_fixed_costs, {i.card for i in a_pagar})
     sobra = saldo_hoje + receita - fixos - faturas
 
-    if veio_do_filtro:
-        st.caption(f"Projeção até o fim de **{alvo}**, o mês do filtro.")
-    else:
-        st.caption(
-            f"Projeção até o fim de **{alvo}**. Esta seção não segue o "
-            "filtro da sidebar — ela sempre olha para frente."
-        )
+    components.section(
+        f"Com quanto você fica ao fim de {alvo}",
+        ("O mês do filtro." if veio_do_filtro else
+         "Esta aba não segue o filtro da sidebar — ela sempre olha para "
+         "frente."),
+        eyebrow="Projeção",
+    )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Saldo hoje (+)", brl(saldo_hoje),
-              delta="no banco", delta_color="off")
-    c2.metric("Receita prevista (+)", brl(receita))
-    c3.metric("Custos fixos (−)", brl(fixos))
-    c4.metric("Faturas a pagar (−)", brl(faturas),
-              delta=f"{len(a_pagar)} fatura(s)", delta_color="off")
-    c5.metric("Sobra ao fim de " + alvo, brl(sobra),
-              delta_color="normal" if sobra >= 0 else "inverse")
+    # O resultado primeiro, num cartão; a conta que leva a ele nas linhas
+    # abaixo. Eram cinco métricas do mesmo tamanho em fila, e a última —
+    # a única que responde a pergunta — não se distinguia das quatro que
+    # são só parcelas dela.
+    esq, dir_ = st.columns([1, 1])
+    with esq:
+        components.stat_card(
+            label=f"Sobra ao fim de {alvo}", value=sobra,
+            rows=[
+                {"nome": "Saldo hoje no banco", "valor": brl(saldo_hoje),
+                 "bruto": saldo_hoje},
+                {"nome": "Receita prevista", "valor": f"+ {brl(receita)}",
+                 "bruto": receita},
+                {"nome": "Custos fixos", "valor": f"− {brl(fixos)}",
+                 "divida": True},
+                {"nome": "Faturas a pagar", "valor": f"− {brl(faturas)}",
+                 "sub": f"{len(a_pagar)} fatura(s) até o fim de {alvo}",
+                 "divida": True},
+            ],
+        )
+    with dir_:
+        entra = saldo_hoje + receita
+        sai = fixos + faturas
+        components.stat_card(
+            label="Quanto sai até lá", value=sai, divida=True,
+            bar=(sai / entra) if entra > 0 else None,
+            bar_label=(f"{sai / entra * 100:.0f}% do que você tem e espera "
+                       f"receber" if entra > 0 else ""),
+            rows=[
+                {"nome": "Faturas de cartão", "valor": brl(faturas),
+                 "divida": True},
+                {"nome": "Custos fixos", "valor": brl(fixos),
+                 "divida": True},
+            ],
+        )
 
     if posicao.vazia:
         st.info(md(

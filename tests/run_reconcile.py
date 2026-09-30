@@ -221,9 +221,29 @@ _importadas["ID Pluggy"] = ["p" + str(i) for i in range(len(_importadas))]
 check("nenhuma linha com id é tocada",
       len(rc.manual_future_rows(_importadas, today=date(2026, 9, 30))), 0)
 
+# Se o banco confirmou aquele parcelamento, o grupo inteiro fica — mesmo
+# as linhas sem id. Uma parcela que veio do banco é prova de que a compra
+# realmente foi parcelada; apagar as irmãs sem identificador tiraria da
+# fatura uma cobrança que vai chegar. O que sobra de repetido é trabalho
+# do comparador de duplicatas, que sabe qual das duas linhas é a do banco.
 _misto = pd.concat([_df_manual, _importadas], ignore_index=True)
-check("na mistura, só as sem id saem",
-      len(rc.manual_future_rows(_misto, today=date(2026, 9, 30))), 23)
+check("grupo confirmado pelo banco fica inteiro",
+      len(rc.manual_future_rows(_misto, today=date(2026, 9, 30))), 0)
+
+# Só o grupo confirmado é poupado: outra compra, projetada à mão, continua
+# sendo removida na mesma planilha.
+_outra = _cc.installments_for_purchase(
+    purchase_date=date(2026, 8, 22), description="Outra compra",
+    category="Outros", total_amount=1200.0, installments=12, closing_day=8)
+_dois_grupos = pd.concat(
+    [_importadas,
+     pd.DataFrame([dict(m, **{"Cartão": "Principal", "ID Pluggy": ""})
+                   for m in _outra])],
+    ignore_index=True)
+_idx_dois = rc.manual_future_rows(_dois_grupos, today=date(2026, 9, 30))
+check("a projeção sem respaldo sai", len(_idx_dois), 11)
+check("e só ela", sorted(set(_dois_grupos.loc[_idx_dois, "Descrição"])),
+      ["Outra compra"])
 
 print("  Passado e mês corrente ficam intactos")
 _passado = pd.DataFrame([
@@ -261,6 +281,149 @@ check("compra à vista não entra", rc.parcel_gaps(pd.DataFrame([
     {"Cartão": "P", "Descrição": "x", "Parcela": "1/1",
      "Mês da Fatura": "10/2026", "Valor": 1}])).empty, True)
 check("planilha vazia", rc.parcel_gaps(pd.DataFrame()).empty, True)
+
+# O banco só entrega o que já cobrou. Uma compra em 10x tem as parcelas
+# seguintes contratadas e invisíveis — e sem elas a projeção do próximo
+# ano fica vazia justamente onde existe compromisso.
+print("  Parcelas contratadas que o banco ainda não lançou")
+_serie = pd.DataFrame([
+    {"Cartão": "Principal", "Descrição": "Mercadolivre", "Parcela": "4/10",
+     "Mês da Fatura": "11/2026", "Valor": 235.29,
+     "Data Compra": "2026-10-31", "Categoria": "Compras",
+     "ID Pluggy": "a"},
+    {"Cartão": "Principal", "Descrição": "Mercadolivre", "Parcela": "5/10",
+     "Mês da Fatura": "12/2026", "Valor": 235.29,
+     "Data Compra": "2026-11-30", "Categoria": "Compras",
+     "ID Pluggy": "b"},
+])
+_novas = rc.project_installments(_serie, today=date(2026, 9, 30))
+check("completa a série", len(_novas), 5)
+check("meses consecutivos", [n["Mês da Fatura"] for n in _novas],
+      ["01/2027", "02/2027", "03/2027", "04/2027", "05/2027"])
+check("numeração continua", [n["Parcela"] for n in _novas],
+      ["6/10", "7/10", "8/10", "9/10", "10/10"])
+check("mesmo valor", {n["Valor"] for n in _novas}, {235.29})
+check("marcadas como projeção", {n["Origem"] for n in _novas},
+      {rc.ORIGEM_PROJECAO})
+check("sem id do banco", {n["ID Pluggy"] for n in _novas}, {""})
+
+print("  Série completa não gera nada")
+_fim = pd.DataFrame([
+    {"Cartão": "P", "Descrição": "KaBuM", "Parcela": f"{i}/3",
+     "Mês da Fatura": f"{9 + i:02d}/2026", "Valor": 490.95,
+     "Data Compra": "2026-10-09", "Categoria": "x", "ID Pluggy": "c"}
+    for i in range(1, 4)])
+check("nada a projetar", rc.project_installments(_fim,
+                                                 today=date(2026, 9, 30)), [])
+check("compra à vista não projeta",
+      rc.project_installments(pd.DataFrame([
+          {"Cartão": "P", "Descrição": "x", "Parcela": "1/1",
+           "Mês da Fatura": "10/2026", "Valor": 10.0,
+           "Data Compra": "2026-09-20", "Categoria": "x",
+           "ID Pluggy": "z"}]), today=date(2026, 9, 30)), [])
+check("planilha vazia",
+      rc.project_installments(pd.DataFrame(), today=date(2026, 9, 30)), [])
+
+print("  Não se projeta o passado")
+_antiga = pd.DataFrame([
+    {"Cartão": "P", "Descrição": "Velha", "Parcela": "1/5",
+     "Mês da Fatura": "01/2026", "Valor": 100.0,
+     "Data Compra": "2025-12-20", "Categoria": "x", "ID Pluggy": "v"}])
+_proj = rc.project_installments(_antiga, today=date(2026, 9, 30))
+check("só as que ainda vão ser cobradas",
+      [n["Mês da Fatura"] for n in _proj], [])
+
+print("  Rodar de novo não duplica")
+_com = pd.concat([_serie, pd.DataFrame(_novas)], ignore_index=True)
+check("série completa depois de incluir",
+      rc.project_installments(_com, today=date(2026, 9, 30)), [])
+
+
+
+# ---------------------------------------------------------------------------
+# Projeção substituída pela cobrança real
+# ---------------------------------------------------------------------------
+#
+# A parcela projetada é palpite sobre cobrança que ainda não chegou.
+# Quando ela chega, a projeção tem de sair — e o comparador de duplicatas
+# não dá conta: ele exige seis campos iguais, e a última parcela costuma
+# vir com alguns centavos de diferença por arredondamento.
+print("  Projeção sai quando o banco cobra de verdade")
+from src.config import ORIGEM_BANCO, ORIGEM_PROJECAO  # noqa: E402
+
+
+def _linha(parcela, mes, valor, ident, origem, desc="Notebook"):
+    return {"Data Compra": "2026-06-22", "Mês da Fatura": mes,
+            "Cartão": "Nubank", "Descrição": desc, "Categoria": "Outros",
+            "Parcela": parcela, "Valor": valor, "Status": "Pendente",
+            "ID Pluggy": ident, "Origem": origem}
+
+
+_proj = pd.DataFrame([
+    _linha("4/10", "10/2026", 235.29, "b4", ORIGEM_BANCO),
+    _linha("5/10", "11/2026", 235.29, "b5", ORIGEM_BANCO),
+    _linha("5/10", "11/2026", 235.29, "", ORIGEM_PROJECAO),
+    _linha("6/10", "12/2026", 235.29, "", ORIGEM_PROJECAO),
+])
+_fora = rc.supersede_projections(_proj)
+check("só a projeção com substituta sai", len(_fora), 1)
+check("e é a projetada, não a do banco",
+      (_proj.loc[_fora[0], "Origem"], _proj.loc[_fora[0], "Parcela"]),
+      (ORIGEM_PROJECAO, "5/10"))
+
+# O caso que o comparador de duplicatas perde: mesma parcela, centavos
+# diferentes. Sem isto a fatura conta a parcela duas vezes.
+_centavos = pd.DataFrame([
+    _linha("10/10", "04/2027", 235.34, "b10", ORIGEM_BANCO),
+    _linha("10/10", "04/2027", 235.29, "", ORIGEM_PROJECAO),
+])
+check("duplicata não pega a diferença de centavos",
+      len(rc.duplicates(_centavos, rc.CHAVES_CARTAO)), 0)
+check("mas a substituição pega",
+      len(rc.supersede_projections(_centavos)), 1)
+_limpo = _centavos.drop(index=rc.supersede_projections(_centavos))
+check("e a fatura fica com o valor do banco",
+      round(float(_limpo["Valor"].sum()), 2), 235.34)
+
+# Mês da fatura diferente também não impede: se o banco cobrou aquela
+# parcela, a projeção dela está obsoleta onde quer que tenha caído.
+_mes_errado = pd.DataFrame([
+    _linha("7/10", "01/2027", 235.29, "b7", ORIGEM_BANCO),
+    _linha("7/10", "12/2026", 235.29, "", ORIGEM_PROJECAO),
+])
+check("mês diferente não salva a projeção",
+      len(rc.supersede_projections(_mes_errado)), 1)
+
+print("  O que não é projeção nunca sai")
+_manual = pd.DataFrame([
+    _linha("5/10", "11/2026", 235.29, "b5", ORIGEM_BANCO),
+    _linha("5/10", "11/2026", 235.29, "", "manual"),
+])
+check("linha manual fica", len(rc.supersede_projections(_manual)), 0)
+
+_so_proj = pd.DataFrame([
+    _linha("6/10", "12/2026", 235.29, "", ORIGEM_PROJECAO),
+    _linha("7/10", "01/2027", 235.29, "", ORIGEM_PROJECAO),
+])
+check("sem cobrança do banco, nada sai",
+      len(rc.supersede_projections(_so_proj)), 0)
+
+check("outra compra não interfere",
+      len(rc.supersede_projections(pd.DataFrame([
+          _linha("5/10", "11/2026", 235.29, "b5", ORIGEM_BANCO),
+          _linha("5/10", "11/2026", 99.0, "", ORIGEM_PROJECAO, desc="Geladeira"),
+      ]))), 0)
+
+check("planilha vazia", len(rc.supersede_projections(pd.DataFrame())), 0)
+check("planilha sem a coluna Origem",
+      len(rc.supersede_projections(
+          pd.DataFrame([{"Cartão": "N", "Descrição": "x", "Parcela": "1/2"}]))),
+      0)
+
+# Rodar duas vezes não pode remover a mais: depois da primeira, não há
+# projeção com substituta.
+_uma_vez = _proj.drop(index=rc.supersede_projections(_proj))
+check("idempotente", len(rc.supersede_projections(_uma_vez)), 0)
 
 print()
 for _linha in _fail:

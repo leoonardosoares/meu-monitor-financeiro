@@ -57,7 +57,7 @@ def _conciliar_tab() -> None:
     repetida esconde o defeito: o total fica certo e a fatura continua
     mostrando a mesma compra duas vezes.
     """
-    st.subheader("Conciliar com o banco")
+    components.section("Conciliar com o banco")
 
     guardada = positions.from_rows(repository.load_positions())
     if guardada.vazia:
@@ -132,7 +132,7 @@ def _reset_tab(_df_period) -> None:
     escrita e mostra a contagem antes — um clique acidental aqui custa
     caro, e desfazer depende de o usuário achar a aba de arquivo.
     """
-    st.subheader("Recomeçar do zero")
+    components.section("Recomeçar do zero")
     st.caption(
         "Apaga os lançamentos e as compras de cartão, e deixa o Open "
         "Finance reconstruir a partir do dia 1 deste mês. Serve para o "
@@ -216,7 +216,7 @@ def _open_finance_tab() -> None:
     que se descobre se as conexões feitas no Meu Pluggy estão visíveis
     para esta aplicação.
     """
-    st.subheader("Conexão com os bancos (Open Finance)")
+    components.section("Conexão com os bancos (Open Finance)")
 
     if not pluggy.is_configured():
         st.info(
@@ -449,8 +449,9 @@ def _fetch_items(salvos: str) -> tuple[list[dict], list[str]]:
 
 
 def _categories_tab(df_categories: pd.DataFrame) -> None:
-    st.subheader("Minhas categorias")
-    st.caption("Adicione, edite ou apague categorias e clique em salvar.")
+    components.section(
+        "Minhas categorias",
+        "Adicione, edite ou apague categorias e clique em salvar.")
     with st.form("edit_categories"):
         edited = st.data_editor(
             df_categories, num_rows="dynamic", use_container_width=True,
@@ -467,8 +468,9 @@ def _budgets_tab(*, df_budgets: pd.DataFrame,
                  df_transactions_period: pd.DataFrame,
                  df_credit_card_period: pd.DataFrame,
                  selected_month: str) -> None:
-    st.subheader("Teto de gastos por categoria")
-    st.caption("Defina um limite mensal. Use `0` para categorias sem limite.")
+    components.section(
+        "Teto de gastos por categoria",
+        "Defina um limite mensal. Zero significa categoria sem limite.")
 
     left, right = st.columns([1, 1.5])
 
@@ -488,7 +490,7 @@ def _budgets_tab(*, df_budgets: pd.DataFrame,
         if selected_month == ALL_MONTHS:
             st.info("Selecione um mês na sidebar para ver o progresso do orçamento.")
             return
-        st.subheader(f"Progresso em {selected_month}")
+        components.section(f"Progresso em {selected_month}")
         _render_budget_progress(
             df_budgets=df_budgets,
             df_transactions_period=df_transactions_period,
@@ -593,7 +595,7 @@ def _render_category_transactions(*, category: str,
 
 def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,
                       categories: list[str]) -> None:
-    st.subheader("Receita base mensal")
+    components.section("Receita base mensal")
     current = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
     new_income = st.number_input(
         "Salário / receita fixa esperada (R$):",
@@ -604,8 +606,7 @@ def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,
         st.success("Receita prevista atualizada.")
         st.rerun()
 
-    st.divider()
-    st.subheader("Custos fixos mensais")
+    components.section("Custos fixos mensais")
     st.caption(
         "Cadastre suas despesas recorrentes. Depois use o botão "
         "**Gerar lançamentos do mês** para criar todas as transações de uma vez."
@@ -642,7 +643,7 @@ def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,
 
 
 def _generate_fixed_costs_section(df_fixed_costs: pd.DataFrame) -> None:
-    st.subheader("Gerar lançamentos automáticos do mês")
+    components.section("Gerar lançamentos automáticos do mês")
     st.caption(
         "Cria uma transação de Saída em cada custo fixo cadastrado. "
         "Útil pra automatizar aluguel, condomínio, assinaturas, etc."

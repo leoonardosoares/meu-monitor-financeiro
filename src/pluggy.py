@@ -241,9 +241,9 @@ def connect_token() -> str:
 
 
 # O widget roda num iframe próprio e não enxerga as variáveis CSS do
-# app, então as cores vão literais — as duas saíram da paleta validada.
-COR_ERRO = Colors.SERIES[4]
-COR_OK = Colors.SERIES[0]
+# app, então as cores vão literais. Ficam resolvidas dentro de
+# `connect_widget_html`, e não aqui: lidas no import, congelariam a
+# paleta do tema que estava ativo quando o módulo carregou.
 
 CONNECT_SDK = "https://cdn.jsdelivr.net/npm/pluggy-connect-sdk@2.14.2/+esm"
 
@@ -269,9 +269,9 @@ def connect_widget_html(token: str, *,
     if item_id:
         opcoes["updateItem"] = item_id
 
-    return """
-<div style="font-family:system-ui">
-  <div id="estado" style="padding:10px;border-radius:8px;background:#f1f5f9">
+    return ("""
+<div style="font-family:system-ui;color:COR_TEXTO">
+  <div id="estado" style="padding:10px;border-radius:8px;background:COR_CAIXA;color:COR_TEXTO">
     Carregando o widget da Pluggy…
   </div>
   <div id="saida" style="padding:10px"></div>
@@ -307,7 +307,7 @@ try {
       saida.innerHTML = caixa(COR_OK, "Conectado: " + nome,
         'Copie este identificador e cole no passo 2:' +
         '<div style="margin-top:8px;font-family:monospace;font-size:18px;' +
-        'user-select:all;background:#f1f5f9;padding:12px;border-radius:6px">' +
+        'user-select:all;background:COR_CAIXA;color:COR_TEXTO;padding:12px;border-radius:6px">' +
         (item.id || "(sem id)") + '</div>');
     },
     onError: (err) => {
@@ -326,7 +326,12 @@ try {
     '<br><br>Use o botão abaixo para abrir a tela da Pluggy.');
 }
 </script>
-""".replace("COR_ERRO", f'"{COR_ERRO}"').replace("COR_OK", f'"{COR_OK}"') % (CONNECT_SDK, json.dumps(opcoes))
+"""
+            .replace("COR_ERRO", f'"{Colors.SERIES[4]}"')
+            .replace("COR_OK", f'"{Colors.SERIES[0]}"')
+            .replace("COR_CAIXA", Colors.SURFACE_2)
+            .replace("COR_TEXTO", Colors.TEXT)
+            % (CONNECT_SDK, json.dumps(opcoes)))
 
 
 def connect_url(token: str, *, connector_id: int | None = MEU_PLUGGY_CONNECTOR,

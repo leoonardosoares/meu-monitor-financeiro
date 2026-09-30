@@ -19,8 +19,9 @@ from datetime import date
 
 import pandas as pd
 
-from src.config import CATEGORIA_AJUSTE, CATEGORIA_INVESTIMENTO
-from src.dates import parse_month_label
+from src.config import (CATEGORIA_AJUSTE, CATEGORIA_INVESTIMENTO,
+                        ORIGEM_PROJECAO)
+from src.dates import month_label, parse_month_label
 
 # Uma compra é a mesma compra quando coincide em tudo que a descreve.
 # Data e parcela entram na chave para não fundir a parcela 2/6 com a
@@ -189,28 +190,54 @@ def adjustments(*, saldo_real: float, saldo_planilha: float,
 
 
 def manual_future_rows(df: pd.DataFrame, *, today: date) -> pd.Index:
-    """Linhas de cartão sem origem no banco, em meses ainda por vir.
+    """Parcelas que o formulário manual projetou para os meses seguintes.
 
-    São as parcelas projetadas pelo lançamento manual. Removê-las deixa
-    o futuro com o que o banco de fato vai cobrar — e só o que ele vai
-    cobrar.
+    O formulário cria, de uma vez, uma linha por parcela nos meses à
+    frente — todas com a MESMA data de compra, porque nenhuma delas
+    aconteceu ainda. A importação faz o oposto: cada parcela chega com a
+    data em que o banco a lançou.
 
-    O mês corrente fica de fora: a fatura atual ainda é cobrada, e
-    apagar dela uma compra digitada tiraria gasto real.
+    É essa repetição da data que identifica a projeção manual, e não a
+    falta de identificador: linhas importadas antes de o app passar a
+    guardar o id também estão sem ele, e mirar nelas apagava compra de
+    verdade — foi o que tirou R$ 1.139,90 de uma fatura atual.
+
+    O mês corrente fica de fora: a fatura dele ainda é cobrada.
     """
     if df.empty or "Mês da Fatura" not in df.columns:
         return pd.Index([])
+    precisa = {"Descrição", "Parcela", "Data Compra"}
+    if not precisa.issubset(df.columns):
+        return pd.Index([])
+
+    base = df.copy()
+    base["_total"] = base["Parcela"].map(_total_parcelas)
+    base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
+    base["_compra"] = base["Data Compra"].astype(str).str.strip()
+    base["_desc"] = base["Descrição"].astype(str).str.strip()
+    if COLUNA_ID in base.columns:
+        base["_id"] = base[COLUNA_ID].fillna("").astype(str).str.strip()
+    else:
+        base["_id"] = ""
 
     corte = pd.Timestamp(today).normalize().replace(day=1) + \
         pd.DateOffset(months=1)
-    if COLUNA_ID in df.columns:
-        sem_id = df[COLUNA_ID].fillna("").astype(str).str.strip() == ""
-    else:
-        sem_id = pd.Series(True, index=df.index)
 
-    meses = df["Mês da Fatura"].map(parse_month_label)
-    futura = meses.map(lambda m: m is not None and m >= corte)
-    return df.index[sem_id & futura]
+    # A assinatura: parcelamento cuja mesma data de compra se repete em
+    # mais de um mês de fatura, e sem nenhuma linha vinda do banco.
+    suspeitos: list = []
+    for (desc, compra, total), grupo in base[base["_total"] > 1].groupby(
+            ["_desc", "_compra", "_total"], dropna=False):
+        meses = {m for m in grupo["_mes"] if m is not None}
+        if len(meses) < 2:
+            continue                      # parcela única por data: veio do banco
+        if any(grupo["_id"]):
+            continue                      # o banco confirmou este parcelamento
+        for idx, linha in grupo.iterrows():
+            if linha["_mes"] is not None and linha["_mes"] >= corte:
+                suspeitos.append(idx)
+
+    return pd.Index(suspeitos)
 
 
 def parcel_gaps(df: pd.DataFrame) -> pd.DataFrame:
@@ -272,3 +299,134 @@ def _total_parcelas(valor) -> int:
         return int(str(valor).split("/")[1].strip())
     except (TypeError, ValueError, IndexError):
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Projeção de parcelas
+# ---------------------------------------------------------------------------
+#
+# O banco só publica fatura fechada, e a Pluggy só devolve as transações
+# que ele já lançou. Uma compra em 10x tem as parcelas seguintes
+# CONTRATADAS mas ainda não lançadas — elas existem, vão ser cobradas, e
+# não aparecem em lugar nenhum dos dados.
+#
+# Elas podem ser deduzidas: se a última parcela conhecida é a 4/10 na
+# fatura de 11/2026, faltam seis, de 12/2026 a 05/2027, no mesmo valor.
+# O parcelamento é a única coisa do cartão em que projetar é honesto,
+# porque o valor e a quantidade já foram acordados.
+
+
+def project_installments(df: pd.DataFrame, *,
+                         today: date) -> list[dict]:
+    """Linhas das parcelas contratadas que o banco ainda não lançou.
+
+    Parte da última parcela conhecida de cada compra e completa a
+    série. Devolve linhas prontas para a aba `cartao`, marcadas na
+    origem como projeção — elas são compromisso deduzido, não extrato,
+    e a tela precisa poder dizer isso.
+    """
+    precisa = {"Cartão", "Descrição", "Parcela", "Mês da Fatura", "Valor"}
+    if df.empty or not precisa.issubset(df.columns):
+        return []
+
+    base = df.copy()
+    base["_n"] = base["Parcela"].map(_indice_parcela)
+    base["_total"] = base["Parcela"].map(_total_parcelas)
+    base = base[(base["_total"] > 1) & base["_n"].notna()]
+    if base.empty:
+        return []
+    base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
+    base = base[base["_mes"].notna()]
+
+    hoje_mes = pd.Timestamp(today).normalize().replace(day=1)
+    novas: list[dict] = []
+
+    for (cartao, desc, total), grupo in base.groupby(
+            ["Cartão", "Descrição", "_total"], dropna=False):
+        total = int(total)
+        conhecidas = {int(n) for n in grupo["_n"]}
+        if len(conhecidas) >= total:
+            continue                      # a série já está completa
+
+        ultima = grupo.loc[grupo["_n"].idxmax()]
+        n_ultima = int(ultima["_n"])
+        mes_ultima = ultima["_mes"]
+        valor = float(pd.to_numeric(ultima["Valor"], errors="coerce") or 0)
+        if valor <= 0:
+            continue
+
+        for i in range(n_ultima + 1, total + 1):
+            if i in conhecidas:
+                continue
+            mes = mes_ultima + pd.DateOffset(months=i - n_ultima)
+            if mes < hoje_mes:
+                continue                  # já passou; não se projeta o passado
+            novas.append({
+                "Data Compra": str(ultima.get("Data Compra") or ""),
+                "Mês da Fatura": month_label(mes),
+                "Cartão": cartao,
+                "Descrição": desc,
+                "Categoria": str(ultima.get("Categoria") or "Outros"),
+                "Parcela": f"{i}/{total}",
+                "Valor": round(valor, 2),
+                "Status": "Pendente",
+                "ID Pluggy": "",
+                "Origem": ORIGEM_PROJECAO,
+            })
+    return novas
+
+
+
+def supersede_projections(df: pd.DataFrame) -> pd.Index:
+    """Projeções que o banco já substituiu por cobrança de verdade.
+
+    Uma parcela projetada não tem existência própria: ela é um palpite
+    sobre uma cobrança que ainda não chegou. Quando o banco lança a
+    parcela 5/10 daquela compra, a projeção da 5/10 tem de sair — senão a
+    fatura conta a mesma parcela duas vezes.
+
+    O comparador de duplicatas não resolve isso sozinho. Ele exige
+    coincidência em seis campos, incluindo valor e data da compra, e a
+    projeção acerta os dois só por sorte: a última parcela costuma
+    absorver o arredondamento, e aí a 10/10 real vem alguns centavos
+    diferente da projetada. Seis campos iguais viram cinco, a duplicata
+    passa e a fatura dobra.
+
+    Aqui a chave é (cartão, descrição, parcela), que é o que identifica a
+    cobrança independentemente de quanto ela veio. Nenhuma linha do banco
+    é tocada: só sai projeção, e só a que já tem substituta.
+    """
+    precisa = {"Cartão", "Descrição", "Parcela", "Origem"}
+    if df.empty or not precisa.issubset(df.columns):
+        return pd.Index([])
+
+    base = df.copy()
+    base["_cartao"] = base["Cartão"].astype(str).str.strip()
+    base["_desc"] = base["Descrição"].astype(str).str.strip().str.casefold()
+    base["_parc"] = base["Parcela"].astype(str).str.strip()
+    base["_proj"] = (base["Origem"].astype(str).str.strip().str.casefold()
+                     == ORIGEM_PROJECAO.casefold())
+
+    # Uma linha vale como cobrança do banco quando carrega identificador.
+    # Não basta "não ser projeção": o lançamento manual também não é, e
+    # ele não é prova de que a cobrança chegou.
+    if COLUNA_ID in base.columns:
+        tem_id = base[COLUNA_ID].astype(str).str.strip() != ""
+    else:
+        tem_id = pd.Series(False, index=base.index)
+
+    do_banco = set(
+        zip(base.loc[tem_id, "_cartao"], base.loc[tem_id, "_desc"],
+            base.loc[tem_id, "_parc"]))
+    if not do_banco:
+        return pd.Index([])
+
+    # A lista vira Series com o mesmo índice: o pandas 3 não combina
+    # Series com sequência solta, e alinhar pelo índice é o que garante
+    # que a máscara aponte para as linhas certas.
+    tem_substituta = pd.Series(
+        [chave in do_banco
+         for chave in zip(base["_cartao"], base["_desc"], base["_parc"])],
+        index=base.index,
+    )
+    return base.index[base["_proj"] & tem_substituta]

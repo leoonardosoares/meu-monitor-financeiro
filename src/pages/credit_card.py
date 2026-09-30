@@ -20,12 +20,18 @@ _ALL_CARDS = "Todos os cartões"
 def render(*, df_credit_card: pd.DataFrame,
            df_credit_card_period: pd.DataFrame,
            categories: list[str], selected_month: str) -> None:
-    components.page_header(
-        "Cartão de Crédito",
-        "Suas faturas, uma a uma. As compras chegam sozinhas pela "
-        "importação — aqui você acompanha e dá baixa.",
-    )
+    """A página do cartão em quatro abas, por pergunta.
 
+    Era um rolo único: visão consolidada, três ferramentas de limpeza
+    abertas de saída, quatro tabelas de fatura, pagamento, cadastro,
+    formulário de compra e extrato — tudo um abaixo do outro, separado por
+    divisores do mesmo peso. O que se quer saber ao abrir ("quanto devo,
+    quando vence") ficava disputando espaço com a manutenção.
+
+    Agora cada aba responde uma coisa, e a manutenção só chama atenção
+    quando tem trabalho: o número no rótulo da aba **Ajustes** é quanta
+    pendência existe. Zero pendências, rótulo limpo.
+    """
     df_cards = repository.load_cards()
     df_payments = repository.load_card_payments()
     names = cc.list_card_names(df_cards, df_credit_card)
@@ -34,25 +40,82 @@ def render(*, df_credit_card: pd.DataFrame,
         _first_card_setup()
         return
 
-    escolha = st.selectbox("Cartão:", [_ALL_CARDS] + names)
-    card = None if escolha == _ALL_CARDS else escolha
-    st.divider()
-
-    if card is None:
-        _all_cards_overview(df_cards, df_credit_card, df_payments, names)
-    else:
-        _single_card_view(df_cards, df_credit_card, df_payments, card)
-
-    st.divider()
-    _payment_section(df_credit_card, df_payments, names, card)
-
-    st.divider()
-    st.markdown("###### Ajustes")
-    st.caption(
-        "Com a importação ligada, quase nada aqui é necessário no dia a "
-        "dia: nome e limite dos cartões, e as exceções."
+    components.page_header(
+        "Cartão de Crédito",
+        "As compras chegam sozinhas pela importação. Aqui você acompanha "
+        "as faturas e dá baixa.",
     )
-    _cards_registry(df_cards, df_credit_card, df_payments, names)
+
+    pendencias = _pendencias()
+    rotulo_ajustes = ("🛠 Ajustes" if not pendencias
+                      else f"🛠 Ajustes ({pendencias})")
+    aba_faturas, aba_pagar, aba_extrato, aba_ajustes = st.tabs(
+        ["💳 Faturas", "✅ Pagar", "📄 Extrato", rotulo_ajustes])
+
+    with aba_faturas:
+        escolha = st.selectbox(
+            "Cartão", [_ALL_CARDS] + names,
+            help="Escolha um cartão para ver limite, uso e fatura a fatura.")
+        card = None if escolha == _ALL_CARDS else escolha
+        if card is None:
+            _all_cards_overview(df_cards, df_credit_card, df_payments, names)
+        else:
+            _single_card_view(df_cards, df_credit_card, df_payments, card)
+
+    with aba_pagar:
+        _payment_section(df_credit_card, df_payments, names, None)
+
+    with aba_extrato:
+        _extract_section(df_credit_card, df_credit_card_period, names,
+                         selected_month, None)
+
+    with aba_ajustes:
+        _adjustments_tab(df_cards, df_credit_card, df_payments, names,
+                         categories)
+
+
+def _pendencias() -> int:
+    """Quantas coisas a aba de ajustes tem para resolver.
+
+    Vira número no rótulo da aba. Sem isso, esconder as ferramentas de
+    limpeza numa aba significaria esconder também o aviso de que há uma
+    compra em dobro — e o total continuaria errado sem ninguém saber por
+    quê.
+    """
+    df_tx = repository.load_credit_card()
+    if df_tx.empty:
+        return 0
+    quantas = 0
+    previa = reconcile.duplicate_preview(df_tx, reconcile.CHAVES_CARTAO)
+    if not previa.empty:
+        quantas += 1
+    if len(reconcile.manual_future_rows(df_tx, today=date.today())):
+        quantas += 1
+    if reconcile.project_installments(df_tx, today=date.today()):
+        quantas += 1
+    if not reconcile.parcel_gaps(df_tx).empty:
+        quantas += 1
+    return quantas
+
+
+def _adjustments_tab(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+                     df_pay: pd.DataFrame, names: list[str],
+                     categories: list[str]) -> None:
+    """Manutenção: o que só se mexe quando algo não bate."""
+    components.section(
+        "Ajustes e manutenção",
+        "Com a importação ligada, quase nada aqui é necessário no dia a "
+        "dia. Se a fatura não está batendo, é aqui que se resolve.",
+        eyebrow="Cartão de crédito",
+    )
+
+    _remover_duplicatas()
+    _parcelas_projetadas()
+    _completar_parcelamentos()
+
+    st.write("")
+    _cards_registry(df_cards, df_tx, df_pay, names)
+
     # A compra digitada à mão virou exceção — e lançar aqui algo que o
     # banco também traz cria linha duplicada, porque a importada tem id
     # e esta não.
@@ -61,10 +124,7 @@ def render(*, df_credit_card: pd.DataFrame,
             "Só para o que a importação não traz. O que passa no cartão "
             "chega sozinho pela aba **Importar do banco**."
         )
-        _purchase_form(df_cards, df_credit_card, names, categories, card)
-    st.divider()
-    _extract_section(df_credit_card, df_credit_card_period, names,
-                     selected_month, card)
+        _purchase_form(df_cards, df_tx, names, categories, None)
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +248,47 @@ def _parcelas_projetadas() -> None:
             st.dataframe(falhas, hide_index=True, use_container_width=True)
 
 
+def _completar_parcelamentos() -> None:
+    """Deduz as parcelas contratadas que o banco ainda não lançou.
+
+    A Pluggy só entrega o que já foi cobrado; uma compra em 10x tem as
+    parcelas seguintes acordadas mas invisíveis. Como o valor e a
+    quantidade já estão fechados, deduzi-las é honesto — e sem elas a
+    projeção do próximo ano fica vazia justamente onde há compromisso.
+    """
+    df_tx = repository.load_credit_card()
+    novas = reconcile.project_installments(df_tx, today=date.today())
+    if not novas:
+        return
+
+    total = sum(n["Valor"] for n in novas)
+    meses = sorted({n["Mês da Fatura"] for n in novas})
+    with st.expander(
+        md(f"➕ {len(novas)} parcela(s) contratada(s) que o banco ainda "
+           f"não lançou — {brl(total)}")
+    ):
+        st.caption(
+            "Deduzidas do parcelamento: se a última parcela conhecida é "
+            "a 4/10, faltam seis, no mesmo valor e um mês depois da "
+            "outra. Elas entram marcadas como **projeção**, para você "
+            "saber que não vieram do extrato."
+        )
+        st.dataframe(pd.DataFrame([{
+            "Cartão": n["Cartão"], "Fatura": n["Mês da Fatura"],
+            "Descrição": n["Descrição"], "Parcela": n["Parcela"],
+            "Valor": brl(n["Valor"]),
+        } for n in novas]), hide_index=True, use_container_width=True)
+        st.caption(md(f"De {meses[0]} a {meses[-1]}."))
+
+        if st.button(f"➕ Incluir {len(novas)} parcela(s) projetada(s)",
+                     type="primary", key="projetar_parcelas"):
+            repository.save_credit_card(pd.concat(
+                [df_tx, pd.DataFrame(novas)], ignore_index=True))
+            st.success(md(f"{len(novas)} parcela(s) incluída(s) — "
+                          f"{brl(total)}."))
+            st.rerun()
+
+
 def _faturas_do_banco() -> dict[tuple[str, str], float]:
     """{(cartão, mês): total informado pela instituição}."""
     df = repository.load_bank_bills()
@@ -212,13 +313,11 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     sabe quanto se deve, então é dele que vem o número; a soma das
     linhas vira conferência, não fonte.
     """
-    st.subheader("Visão consolidada")
-
     do_banco = _saldo_do_banco()
     banco_faturas = _faturas_do_banco()
 
     total_limite = total_banco = total_linhas = 0.0
-    linhas = []
+    por_cartao = []
     for name in names:
         limite = float(cc.card_settings(df_cards, name)["limite"])
         abertas = cc.open_invoices(df_tx, df_pay, card=name)
@@ -229,41 +328,48 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         total_limite += limite
         total_banco += devido
         total_linhas += soma
-        linhas.append({
-            "Cartão": name,
-            "Limite": brl(limite),
-            "Em aberto": brl(devido),
-            "Fonte": "banco" if saldo is not None else "soma das linhas",
-            "Disponível": brl(limite - devido),
-            "Uso": f"{(devido / limite * 100) if limite else 0:.0f}%",
+        por_cartao.append({
+            "nome": name,
+            "sub": (f"{devido / limite * 100:.0f}% de {brl(limite)}"
+                    if limite else "sem limite cadastrado"),
+            "valor": brl(devido),
+            "divida": True,
         })
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Limite total", brl(total_limite))
-    c2.metric("Em aberto", brl(total_banco),
-              delta=f"{len(names)} cartão(ões)", delta_color="off")
+    # O que se deve e o que ainda se pode gastar, lado a lado. Eram três
+    # métricas e uma tabela de seis colunas dizendo a mesma coisa duas
+    # vezes; o cartão já mostra o total e a abertura por cartão.
     disponivel = total_limite - total_banco
-    c3.metric("Disponível", brl(disponivel),
-              delta_color="normal" if disponivel >= 0 else "inverse")
-
-    if do_banco:
-        st.caption(
-            "Valores lidos das instituições. Atualize no **Dashboard** "
-            "para buscar de novo."
+    esq, dir_ = st.columns(2)
+    with esq:
+        components.stat_card(
+            label="Em aberto nos cartões", value=total_banco, divida=True,
+            bar=(total_banco / total_limite) if total_limite else None,
+            bar_label=(f"{total_banco / total_limite * 100:.0f}% do limite "
+                       f"de {brl(total_limite)}" if total_limite else ""),
+            rows=por_cartao,
         )
-    else:
+    with dir_:
+        components.stat_card(
+            label="Disponível para gastar", value=disponivel,
+            rows=[
+                {"nome": "Limite total", "valor": brl(total_limite),
+                 "bruto": total_limite},
+                {"nome": "Comprometido", "valor": f"− {brl(total_banco)}",
+                 "divida": True},
+                {"nome": "Cartões", "valor": str(len(names)),
+                 "classe": "mf-mut"},
+            ],
+        )
+
+    if not do_banco:
         st.info(md(
             "Ainda não li a dívida nas instituições — os números acima "
             "são a soma das suas linhas. Vá ao **Dashboard** e clique em "
             "**Atualizar**."
         ))
 
-    st.dataframe(pd.DataFrame(linhas), hide_index=True,
-                 use_container_width=True)
-
     _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
-    _remover_duplicatas()
-    _parcelas_projetadas()
     _faturas(df_cards, df_tx, df_pay, names, banco_faturas)
 
 
@@ -314,18 +420,37 @@ def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         return
     situacao = cc.situations(agendadas, hoje)
 
+    # A ordem é a da urgência, não a do calendário: uma lista por mês
+    # misturava dívida de hoje com compromisso de 2027, e era isso que
+    # fazia o total parecer absurdo.
     ordem = ["Vencida", "Atual", "Fechada · a pagar", "Futura"]
     titulos = {
-        "Vencida": "🔴 Vencidas",
-        "Atual": "🔵 Fatura atual",
-        "Fechada · a pagar": "🟡 Fechadas, aguardando pagamento",
-        "Futura": "⚪ Futuras",
+        "Vencida": "Vencidas e não pagas",
+        "Atual": "Fatura atual",
+        "Fechada · a pagar": "Fechadas, aguardando pagamento",
+        "Futura": "Ainda vão fechar",
     }
     legendas = {
-        "Atual": "Ainda aberta — compras novas continuam entrando nela.",
-        "Futura": "Compras parceladas que só virão nos próximos meses.",
+        "Vencida": "Já passou do vencimento — dê baixa na aba Pagar.",
+        "Atual": "Ainda aberta: compras novas continuam entrando nela.",
+        "Fechada · a pagar": "O banco fechou o valor; falta o pagamento.",
+        "Futura": "Parcelas contratadas que só serão cobradas nos "
+                  "próximos meses.",
+    }
+    cores = {
+        "Vencida": Colors.EXPENSE,
+        "Atual": Colors.INFO,
+        "Fechada · a pagar": Colors.WARNING,
+        "Futura": Colors.NEUTRAL,
+    }
+    etiquetas = {
+        "Vencida": "Vencida",
+        "Atual": "Aberta",
+        "Fechada · a pagar": "A pagar",
+        "Futura": "Futura",
     }
 
+    st.write("")
     for estado in ordem:
         grupo = [i for i in agendadas
                  if situacao[(i.card, i.month)] == estado]
@@ -333,25 +458,35 @@ def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             continue
         grupo.sort(key=lambda i: i.due)
         total = sum(_valor_da_fatura(i, banco) for i in grupo)
-        st.markdown(md(f"**{titulos[estado]} — {brl(total)}**"))
-        if estado in legendas:
-            st.caption(legendas[estado])
-        st.dataframe(pd.DataFrame([{
-            "Cartão": i.card,
-            "Fatura": i.month,
-            "Fecha": f"{i.closing:%d/%m/%Y}",
-            "Vence": f"{i.due:%d/%m/%Y}",
-            "Valor": brl(_valor_da_fatura(i, banco)),
-            "Fonte": "banco" if (i.card, i.month) in banco else "linhas",
-        } for i in grupo]), hide_index=True, use_container_width=True)
+        components.section(f"{titulos[estado]} — {brl(total)}",
+                           legendas[estado])
+        # As futuras são muitas e cada uma importa pouco: ficam recolhidas
+        # para não empurrar a fatura de hoje fora da tela.
+        if estado == "Futura" and len(grupo) > 3:
+            with st.expander(f"Ver {len(grupo)} fatura(s) futura(s)"):
+                _lista_de_faturas(grupo, banco, cores[estado],
+                                  etiquetas[estado])
+        else:
+            _lista_de_faturas(grupo, banco, cores[estado], etiquetas[estado])
 
-    if any(v == "linhas" for v in
-           ("banco" if (i.card, i.month) in banco else "linhas"
-            for i in agendadas)):
+    if any((i.card, i.month) not in banco for i in agendadas):
         st.caption(
-            "**Fonte** diz de onde veio o valor. *banco* é o total que a "
-            "instituição informou; *linhas* é a soma das compras que "
-            "chegaram — usado enquanto o banco não emite a fatura."
+            "Onde diz *soma das linhas*, o banco ainda não emitiu a "
+            "fatura e o valor é a soma das compras que chegaram."
+        )
+
+
+def _lista_de_faturas(grupo: list, banco: dict[tuple[str, str], float],
+                      cor: str, etiqueta: str) -> None:
+    """Um cartão por fatura, na ordem de vencimento."""
+    for i in grupo:
+        do_banco = (i.card, i.month) in banco
+        components.invoice_card(
+            card=i.card, month=i.month,
+            value=brl(_valor_da_fatura(i, banco)),
+            state=etiqueta, accent=cor, negative=True,
+            dates=(f"fecha {i.closing:%d/%m} · vence {i.due:%d/%m/%Y}"),
+            source="do banco" if do_banco else "soma das linhas",
         )
 
 
@@ -453,34 +588,44 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     abertas = cc.open_invoices(df_tx, df_pay, card=card)
     saldo = sum(i.balance for i in abertas)
 
-    titulo = card + (f" · {settings['instituicao']}"
-                     if settings["instituicao"] else "")
-    st.subheader(titulo)
     if int(settings["vencimento"]) > int(settings["fechamento"]):
         quando = "vence dia {} do mesmo mês".format(settings["vencimento"])
     else:
         quando = "vence dia {} do mês seguinte".format(settings["vencimento"])
-    st.caption(f"Fecha todo dia {settings['fechamento']} · {quando}")
+    components.section(
+        card, f"Fecha todo dia {settings['fechamento']} · {quando}",
+        eyebrow=settings["instituicao"] or "Cartão",
+    )
 
     _drift_warning(df_cards, df_tx, card)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Limite", brl(limite))
-    c2.metric("Em aberto", brl(saldo))
-    c3.metric("Disponível", brl(disp),
-              delta_color="normal" if disp >= 0 else "inverse")
     uso = (saldo / limite * 100) if limite else 0.0
-    c4.metric("Uso do limite", f"{uso:.0f}%",
-              delta="acima de 80%" if uso > 80 else "confortável",
-              delta_color="inverse" if uso > 80 else "normal")
-    if limite > 0:
-        st.progress(min(uso / 100, 1.0))
+    esq, dir_ = st.columns(2)
+    with esq:
+        components.stat_card(
+            label="Em aberto", value=saldo, divida=True,
+            bar=(saldo / limite) if limite else None,
+            bar_label=(f"{uso:.0f}% do limite de {brl(limite)}"
+                       if limite else "sem limite cadastrado"),
+        )
+    with dir_:
+        components.stat_card(
+            label="Disponível", value=disp,
+            rows=[
+                {"nome": "Limite", "valor": brl(limite), "bruto": limite},
+                {"nome": "Uso do limite", "valor": f"{uso:.0f}%",
+                 "classe": "mf-neg" if uso > 80 else "mf-pos",
+                 "sub": "acima de 80%" if uso > 80 else "confortável"},
+            ],
+        )
 
     if not abertas:
         st.success("Nenhuma fatura em aberto neste cartão.")
         return
 
-    st.markdown("**Faturas em aberto**")
+    st.write("")
+    components.section("Faturas em aberto",
+                       "Abra uma para ver as compras que a compõem.")
     for i in abertas:
         icone = {"Aberta": "🔵", "Parcial": "🟡", "Paga": "🟢"}[i.status]
         with st.expander(
@@ -539,7 +684,12 @@ def _invoice_lines(df_tx: pd.DataFrame, card: str, month: str) -> pd.DataFrame:
 
 def _payment_section(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
                      names: list[str], card: str | None) -> None:
-    st.subheader("Pagar fatura")
+    components.section(
+        "Pagar fatura",
+        "Adiantar um valor ou dar baixa total. A baixa lança a saída em "
+        "Entradas e Saídas pelo valor que faltava.",
+        eyebrow="Cartão de crédito",
+    )
     abertas = cc.open_invoices(df_tx, df_pay, card=card)
     if not abertas:
         st.success("Nada a pagar por aqui.")
@@ -660,7 +810,6 @@ def _payment_section(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
 def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                    names: list[str], categories: list[str],
                    card: str | None) -> None:
-    st.subheader("Lançar compra")
     with st.form("new_card_purchase", clear_on_submit=True):
         c1, c2 = st.columns([1, 2])
         cartao = c1.selectbox(
@@ -713,7 +862,10 @@ def _purchase_form(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
 def _cards_registry(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                     df_pay: pd.DataFrame, names: list[str]) -> None:
-    st.subheader("Meus cartões")
+    components.section(
+        "Meus cartões",
+        "Nome, limite e as datas de fechamento e vencimento de cada um.",
+    )
 
     orfaos = cc.orphan_card_names(df_cards, df_tx)
     if orfaos:
@@ -723,12 +875,13 @@ def _cards_registry(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             + "**. Cadastre-os abaixo para definir limite e datas."
         )
 
+    # Cada um abre o seu próprio bloco recolhível. Antes vinham os quatro
+    # empilhados e separados por divisores do mesmo peso: só o cadastro é
+    # rotina, o resto é exceção e não precisa ocupar a tela até ser
+    # pedido.
     _card_settings_form(df_cards, df_tx, df_pay, names)
-    st.divider()
-    _reschedule_section(df_cards, df_tx, df_pay, names)
-    st.divider()
     _new_card_form(names)
-    st.divider()
+    _reschedule_section(df_cards, df_tx, df_pay, names)
     _card_danger_zone(df_cards, df_tx, df_pay, names)
 
 
@@ -952,8 +1105,13 @@ def _card_danger_zone(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 def _extract_section(df_tx: pd.DataFrame, df_period: pd.DataFrame,
                      names: list[str], selected_month: str,
                      card: str | None) -> None:
-    label = f" ({selected_month})" if selected_month != ALL_MONTHS else ""
-    st.subheader(f"Gastos por categoria{label}")
+    periodo = (selected_month if selected_month != ALL_MONTHS
+               else "todo o período")
+    components.section(
+        "Gastos por categoria",
+        f"O que o cartão consumiu em {periodo}, por categoria.",
+        eyebrow="Extrato",
+    )
 
     view = df_period
     if card and not view.empty:
@@ -965,9 +1123,9 @@ def _extract_section(df_tx: pd.DataFrame, df_period: pd.DataFrame,
         components.vertical_bar(grouped, x="Categoria", y="Valor",
                                 color=Colors.INVESTMENT)
 
-    st.divider()
-    st.subheader("Extrato completo")
-    st.caption("Edite as linhas livremente e clique em salvar.")
+    st.write("")
+    components.section("Extrato completo",
+                       "Edite as linhas livremente e clique em salvar.")
 
     editable = df_tx
     if card and not editable.empty:

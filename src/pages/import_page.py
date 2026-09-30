@@ -17,7 +17,7 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from src import components, credit_card as cc, pluggy, repository
+from src import components, credit_card as cc, pluggy, reconcile, repository
 from src import pluggy_import as pi
 from src.config import ConfigKeys
 from src.finance import suggest_category
@@ -89,7 +89,7 @@ def _load_accounts(ids: list[str]) -> tuple[list[dict], list[str]]:
 def _mapping_section(contas: list[dict], df_cards: pd.DataFrame,
                      df_credit_card: pd.DataFrame) -> dict[str, str]:
     """Para onde cada conta da Pluggy é importada."""
-    st.subheader("Para onde vai cada conta")
+    components.section("Para onde vai cada conta")
     st.caption(
         "Diga uma vez e o app lembra. Sem isso ele não teria como saber "
         "que o *platinum* da Pluggy é o seu cartão cadastrado aqui — e "
@@ -134,7 +134,7 @@ def _sync_section(*, contas: list[dict], destinos: dict[str, str],
                   df_cards: pd.DataFrame, df_transactions: pd.DataFrame,
                   df_credit_card: pd.DataFrame,
                   categories: list[str]) -> None:
-    st.subheader("Sincronizar")
+    components.section("Sincronizar")
     ativas = [c for c in contas
               if destinos.get(pi.account_key(c), "") not in
               ("", pi.DESTINO_IGNORAR)]
@@ -256,7 +256,6 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             due_day=int(settings["vencimento"]), lido_em=date.today())
     if linhas_fatura:
         repository.merge_bank_bills(linhas_fatura)
-        _dar_baixa_nas_fechadas(linhas_fatura)
     _aprender_datas(ativas, destinos, transacoes, faturas, df_cards)
 
     st.session_state["pluggy_pendentes"] = pendentes
@@ -264,7 +263,7 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
     st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes
 
 
-def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
+def _dar_baixa_nas_fechadas() -> None:
     """Marca como paga a fatura que o banco fechou e já venceu.
 
     Sem isso, a importação deixa tudo Pendente para sempre: o pagamento
@@ -272,14 +271,16 @@ def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
     Faturas de meses atrás ficavam "vencidas", inflando a dívida e a
     projeção do próximo mês.
     """
+    faturas_gravadas = repository.load_bank_bills()
     vencimentos: dict[tuple[str, str], date] = {}
-    for linha in linhas_fatura:
+    for _, linha in faturas_gravadas.iterrows():
         bruto = str(linha.get("Vencimento") or "").strip()
         if not bruto:
             continue
         lido = pd.to_datetime(bruto, errors="coerce")
         if not pd.isna(lido):
-            vencimentos[(linha["Cartão"], linha["Mês"])] = lido.date()
+            vencimentos[(str(linha["Cartão"]).strip(),
+                         str(linha["Mês"]).strip())] = lido.date()
 
     atual = repository.load_credit_card()
     novo, quantas = cc.settle_closed_bills(atual, vencimentos,
@@ -447,12 +448,30 @@ def _commit(aceitos: list, df_transactions: pd.DataFrame,
         repository.save_transactions(
             pd.concat([base, pd.DataFrame(banco)], ignore_index=True))
     if cartao:
-        repository.save_credit_card(
-            pd.concat([df_credit_card, pd.DataFrame(cartao)],
-                      ignore_index=True))
+        juntado = pd.concat([df_credit_card, pd.DataFrame(cartao)],
+                            ignore_index=True)
+        # Se alguma das parcelas que acabaram de chegar já tinha sido
+        # projetada, a projeção sai agora — não numa tela de limpeza
+        # depois. Deixá-la para o usuário notar significa a fatura contar
+        # a mesma parcela duas vezes até ele notar, e o valor que ele
+        # confere é justamente esse.
+        obsoletas = reconcile.supersede_projections(juntado)
+        if len(obsoletas):
+            juntado = juntado.drop(index=obsoletas).reset_index(drop=True)
+        repository.save_credit_card(juntado)
+        if len(obsoletas):
+            st.info(
+                f"♻️ {len(obsoletas)} parcela(s) que estavam projetadas "
+                "foram substituídas pela cobrança real do banco."
+            )
     repository.save_imports(
         pd.concat([repository.load_imports(), pd.DataFrame(registro)],
                   ignore_index=True))
+
+    # A baixa vem depois da gravação. Rodando na busca, ela não via as
+    # linhas que esta importação acabaria de criar — e faturas já pagas
+    # voltavam a aparecer como vencidas a cada leva nova.
+    _dar_baixa_nas_fechadas()
 
     st.session_state["pluggy_pendentes"] = None
     st.success(
