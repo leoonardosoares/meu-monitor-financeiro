@@ -45,12 +45,17 @@ def render(*, df_credit_card: pd.DataFrame,
 
     st.divider()
     _payment_section(df_credit_card, df_payments, names, card)
+
     st.divider()
+    st.markdown("###### Ajustes")
+    st.caption(
+        "Com a importação ligada, quase nada aqui é necessário no dia a "
+        "dia: nome e limite dos cartões, e as exceções."
+    )
     _cards_registry(df_cards, df_credit_card, df_payments, names)
-    st.divider()
-    # Recolhido: com a importação ligada, a compra digitada à mão é a
-    # exceção — e lançar aqui algo que o banco também vai trazer cria
-    # linha duplicada, porque a importada tem id e esta não.
+    # A compra digitada à mão virou exceção — e lançar aqui algo que o
+    # banco também traz cria linha duplicada, porque a importada tem id
+    # e esta não.
     with st.expander("➕ Lançar uma compra que não veio do banco"):
         st.caption(
             "Só para o que a importação não traz. O que passa no cartão "
@@ -228,6 +233,15 @@ def _confronto_de_linhas(total_banco: float, total_linhas: float,
         ))
 
 
+def _data_br(valor) -> str:
+    """ISO -> dd/mm/aaaa; vazio continua vazio."""
+    texto = str(valor or "").strip()
+    if not texto:
+        return ""
+    lido = pd.to_datetime(texto, errors="coerce")
+    return "" if pd.isna(lido) else lido.strftime("%d/%m/%Y")
+
+
 def _faturas_emitidas(names: list[str],
                       banco: dict[tuple[str, str], float]) -> None:
     """Faturas que o banco já emitiu, com o total dele."""
@@ -246,13 +260,19 @@ def _faturas_emitidas(names: list[str],
     mostra["_ord"] = pd.to_datetime(mostra["Mês"], format="%m/%Y",
                                     errors="coerce")
     mostra = mostra.sort_values("_ord", ascending=False)
-    st.dataframe(pd.DataFrame([{
+    tabela = pd.DataFrame([{
         "Cartão": r["Cartão"], "Mês": r["Mês"],
         "Total": brl(float(pd.to_numeric(r["Total"], errors="coerce") or 0)),
-        "Fecha": r.get("Fechamento", ""), "Vence": r.get("Vencimento", ""),
-        "Situação": r.get("Situação", ""),
-    } for _, r in mostra.iterrows()]), hide_index=True,
-        use_container_width=True)
+        "Fecha": _data_br(r.get("Fechamento", "")),
+        "Vence": _data_br(r.get("Vencimento", "")),
+        "Situação": str(r.get("Situação", "") or ""),
+    } for _, r in mostra.iterrows()])
+    # Coluna vazia é ruído: a Pluggy nem sempre informa fechamento e
+    # situação, e uma coluna de traços só ocupa espaço.
+    vazias = [c for c in tabela.columns
+              if not tabela[c].astype(str).str.strip().any()]
+    st.dataframe(tabela.drop(columns=vazias), hide_index=True,
+                 use_container_width=True)
 
 
 def _parcelas_futuras(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
@@ -329,6 +349,12 @@ def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     uma compra recém-lançada, e o extrato parece contraditório: duas
     compras do mesmo ciclo aparecem em faturas diferentes.
     """
+    # Quando o banco informa as faturas, é ele quem decide o mês — e o
+    # aviso de divergência contra o dia de fechamento vira ruído, porque
+    # a regra deixou de ser a autoridade.
+    if any(c == card for c, _ in _faturas_do_banco()):
+        return
+
     todas = cc.invoice_month_drift(df_tx, df_cards, card, only_pending=False)
     if not todas:
         return

@@ -256,10 +256,59 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             due_day=int(settings["vencimento"]), lido_em=date.today())
     if linhas_fatura:
         repository.merge_bank_bills(linhas_fatura)
+    _aprender_datas(ativas, destinos, transacoes, faturas, df_cards)
 
     st.session_state["pluggy_pendentes"] = pendentes
     st.session_state["pluggy_avisos"] = avisos + mais
     st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes
+
+
+def _aprender_datas(ativas, destinos, transacoes, faturas,
+                    df_cards: pd.DataFrame) -> None:
+    """Grava no cadastro o fechamento e o vencimento deduzidos do banco.
+
+    O usuário não deveria precisar saber esses dias de cor — e errar um
+    deles deslocava fatura inteira. Só escreve quando o valor deduzido
+    difere do cadastrado, para não gravar na planilha a cada busca.
+    """
+    cards = repository.load_cards()
+    mudou = False
+    avisos: list[str] = []
+
+    for conta in ativas:
+        chave = pi.account_key(conta)
+        destino = destinos.get(chave, "")
+        if (str(conta.get("type") or "").upper() != "CREDIT"
+                or destino in ("", pi.DESTINO_BANCO, pi.DESTINO_IGNORAR)):
+            continue
+        fech, venc = pi.infer_card_days(
+            faturas.get(chave, []), transacoes.get(chave, []))
+        atual = cc.card_settings(df_cards, destino)
+        novos = {}
+        if fech and fech != int(atual["fechamento"]):
+            novos["Dia Fechamento"] = fech
+        if venc and venc != int(atual["vencimento"]):
+            novos["Dia Vencimento"] = venc
+        if not novos:
+            continue
+        if cards.empty or "Nome" not in cards.columns:
+            continue
+        alvo = cards["Nome"].astype(str).str.strip() == destino
+        if not alvo.any():
+            continue
+        for coluna, valor in novos.items():
+            cards.loc[alvo, coluna] = valor
+        mudou = True
+        avisos.append(
+            f"**{destino}**: " + ", ".join(
+                f"{'fechamento' if 'Fech' in k else 'vencimento'} dia {v}"
+                for k, v in novos.items()))
+
+    if mudou:
+        repository.save_cards(cards)
+        st.info(
+            "📆 Datas atualizadas a partir do banco — " + " · ".join(avisos)
+        )
 
 
 def _triage(pendentes: list, categories: list[str],
