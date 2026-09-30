@@ -32,6 +32,10 @@ class Conta:
     tipo: str
     saldo: float
     instituicao: str = ""
+    # Id da conta na Pluggy. É o que permite casar o saldo com o cartão
+    # cadastrado aqui, já que o mapa de destinos é guardado por id — o
+    # nome muda de "platinum" para outra coisa sem aviso.
+    chave: str = ""
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,7 @@ def fetch(item_ids: list[str]) -> Posicao:
                     tipo=str(bruto.get("type") or "").upper(),
                     saldo=_num(bruto.get("balance")),
                     instituicao=rotulo,
+                    chave=str(bruto.get("id") or "").strip(),
                 ))
         except pluggy.PluggyError as exc:
             erros.append(f"{rotulo} (contas): {exc}")
@@ -149,18 +154,39 @@ def fetch(item_ids: list[str]) -> Posicao:
 # a API, e a série histórica permite ver o patrimônio crescer — algo que
 # a leitura ao vivo, sozinha, nunca daria.
 
-COLUNAS = ["Data", "Origem", "Nome", "Classe", "Valor"]
+COLUNAS = ["Data", "Origem", "Nome", "Classe", "Valor", "Chave"]
+
+
+def card_balances(posicao: Posicao, mapa: dict[str, str]) -> dict[str, float]:
+    """{cartão cadastrado: dívida informada pela instituição}.
+
+    Casa pelo id da conta na Pluggy, que é o que o mapa de destinos
+    guarda. Casar por nome quebraria no dia em que o banco renomeasse
+    "platinum" — e quebraria em silêncio, mostrando dívida zero.
+
+    Dois cartões da Pluggy apontando para o mesmo cartão aqui somam,
+    que é o certo quando alguém tem cartão adicional.
+    """
+    out: dict[str, float] = {}
+    for conta in posicao.contas:
+        if conta.tipo != TIPO_CARTAO:
+            continue
+        destino = (mapa or {}).get(conta.chave)
+        if destino:
+            out[destino] = out.get(destino, 0.0) + abs(conta.saldo)
+    return out
 
 
 def to_rows(posicao: Posicao) -> list[dict]:
     quando = posicao.quando or datetime.now().isoformat(timespec="minutes")
     linhas = [{
         "Data": quando, "Origem": c.instituicao, "Nome": c.nome,
-        "Classe": c.tipo, "Valor": c.saldo,
+        "Classe": c.tipo, "Valor": c.saldo, "Chave": c.chave,
     } for c in posicao.contas]
     linhas += [{
         "Data": quando, "Origem": a.instituicao, "Nome": a.nome,
         "Classe": a.classe or "INVESTIMENTO", "Valor": a.valor,
+        "Chave": "",
     } for a in posicao.ativos]
     return linhas
 
@@ -179,7 +205,8 @@ def from_rows(df: pd.DataFrame) -> Posicao:
         nome = str(linha.get("Nome") or "")
         origem = str(linha.get("Origem") or "")
         if classe in (TIPO_BANCO, TIPO_CARTAO):
-            contas.append(Conta(nome, classe, valor, origem))
+            contas.append(Conta(nome, classe, valor, origem,
+                                str(linha.get("Chave") or "").strip()))
         else:
             ativos.append(Ativo(nome, classe, valor, origem))
     return Posicao(contas=contas, ativos=ativos, quando=str(ultima))
