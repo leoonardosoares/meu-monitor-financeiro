@@ -53,6 +53,11 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     # Retratos da posição real lida das instituições. É o que faz o app
     # mostrar o saldo do banco em vez de uma soma de lançamentos.
     "posicao_real": ["Data", "Origem", "Nome", "Classe", "Valor"],
+    # Faturas como o banco as reporta. Existe para o app mostrar o
+    # total que a instituição informa, em vez de somar as linhas que
+    # tem — que só coincidem se nenhuma compra faltar.
+    "faturas_banco": ["Cartão", "Mês", "Total", "Fechamento", "Vencimento",
+                      "Situação", "Lido em"],
     # Lançamentos já trazidos do Open Finance. A coluna "ID Pluggy" é o
     # que impede a mesma compra de entrar duas vezes a cada sincronização.
     "importacoes": ["ID Pluggy", "Data", "Descrição", "Valor", "Destino",

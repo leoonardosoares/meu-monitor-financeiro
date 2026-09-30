@@ -150,13 +150,53 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     if not abertas:
         st.success("Nenhuma fatura em aberto.")
         return
-    inv_rows = [{
-        "Cartão": i.card, "Mês": i.month, "Total": brl(i.total),
-        "Adiantado": brl(i.advances), "Falta pagar": brl(i.balance),
-        "Status": i.status,
-    } for i in abertas]
+    banco = _faturas_do_banco()
+    inv_rows = []
+    divergentes = 0
+    for i in abertas:
+        do_banco = banco.get((i.card, i.month))
+        # A coluna do banco é a referência; a nossa é a soma das linhas
+        # que chegaram. Onde diferem, falta compra na planilha.
+        difere = do_banco is not None and abs(do_banco - i.total) >= 0.01
+        divergentes += bool(difere)
+        inv_rows.append({
+            "Cartão": i.card, "Mês": i.month,
+            "Banco diz": brl(do_banco) if do_banco is not None else "—",
+            "Soma das linhas": brl(i.total),
+            "Adiantado": brl(i.advances), "Falta pagar": brl(i.balance),
+            "Status": ("⚠️ " if difere else "") + i.status,
+        })
     st.dataframe(pd.DataFrame(inv_rows), hide_index=True,
                  use_container_width=True)
+
+    if not banco:
+        st.caption(
+            "A coluna **Banco diz** fica vazia até a primeira "
+            "sincronização em **Importar do banco** — é de lá que vêm "
+            "os totais informados pela instituição."
+        )
+    elif divergentes:
+        st.warning(md(
+            f"⚠️ {divergentes} fatura(s) com total diferente do que o "
+            "banco informa. **Vale o que o banco diz**; a soma das "
+            "linhas fica menor quando alguma compra ainda não foi "
+            "importada — sincronize em **Importar do banco**."
+        ))
+
+
+def _faturas_do_banco() -> dict[tuple[str, str], float]:
+    """{(cartão, mês): total informado pela instituição}."""
+    df = repository.load_bank_bills()
+    if df.empty or not {"Cartão", "Mês", "Total"}.issubset(df.columns):
+        return {}
+    out: dict[tuple[str, str], float] = {}
+    for _, linha in df.iterrows():
+        valor = pd.to_numeric(linha.get("Total"), errors="coerce")
+        if pd.isna(valor):
+            continue
+        out[(str(linha["Cartão"]).strip(),
+             str(linha["Mês"]).strip())] = float(valor)
+    return out
 
 
 def _confronto_com_banco(total_app: float) -> None:
