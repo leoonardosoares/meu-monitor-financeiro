@@ -440,6 +440,29 @@ check("sem zero à esquerda", _mix.iloc[4], pd.Timestamp(2026, 2, 3))
 check("nulo e lixo viram NaT",
       [bool(pd.isna(v)) for v in _mix.iloc[5:]], [True, True])
 
+# A importação traz toda compra como Pendente e nada dá baixa: o
+# pagamento aparece no extrato da conta, não no do cartão. Faturas de
+# meses atrás ficavam "vencidas" para sempre, inflando a projeção.
+section("Fatura que o banco fechou e já venceu conta como paga")
+_venc = {("Cartão Itaú", "08/2026"): date(2026, 9, 7)}
+_tx_pago, _n = cc.settle_closed_bills(TX, _venc, today=date(2026, 9, 30))
+check("marcou a parcela da fatura vencida", _n, 1)
+check("a fatura sai das abertas",
+      ("Cartão Itaú", "08/2026") in
+      {(i.card, i.month)
+       for i in cc.schedule_invoices(_tx_pago, PAY, CARDS,
+                                     today=date(2026, 9, 30))[0]},
+      False)
+
+check("fatura ainda a vencer não é tocada",
+      cc.settle_closed_bills(TX, {("Cartão Itaú", "09/2026"):
+                                  date(2026, 10, 7)},
+                             today=date(2026, 9, 30))[1], 0)
+check("cartão sem fatura publicada fica intacto",
+      cc.settle_closed_bills(TX, {}, today=date(2026, 9, 30))[1], 0)
+check("rodar duas vezes não muda nada",
+      cc.settle_closed_bills(_tx_pago, _venc, today=date(2026, 9, 30))[1], 0)
+
 section("Faturas classificadas como o banco classifica")
 _hoje = date(2026, 9, 30)
 _ag2, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)

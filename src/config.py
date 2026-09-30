@@ -16,7 +16,7 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo"],
     "cartao": [
         "Data Compra", "Mês da Fatura", "Cartão", "Descrição", "Categoria",
-        "Parcela", "Valor", "Status",
+        "Parcela", "Valor", "Status", "ID Pluggy",
     ],
     # Cadastro dos cartões: cada um com limite e datas próprias.
     "cartoes": [

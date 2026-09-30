@@ -105,7 +105,9 @@ def _css() -> str:
     }}
     [data-testid="stMetricValue"] {{
         color: var(--text) !important;
-        font-size: 1.75rem !important;
+        /* Encolhe conforme a coluna aperta: cinco métricas lado a lado
+           cortavam o valor, e um saldo pela metade é pior que feio. */
+        font-size: clamp(1.05rem, 2.1vw, 1.75rem) !important;
         font-weight: 700 !important;
         letter-spacing: -.02em;
         /* O valor precisa caber inteiro: um saldo truncado é pior que feio. */

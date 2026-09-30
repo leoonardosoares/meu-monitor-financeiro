@@ -530,6 +530,10 @@ def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dic
                 "Parcela": p.parcela,
                 "Valor": p.valor,
                 "Status": "Pendente",
+                # O id acompanha a linha para o removedor de duplicatas
+                # saber que duas compras iguais no mesmo dia são duas
+                # compras, e não a mesma lançada duas vezes.
+                "ID Pluggy": p.pluggy_id,
             })
         else:
             banco.append({

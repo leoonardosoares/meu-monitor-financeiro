@@ -132,6 +132,29 @@ check("somam no mesmo cartão",
       ps.card_balances(dois, {"a": "Principal", "b": "Principal"}),
       {"Principal": 150.0})
 
+# A curva da carteira responde "quanto rendeu"; misturar conta
+# corrente e cartão a tornaria a curva de outra coisa.
+print("  Curva da carteira exclui conta e cartão")
+_a = ps.Posicao(contas=[ps.Conta("c", "BANK", 100.0),
+                        ps.Conta("cc", "CREDIT", -500.0)],
+                ativos=[ps.Ativo("CDB", "FIXED", 1000.0)],
+                quando="2026-09-01T10:00")
+_b = ps.Posicao(contas=[ps.Conta("c", "BANK", 150.0)],
+                ativos=[ps.Ativo("CDB", "FIXED", 1050.0)],
+                quando="2026-09-30T10:00")
+_curva = ps.invested_history(pd.DataFrame(ps.to_rows(_a) + ps.to_rows(_b)))
+check("dois pontos", len(_curva), 2)
+check("só o investido", [round(v, 2) for v in _curva["Investido"]],
+      [1000.0, 1050.0])
+check("um ponto por dia", list(_curva["Data"]),
+      ["2026-09-01", "2026-09-30"])
+check("sem investimento, curva vazia",
+      ps.invested_history(pd.DataFrame(ps.to_rows(
+          ps.Posicao(contas=[ps.Conta("c", "BANK", 1.0)],
+                     quando="2026-09-01T10:00")))).empty, True)
+check("planilha vazia", list(ps.invested_history(pd.DataFrame()).columns),
+      ["Data", "Investido"])
+
 print("  Planilha vazia não quebra")
 check("from_rows", ps.from_rows(pd.DataFrame()).vazia, True)
 check("history", list(ps.history(pd.DataFrame()).columns),
