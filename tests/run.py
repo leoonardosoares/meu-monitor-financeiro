@@ -395,6 +395,31 @@ check("com opt-in, é",
                                  only_pending=False)), 6)
 
 
+# A projeção do próximo mês parte do dinheiro que existe hoje e tira
+# tudo que vence até lá — incluindo o que já venceu e não foi pago, que
+# sai da mesma conta.
+section("Tudo que sai da conta até o fim do mês-alvo")
+_ag, _ = cc.schedule_invoices(TX, PAY, CARDS, today=date(2026, 9, 30))
+_ate = cc.invoices_due_through(_ag, "10/2026")
+check("inclui a vencida, a deste mês e a do alvo",
+      [(i.card, i.month) for i in _ate],
+      [("Cartão Itaú", "08/2026"), ("Cartão Itaú", "09/2026"),
+       ("Principal", "10/2026")])
+check("soma", round(sum(i.balance for i in _ate), 2), 682.54)
+check("não alcança o mês seguinte ao alvo",
+      [(i.card, i.month) for i in cc.invoices_due_through(_ag, "09/2026")],
+      [("Cartão Itaú", "08/2026")])
+check("mês ilegível devolve vazio", cc.invoices_due_through(_ag, "lixo"), [])
+
+# O balde do alvo é subconjunto do que sai até lá: quem some de um tem
+# de aparecer no outro.
+_no_alvo = {(i.card, i.month) for i in cc.invoices_due_in(_ag, "10/2026")}
+_ate_chaves = {(i.card, i.month) for i in _ate}
+check("o que vence no alvo está contido no que sai até lá",
+      _no_alvo <= _ate_chaves, True)
+check("e a vencida entra só no segundo",
+      ("Cartão Itaú", "08/2026") in _ate_chaves - _no_alvo, True)
+
 section("Carteira vazia e meses sem fatura")
 check("mês sem nada", total_em("07/2027"), 0.0)
 check("sem compras", total_em("10/2026", tx=TX.iloc[0:0]), 0.0)

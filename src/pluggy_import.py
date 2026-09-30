@@ -168,6 +168,50 @@ def bill_rows(bills: list[dict], *, cartao: str, closing_day: int,
     return out
 
 
+def _dia_mais_comum(datas: list[date]) -> int | None:
+    """Dia do mês que mais se repete — o ciclo do cartão é mensal."""
+    if not datas:
+        return None
+    contagem: dict[int, int] = {}
+    for d in datas:
+        contagem[d.day] = contagem.get(d.day, 0) + 1
+    return max(contagem.items(), key=lambda x: (x[1], x[0]))[0]
+
+
+def infer_card_days(bills: list[dict],
+                    transactions: list[dict]) -> tuple[int | None, int | None]:
+    """(dia de fechamento, dia de vencimento) deduzidos do banco.
+
+    O **vencimento** vem direto: é o dia das datas de vencimento das
+    faturas. O **fechamento** a Pluggy não informa, mas o extrato o
+    denuncia — a última compra de cada fatura cai no dia em que ela
+    fechou, ou perto dele. Tomar o dia mais frequente entre essas
+    últimas compras erra pouco e não depende de o usuário lembrar.
+
+    Devolve `None` para o que não der para deduzir, em vez de chutar:
+    um dia inventado desloca fatura inteira.
+    """
+    vencimentos = [d for d in
+                   (_primeira_data(b, _CAMPOS_VENCIMENTO) for b in bills or [])
+                   if d is not None]
+    dia_venc = _dia_mais_comum(vencimentos)
+
+    # Última compra de cada fatura, que é o que o fechamento delimita.
+    ultimas: dict[str, date] = {}
+    for tx in transactions or []:
+        ident = bill_id(tx)
+        if not ident:
+            continue
+        quando = _data(tx)
+        if quando is None:
+            continue
+        if ident not in ultimas or quando > ultimas[ident]:
+            ultimas[ident] = quando
+    dia_fech = _dia_mais_comum(list(ultimas.values()))
+
+    return dia_fech, dia_venc
+
+
 def bill_id(tx: dict) -> str:
     """Fatura a que a compra pertence, segundo o banco."""
     meta = tx.get("creditCardMetadata") or {}

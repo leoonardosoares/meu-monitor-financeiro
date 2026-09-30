@@ -491,6 +491,47 @@ print("  As colunas batem com a aba da planilha")
 from src.config import SHEETS_SCHEMA as _SS  # noqa: E402
 check("mesmo formato", sorted(linhas[0]), sorted(_SS["faturas_banco"]))
 
+# O usuário não deveria precisar saber esses dias de cor, e errar um
+# deles deslocava fatura inteira. O banco não informa o fechamento, mas
+# o extrato o denuncia: a última compra de cada fatura cai nele.
+print("  Fechamento e vencimento deduzidos do banco")
+
+
+def ciclo(dia_fecha: int, dia_vence: int, meses=range(4, 10)):
+    faturas = [{"id": f"b{m}", "dueDate": f"2026-{m:02d}-{dia_vence:02d}"}
+               for m in meses]
+    txs = []
+    for m in meses:
+        txs += [
+            tx(f"t{m}a", f"2026-{m:02d}-02", "cedo", -1.0, "DEBIT"),
+            tx(f"t{m}b", f"2026-{m:02d}-{dia_fecha:02d}", "tarde", -1.0,
+               "DEBIT"),
+        ]
+        for t in txs[-2:]:
+            t["creditCardMetadata"] = {"billId": f"b{m}"}
+    return faturas, txs
+
+
+f, t = ciclo(8, 15)
+check("Principal: fecha 8, vence 15", pi.infer_card_days(f, t), (8, 15))
+f, t = ciclo(30, 7)
+check("Itaú: fecha 30, vence 7", pi.infer_card_days(f, t), (30, 7))
+
+print("  Sem dado, devolve None em vez de chutar")
+check("nada", pi.infer_card_days([], []), (None, None))
+check("só faturas", pi.infer_card_days(ciclo(8, 15)[0], []), (None, 15))
+check("compras sem billId não deduzem fechamento",
+      pi.infer_card_days([], [tx("x", "2026-09-08", "y", -1.0, "DEBIT")]),
+      (None, None))
+
+print("  Um mês fora do padrão não desloca a dedução")
+f, t = ciclo(8, 15)
+# Uma fatura venceu num feriado e foi empurrada para o dia 17.
+f.append({"id": "bx", "dueDate": "2026-10-17"})
+t.append(dict(tx("tx1", "2026-10-09", "atípica", -1.0, "DEBIT"),
+              creditCardMetadata={"billId": "bx"}))
+check("fica com o dia mais frequente", pi.infer_card_days(f, t), (8, 15))
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")
