@@ -254,7 +254,9 @@ def _open_finance_tab() -> None:
             "malformada; **401/403** é falta de permissão; **200** com lista "
             "vazia é vínculo ausente."
         )
-        st.dataframe(pd.DataFrame(pluggy.probe()), hide_index=True,
+        st.dataframe(pd.DataFrame(pluggy.probe(
+            [i.strip() for i in salvos.split(",") if i.strip()])),
+            hide_index=True,
                      use_container_width=True)
         return
 

@@ -143,7 +143,7 @@ def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
                       hovermode="x unified", showlegend=False)
     fig.update_yaxes(showgrid=True)
     fig.update_xaxes(showgrid=False)
-    st.plotly_chart(fig, use_container_width=True,
+    st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False})
 
 
@@ -191,7 +191,7 @@ def horizontal_bar_expenses(df: pd.DataFrame, *,
     fig.update_traces(textposition="outside")
     _apply_layout(fig)
     fig.update_xaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def vertical_bar(df: pd.DataFrame, x: str, y: str, *,
@@ -205,7 +205,7 @@ def vertical_bar(df: pd.DataFrame, x: str, y: str, *,
     fig = px.bar(df, x=x, y=y, text="Label", color_discrete_sequence=[color])
     fig.update_traces(textposition="outside")
     _apply_layout(fig)
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def area_balance(df: pd.DataFrame, x: str, y: str, *,
@@ -217,7 +217,7 @@ def area_balance(df: pd.DataFrame, x: str, y: str, *,
                   line_shape="spline", color_discrete_sequence=[color])
     fig.update_traces(textposition="top center", mode="lines+markers+text")
     _apply_layout(fig, x_title="Dia", y_title=y_title)
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def budget_overview(df_status: pd.DataFrame, *,
@@ -308,7 +308,7 @@ def budget_overview(df_status: pd.DataFrame, *,
             bgcolor="rgba(0,0,0,0)",
         ),
     )
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def annual_bars(df_monthly: pd.DataFrame, *,
@@ -328,7 +328,7 @@ def annual_bars(df_monthly: pd.DataFrame, *,
     fig.update_traces(hovertemplate="%{x}<br>%{y:,.2f}")
     _apply_layout(fig, x_title="", y_title="R$")
     fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
 
 def monthly_contributions_bars(df_monthly: pd.DataFrame, *,
@@ -371,7 +371,7 @@ def monthly_contributions_bars(df_monthly: pd.DataFrame, *,
 
     _apply_layout(fig, x_title="", y_title="R$")
     fig.update_yaxes(tickprefix="R$ ", gridcolor="rgba(200,200,200,0.2)")
-    st.plotly_chart(fig, use_container_width=True, config=_PLOT_CONFIG)
+    st.plotly_chart(fig, use_container_width=True, theme=None, config=_PLOT_CONFIG)
 
     if show_summary:
         total_aportes = float(df_monthly["Aportes"].sum())

@@ -86,12 +86,22 @@ antigo = ps.Posicao(contas=[ps.Conta("x", "BANK", 1.0)],
 df2 = pd.DataFrame(ps.to_rows(antigo) + ps.to_rows(POS))
 check("pega o novo", round(ps.from_rows(df2).em_conta, 2), 222.69)
 
-print("  Histórico mede patrimônio por retrato")
+print("  Histórico mede patrimônio por DIA, não por clique")
 h = ps.history(df2)
-check("dois pontos", len(h), 2)
-check("em ordem", list(h["Data"]), ["2026-01-01T10:00", "2026-09-29T20:00"])
+check("dois dias", len(h), 2)
+check("eixo em datas, não horários", list(h["Data"]),
+      ["2026-01-01", "2026-09-29"])
 check("o antigo", round(h["Patrimônio"].iloc[0], 2), 1.0)
 check("o novo", round(h["Patrimônio"].iloc[1], 2), round(POS.patrimonio, 2))
+
+# Clicar em Atualizar várias vezes num dia não pode virar vários pontos.
+manha = ps.Posicao(contas=[ps.Conta("x", "BANK", 10.0)],
+                   quando="2026-09-29T09:00")
+tarde = ps.Posicao(contas=[ps.Conta("x", "BANK", 99.0)],
+                   quando="2026-09-29T21:45")
+h2 = ps.history(pd.DataFrame(ps.to_rows(manha) + ps.to_rows(tarde)))
+check("um ponto por dia", len(h2), 1)
+check("vale o último do dia", round(h2["Patrimônio"].iloc[0], 2), 99.0)
 
 print("  Planilha vazia não quebra")
 check("from_rows", ps.from_rows(pd.DataFrame()).vazia, True)

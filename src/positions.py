@@ -186,15 +186,32 @@ def from_rows(df: pd.DataFrame) -> Posicao:
 
 
 def history(df: pd.DataFrame) -> pd.DataFrame:
-    """Patrimônio por retrato, para o gráfico de evolução."""
+    """Patrimônio por DIA, para o gráfico de evolução.
+
+    Um retrato por clique em Atualizar encheria o eixo de horários —
+    "21:40, 21:45, 21:50" — o que não é a pergunta que o gráfico
+    responde. Fica o último retrato de cada dia: o patrimônio ao fim
+    daquele dia, que é o que se quer comparar com o dia seguinte.
+    """
+    vazio = pd.DataFrame(columns=["Data", "Patrimônio"])
     if df.empty or "Data" not in df.columns:
-        return pd.DataFrame(columns=["Data", "Patrimônio"])
+        return vazio
     base = df.copy()
     base["Valor"] = pd.to_numeric(base["Valor"], errors="coerce").fillna(0)
+    base["_carimbo"] = base["Data"].astype(str)
+    base["_dia"] = base["_carimbo"].str.slice(0, 10)
+
+    # Dentro de um dia, só o retrato mais recente conta.
+    ultimo = base.groupby("_dia")["_carimbo"].transform("max")
+    base = base[base["_carimbo"] == ultimo]
+    if base.empty:
+        return vazio
+
     classe = base["Classe"].astype(str).str.upper()
     # Cartão é dívida: entra negativo no patrimônio.
-    base["_peso"] = classe.map(lambda c: -1 if c == TIPO_CARTAO else 1)
-    base["_val"] = base["Valor"].abs() * base["_peso"]
-    fora = base.groupby("Data")["_val"].sum().reset_index()
+    peso = classe.map(lambda c: -1 if c == TIPO_CARTAO else 1)
+    base = base.assign(_val=base["Valor"].abs() * peso)
+
+    fora = base.groupby("_dia")["_val"].sum().reset_index()
     fora.columns = ["Data", "Patrimônio"]
     return fora.sort_values("Data")

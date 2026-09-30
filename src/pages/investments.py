@@ -356,7 +356,7 @@ def _wallet_allocation(positions: list[inv.Position]) -> None:
         fig.update_traces(textinfo="percent+label", textposition="inside")
         fig.update_layout(showlegend=False, height=320,
                           margin=dict(t=10, b=10, l=10, r=10))
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, use_container_width=True, theme=None,
                         config={"displayModeBar": False})
         st.caption("Por classe de ativo")
     with c2:
@@ -368,7 +368,7 @@ def _wallet_allocation(positions: list[inv.Position]) -> None:
         fig2.update_layout(height=320, xaxis_title="", yaxis_title="",
                            margin=dict(t=10, b=10, l=10, r=70))
         fig2.update_xaxes(tickprefix="R$ ")
-        st.plotly_chart(fig2, use_container_width=True,
+        st.plotly_chart(fig2, use_container_width=True, theme=None,
                         config={"displayModeBar": False})
         st.caption("Por ativo (valor líquido)")
 
@@ -911,7 +911,7 @@ def _gross_net_chart(curve: pd.DataFrame, *, title: str) -> None:
         margin=dict(t=60, b=20, l=10, r=10),
     )
     fig.update_yaxes(tickprefix="R$ ")
-    st.plotly_chart(fig, use_container_width=True,
+    st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False})
     st.caption(
         "A área avermelhada entre as linhas é o quanto os impostos consomem "
@@ -1008,7 +1008,7 @@ def _tax_composition(position: inv.Position, rates: inv.MarketRates,
 
     c1, c2 = st.columns([1, 1])
     with c1:
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, use_container_width=True, theme=None,
                         config={"displayModeBar": False})
     with c2:
         data = pd.to_datetime(final["Data"]).strftime("%d/%m/%Y")
@@ -1246,7 +1246,7 @@ def _real_vs_projected_chart(position: inv.Position,
         margin=dict(t=40, b=20, l=10, r=10),
     )
     fig.update_yaxes(tickprefix="R$ ")
-    st.plotly_chart(fig, use_container_width=True,
+    st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False})
 
     if len(hist) >= 2:
@@ -1337,5 +1337,5 @@ def _total_performance(positions: list[inv.Position]) -> None:
             yaxis_title="", margin=dict(t=10, b=10, l=10, r=60),
         )
         fig.update_xaxes(ticksuffix="%")
-        st.plotly_chart(fig, use_container_width=True,
+        st.plotly_chart(fig, use_container_width=True, theme=None,
                         config={"displayModeBar": False})

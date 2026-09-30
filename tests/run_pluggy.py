@@ -192,11 +192,14 @@ def _varia(url, headers=None, params=None, timeout=None):
 
 
 requests.get = _varia
-_p = pluggy.probe()
-check("sonda cinco chamadas", len(_p), 5)
+_p = pluggy.probe(["item-1"])
+check("com um id, sonda também investimentos e contas", len(_p), 8)
+check("sem id, só o que dispensa itemId", len(pluggy.probe()), 5)
+check("investimentos entram na sonda",
+      any("investments" in r["Chamada"] for r in _p), True)
 check("e nunca levanta", all("Chamada" in r for r in _p), True)
 check("distingue 200 de 400 de 404",
-      [r["HTTP"] for r in _p], [200, 400, 200, 404, 404])
+      sorted({r["HTTP"] for r in _p}), [200, 400, 404])
 
 print("  Criação da conexão (connect token e URL)")
 
