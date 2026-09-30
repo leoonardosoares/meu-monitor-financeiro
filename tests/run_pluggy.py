@@ -193,7 +193,10 @@ def _varia(url, headers=None, params=None, timeout=None):
 
 requests.get = _varia
 _p = pluggy.probe(["item-1"])
-check("com um id, sonda também investimentos e contas", len(_p), 8)
+check("com um id, sonda também investimentos, faturas e contas",
+      len(_p), 9)
+check("faturas entram na sonda",
+      any("bills" in r["Chamada"] for r in _p), True)
 check("sem id, só o que dispensa itemId", len(pluggy.probe()), 5)
 check("investimentos entram na sonda",
       any("investments" in r["Chamada"] for r in _p), True)

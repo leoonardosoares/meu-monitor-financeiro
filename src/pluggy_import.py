@@ -20,7 +20,7 @@ import pandas as pd
 
 from src import credit_card as cc
 from src.config import CATEGORIA_TRANSFERENCIA
-from src.dates import parse_dates
+from src.dates import month_label, parse_dates
 
 # Onde cada conta da Pluggy pode desaguar.
 DESTINO_IGNORAR = "Ignorar"
@@ -65,6 +65,80 @@ def transfer_category(descricao: str, categoria_pluggy: str = "") -> str | None:
         if padrao.search(alvo):
             return categoria
     return None
+
+
+# Campos em que a data de fechamento pode vir, na ordem de preferência.
+# Varia por instituição, e adivinhar um nome só zeraria o mapa.
+_CAMPOS_FECHAMENTO = ("closeDate", "closingDate", "billDate", "periodEnd",
+                      "endDate", "referenceDate")
+_CAMPOS_VENCIMENTO = ("dueDate", "paymentDueDate", "due_date")
+
+
+def _primeira_data(bruto: dict, campos: tuple[str, ...]) -> date | None:
+    for campo in campos:
+        if campo not in bruto:
+            continue
+        serie = parse_dates(pd.Series([bruto.get(campo)]))
+        valor = serie.iloc[0]
+        if not pd.isna(valor):
+            return valor.date()
+    return None
+
+
+def bill_month(bill: dict, *, closing_day: int, due_day: int) -> str | None:
+    """Rótulo "MM/AAAA" da fatura, a partir do que o banco informou.
+
+    A convenção do app é nomear a fatura pelo mês em que ela FECHA —
+    confirmada contra o banco do usuário. Quando o fechamento vem na
+    resposta, é ele que manda. Quando só há vencimento, descobre-se o
+    mês testando os candidatos: aquele cujo vencimento calculado bate
+    com o informado é o mês certo, o que dispensa supor se o pagamento
+    cai no próprio mês ou no seguinte.
+    """
+    fechamento = _primeira_data(bill, _CAMPOS_FECHAMENTO)
+    if fechamento is not None:
+        return month_label(pd.Timestamp(fechamento))
+
+    vencimento = _primeira_data(bill, _CAMPOS_VENCIMENTO)
+    if vencimento is None:
+        return None
+
+    alvo = pd.Timestamp(vencimento)
+    for deslocamento in (0, -1, 1):
+        candidato = month_label(alvo + pd.DateOffset(months=deslocamento))
+        try:
+            _, venc = cc.invoice_dates(candidato, closing_day, due_day)
+        except ValueError:
+            continue
+        if venc.date() == vencimento:
+            return candidato
+    # Sem casar, o mês do vencimento é o palpite menos ruim — e some
+    # do caminho assim que a instituição informar o fechamento.
+    return month_label(alvo)
+
+
+def bill_index(bills: list[dict], *, closing_day: int,
+               due_day: int) -> dict[str, str]:
+    """{id da fatura: "MM/AAAA"}, para casar com o `billId` da compra."""
+    out: dict[str, str] = {}
+    for bill in bills or []:
+        ident = str(bill.get("id") or "").strip()
+        if not ident:
+            continue
+        mes = bill_month(bill, closing_day=closing_day, due_day=due_day)
+        if mes:
+            out[ident] = mes
+    return out
+
+
+def bill_id(tx: dict) -> str:
+    """Fatura a que a compra pertence, segundo o banco."""
+    meta = tx.get("creditCardMetadata") or {}
+    for campo in ("billId", "bill_id"):
+        valor = meta.get(campo) or tx.get(campo)
+        if valor:
+            return str(valor).strip()
+    return ""
 
 
 def installment_label(tx: dict) -> str:
@@ -170,6 +244,7 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                   ja_importados: set[str],
                   df_cards: pd.DataFrame,
                   desde: date | None = None,
+                  bills: dict[str, list[dict]] | None = None,
                   sugerir=None) -> tuple[list[Pendente], list[str]]:
     """Monta as pendências a partir do que a API devolveu.
 
@@ -182,6 +257,7 @@ def build_pending(*, accounts: list[tuple[dict, str]],
     vistos: set[str] = set()
     creditos = 0
     antigos = 0
+    deduzidas = 0
 
     for conta, destino in accounts:
         if destino in ("", DESTINO_IGNORAR):
@@ -190,9 +266,14 @@ def build_pending(*, accounts: list[tuple[dict, str]],
         rotulo = account_label(conta)
         e_cartao = destino != DESTINO_BANCO
 
-        fechamento = None
+        fechamento = vencimento = None
+        faturas: dict[str, str] = {}
         if e_cartao:
-            fechamento = int(cc.card_settings(df_cards, destino)["fechamento"])
+            settings = cc.card_settings(df_cards, destino)
+            fechamento = int(settings["fechamento"])
+            vencimento = int(settings["vencimento"])
+            faturas = bill_index((bills or {}).get(chave, []),
+                                 closing_day=fechamento, due_day=vencimento)
 
         for tx in transactions.get(chave, []):
             pid = str(tx.get("id") or "").strip()
@@ -226,8 +307,16 @@ def build_pending(*, accounts: list[tuple[dict, str]],
             descricao = str(tx.get("description") or "").strip() or "(sem descrição)"
             mes = ""
             if e_cartao:
-                mes = cc.invoice_month_for_purchase(
-                    quando, fechamento).strftime("%m/%Y")
+                # A fatura informada pelo banco tem prioridade sobre
+                # qualquer regra nossa: ela é a resposta, não uma
+                # estimativa. A dedução pelo dia de fechamento só entra
+                # quando a instituição não diz a qual fatura a compra
+                # pertence.
+                mes = faturas.get(bill_id(tx), "")
+                if not mes:
+                    deduzidas += 1
+                    mes = cc.invoice_month_for_purchase(
+                        quando, fechamento).strftime("%m/%Y")
 
             cat_pluggy = str(tx.get("category") or "").strip()
             # A transferência tem prioridade sobre o histórico: acertar
@@ -246,6 +335,12 @@ def build_pending(*, accounts: list[tuple[dict, str]],
                 categoria_pluggy=cat_pluggy,
             ))
 
+    if deduzidas:
+        avisos.append(
+            f"{deduzidas} compra(s) de cartão não vieram com a fatura "
+            "informada pelo banco; para essas, o mês foi deduzido pelo "
+            "dia de fechamento cadastrado."
+        )
     if antigos:
         avisos.append(
             f"{antigos} lançamento(s) anteriores a "
