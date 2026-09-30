@@ -212,6 +212,34 @@ def from_rows(df: pd.DataFrame) -> Posicao:
     return Posicao(contas=contas, ativos=ativos, quando=str(ultima))
 
 
+def invested_history(df: pd.DataFrame) -> pd.DataFrame:
+    """Posição investida por dia, para ver a carteira crescer.
+
+    Separado do patrimônio: aqui não entram conta corrente nem cartão,
+    só o que está aplicado. É a curva que responde "quanto minha
+    carteira rendeu", e misturá-la com saldo em conta a tornaria uma
+    curva de outra coisa.
+    """
+    vazio = pd.DataFrame(columns=["Data", "Investido"])
+    if df.empty or "Data" not in df.columns:
+        return vazio
+    base = df.copy()
+    base["_carimbo"] = base["Data"].astype(str)
+    base["_dia"] = base["_carimbo"].str.slice(0, 10)
+    ultimo = base.groupby("_dia")["_carimbo"].transform("max")
+    base = base[base["_carimbo"] == ultimo]
+
+    classe = base["Classe"].astype(str).str.upper()
+    base = base[~classe.isin([TIPO_BANCO, TIPO_CARTAO])]
+    if base.empty:
+        return vazio
+    base["Valor"] = pd.to_numeric(base["Valor"], errors="coerce").fillna(0)
+
+    fora = base.groupby("_dia")["Valor"].sum().reset_index()
+    fora.columns = ["Data", "Investido"]
+    return fora.sort_values("Data")
+
+
 def history(df: pd.DataFrame) -> pd.DataFrame:
     """Patrimônio por DIA, para o gráfico de evolução.
 

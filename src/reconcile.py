@@ -26,6 +26,8 @@ from src.config import CATEGORIA_AJUSTE, CATEGORIA_INVESTIMENTO
 # 3/6, que têm o mesmo valor e a mesma descrição de propósito.
 CHAVES_CARTAO = ["Cartão", "Mês da Fatura", "Descrição", "Parcela",
                  "Valor", "Data Compra"]
+# Identificador da Pluggy, quando a linha veio da importação.
+COLUNA_ID = "ID Pluggy"
 CHAVES_BANCO = ["Data", "Descrição", "Categoria", "Valor", "Tipo"]
 
 
@@ -34,19 +36,61 @@ def _chaves_validas(df: pd.DataFrame, chaves: list[str]) -> list[str]:
 
 
 def duplicates(df: pd.DataFrame, chaves: list[str]) -> pd.Index:
-    """Índices das linhas repetidas, preservando a primeira de cada grupo.
+    """Índices das linhas repetidas, preservando uma de cada compra.
 
-    `keep="first"` é deliberado: sobra exatamente uma de cada compra,
-    nunca zero. Um deduplicador que apaga o grupo inteiro transforma um
-    excesso em falta, que é pior — o excesso se vê no total, a falta não.
+    Dentro de um grupo de linhas idênticas, o identificador da Pluggy
+    decide o que é repetição:
+
+    - **Ids diferentes** são compras diferentes. Dois cafés de R$ 5 no
+      mesmo lugar e no mesmo dia são duas compras; apagar um comia
+      dinheiro de verdade e deixava a fatura abaixo da do banco.
+    - **O mesmo id** é a mesma compra trazida duas vezes.
+    - **Sem id** é lançamento digitado à mão. Quando existe uma cópia
+      com id, a manual é a que sai: a importada é rastreável e a outra
+      não.
+
+    Nunca sobra zero de um grupo — um excesso aparece no total, uma
+    falta não aparece em lugar nenhum.
     """
     if df.empty:
         return pd.Index([])
     usadas = _chaves_validas(df, chaves)
     if not usadas:
         return pd.Index([])
-    normalizado = df[usadas].astype(str).apply(lambda s: s.str.strip())
-    return df.index[normalizado.duplicated(keep="first")]
+
+    chave = (df[usadas].astype(str)
+             .apply(lambda s: s.str.strip())
+             .apply(tuple, axis=1))
+    if COLUNA_ID in df.columns:
+        ids = df[COLUNA_ID].fillna("").astype(str).str.strip()
+    else:
+        ids = pd.Series("", index=df.index)
+
+    remover: list = []
+    ids_vistos: dict[tuple, set[str]] = {}
+    tem_id: dict[tuple, bool] = {}
+    sem_id_guardado: dict[tuple, object] = {}
+
+    for posicao, grupo in chave.items():
+        tem_id[grupo] = tem_id.get(grupo, False) or bool(ids[posicao])
+
+    for posicao, grupo in chave.items():
+        ident = ids[posicao]
+        if ident:
+            conhecidos = ids_vistos.setdefault(grupo, set())
+            if ident in conhecidos:
+                remover.append(posicao)
+            else:
+                conhecidos.add(ident)
+        elif tem_id[grupo]:
+            # Existe a mesma compra vinda do banco; esta é a digitada.
+            remover.append(posicao)
+        elif grupo in sem_id_guardado:
+            remover.append(posicao)
+        else:
+            sem_id_guardado[grupo] = posicao
+
+    return pd.Index(remover)
 
 
 def duplicate_preview(df: pd.DataFrame, chaves: list[str]) -> pd.DataFrame:

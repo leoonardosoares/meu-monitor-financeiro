@@ -57,6 +57,38 @@ def parcelas(repetir: int = 2) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
+# O identificador da Pluggy decide o que é repetição. Sem ele, duas
+# compras iguais no mesmo dia eram fundidas numa só — dinheiro de
+# verdade sumindo, e a fatura ficando abaixo da do banco.
+print("  O identificador separa repetição de coincidência")
+_base = {"Cartão": "P", "Mês da Fatura": "10/2026", "Descrição": "Cafe",
+         "Parcela": "1/1", "Valor": 5.0, "Data Compra": "2026-09-20"}
+
+
+def _par(a, b):
+    return pd.DataFrame([dict(_base, **{"ID Pluggy": a}),
+                         dict(_base, **{"ID Pluggy": b})])
+
+
+check("ids diferentes são compras diferentes",
+      len(rc.duplicates(_par("a", "b"), rc.CHAVES_CARTAO)), 0)
+check("o mesmo id é a mesma compra",
+      len(rc.duplicates(_par("a", "a"), rc.CHAVES_CARTAO)), 1)
+check("duas manuais idênticas: sobra uma",
+      len(rc.duplicates(_par("", ""), rc.CHAVES_CARTAO)), 1)
+
+# Entre a digitada e a importada, fica a rastreável.
+for ordem in (("", "a"), ("a", "")):
+    _df = _par(*ordem)
+    _fora = rc.duplicates(_df, rc.CHAVES_CARTAO)
+    check(f"manual sai, importada fica {ordem}", len(_fora), 1)
+    check("sobrevivente tem id",
+          _df.drop(index=_fora)["ID Pluggy"].iloc[0], "a")
+
+check("sem a coluna de id, compara por campos",
+      len(rc.duplicates(pd.DataFrame([_base, dict(_base)]),
+                        rc.CHAVES_CARTAO)), 1)
+
 print("  Compra lançada duas vezes: sobra uma")
 df = parcelas(2)
 idx = rc.duplicates(df, rc.CHAVES_CARTAO)

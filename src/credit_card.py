@@ -616,6 +616,43 @@ def overdue_invoices(scheduled: list[ScheduledInvoice],
     return [i for i in scheduled if i.overdue]
 
 
+def settle_closed_bills(df_credit_card: pd.DataFrame,
+                        bills: dict[tuple[str, str], date],
+                        *, today: date) -> tuple[pd.DataFrame, int]:
+    """Marca como paga a fatura que o banco fechou e já venceu.
+
+    A importação traz toda compra como Pendente e nada dá baixa — o
+    pagamento aparece no extrato da conta, não no do cartão. Então
+    faturas de meses atrás ficavam eternamente "vencidas", inflando a
+    dívida e a projeção.
+
+    O sinal é a própria fatura: a instituição só publica fatura
+    fechada, e uma fechada cujo vencimento passou foi paga — se não
+    tivesse sido, o cartão estaria bloqueado e o saldo devedor seria
+    outro. Quem não publica fatura (caso do Itaú aqui) não é tocado.
+
+    Devolve (compras atualizadas, quantas linhas mudaram).
+    """
+    if df_credit_card.empty or not bills:
+        return df_credit_card, 0
+    hoje = pd.Timestamp(today).normalize()
+    pagas = {chave for chave, venc in bills.items()
+             if pd.Timestamp(venc) < hoje}
+    if not pagas:
+        return df_credit_card, 0
+
+    df = df_credit_card.copy()
+    cartoes = _card_series(df)
+    meses = _month_series(df)
+    alvo = pd.Series(
+        [(c, m) in pagas for c, m in zip(cartoes, meses)], index=df.index,
+    ) & ~_is_settled(df)
+    if not alvo.any():
+        return df_credit_card, 0
+    df.loc[alvo, "Status"] = "Pago"
+    return df, int(alvo.sum())
+
+
 def situations(scheduled: list[ScheduledInvoice],
                hoje: date) -> dict[tuple[str, str], str]:
     """Como o banco chamaria cada fatura, por cartão.

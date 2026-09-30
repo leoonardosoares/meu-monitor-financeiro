@@ -169,9 +169,12 @@ check("uma de cartão", len(cartao), 1)
 check("e duas no registro de importação", len(registro), 2)
 check("colunas do banco", sorted(banco[0]),
       ["Categoria", "Data", "Descrição", "Tipo", "Valor"])
-check("colunas do cartão", sorted(cartao[0]),
-      ["Cartão", "Categoria", "Data Compra", "Descrição", "Mês da Fatura",
-       "Parcela", "Status", "Valor"])
+from src.config import SHEETS_SCHEMA as _ESQUEMA  # noqa: E402
+check("colunas do cartão batem com a aba", sorted(cartao[0]),
+      sorted(_ESQUEMA["cartao"]))
+# O id acompanha a linha: é ele que impede o removedor de duplicatas de
+# fundir duas compras iguais feitas no mesmo dia.
+check("a linha do cartão leva o id da Pluggy", cartao[0]["ID Pluggy"], "c1")
 check("o registro guarda o id", sorted(x["ID Pluggy"] for x in registro),
       ["b1", "c1"])
 check("cartão entra como pendente", cartao[0]["Status"], "Pendente")

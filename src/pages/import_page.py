@@ -256,11 +256,40 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             due_day=int(settings["vencimento"]), lido_em=date.today())
     if linhas_fatura:
         repository.merge_bank_bills(linhas_fatura)
+        _dar_baixa_nas_fechadas(linhas_fatura)
     _aprender_datas(ativas, destinos, transacoes, faturas, df_cards)
 
     st.session_state["pluggy_pendentes"] = pendentes
     st.session_state["pluggy_avisos"] = avisos + mais
     st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes
+
+
+def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
+    """Marca como paga a fatura que o banco fechou e já venceu.
+
+    Sem isso, a importação deixa tudo Pendente para sempre: o pagamento
+    aparece no extrato da conta, não no do cartão, e nada liga os dois.
+    Faturas de meses atrás ficavam "vencidas", inflando a dívida e a
+    projeção do próximo mês.
+    """
+    vencimentos: dict[tuple[str, str], date] = {}
+    for linha in linhas_fatura:
+        bruto = str(linha.get("Vencimento") or "").strip()
+        if not bruto:
+            continue
+        lido = pd.to_datetime(bruto, errors="coerce")
+        if not pd.isna(lido):
+            vencimentos[(linha["Cartão"], linha["Mês"])] = lido.date()
+
+    atual = repository.load_credit_card()
+    novo, quantas = cc.settle_closed_bills(atual, vencimentos,
+                                           today=date.today())
+    if quantas:
+        repository.save_credit_card(novo)
+        st.success(
+            f"✅ {quantas} parcela(s) de faturas já fechadas e vencidas "
+            "foram marcadas como pagas — o banco não as cobra mais."
+        )
 
 
 def _aprender_datas(ativas, destinos, transacoes, faturas,

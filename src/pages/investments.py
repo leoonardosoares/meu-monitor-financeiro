@@ -72,6 +72,8 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
               "diferentes."),
     )
 
+    _grafico_crescimento(aportado)
+
     if not guardada.ativos:
         st.info(md(
             "Nenhum investimento veio das suas conexões. Nem toda "
@@ -85,12 +87,21 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
     st.write("")
     esq, dir_ = st.columns([1, 1])
     with esq:
-        components.stat_card(
-            label="📈 Carteira", value=guardada.investido,
-            rows=[{"nome": a.nome, "sub": a.instituicao,
-                   "valor": brl(a.valor), "bruto": a.valor}
-                  for a in guardada.ativos],
-        )
+        # Recolhida: 45 ativos abertos tomavam a tela inteira antes de
+        # qualquer outra informação aparecer.
+        with st.expander(
+            md(f"📈 Carteira — {len(guardada.ativos)} ativo(s) · "
+               f"{brl(guardada.investido)}")
+        ):
+            st.dataframe(pd.DataFrame([{
+                "Ativo": a.nome, "Instituição": a.instituicao,
+                "Classe": a.classe or "—",
+                "Valor": brl(a.valor),
+                "% da carteira": (
+                    f"{a.valor / guardada.investido * 100:.1f}%"
+                    if guardada.investido else "—"),
+            } for a in sorted(guardada.ativos, key=lambda x: -x.valor)]),
+                hide_index=True, use_container_width=True)
     with dir_:
         porc = {}
         for a in guardada.ativos:
@@ -107,6 +118,49 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
         st.write("")
         st.markdown("###### Evolução do patrimônio")
         components.area_trend(historico, x="Data", y="Patrimônio")
+
+
+def _grafico_crescimento(aportado: float) -> None:
+    """Quanto foi aportado e quanto isso virou, ao longo do tempo.
+
+    Duas linhas: o dinheiro que você pôs e a posição que as
+    instituições reportam. A distância entre elas é o rendimento — que
+    numa linha só ficaria invisível.
+    """
+    historico = positions_mod.invested_history(repository.load_positions())
+    if len(historico) < 2:
+        st.caption(
+            "O gráfico de crescimento aparece a partir da segunda "
+            "leitura da posição — atualize no Dashboard em dias "
+            "diferentes para a curva se formar."
+        )
+        return
+
+    st.write("")
+    st.markdown("###### Aportado × posição")
+    dados = historico.copy()
+    dados["Aportado"] = aportado
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=dados["Data"], y=dados["Aportado"], mode="lines",
+        name="Aportado", line=dict(color=Colors.NEUTRAL, width=2,
+                                   dash="dot"),
+        hovertemplate="%{x}<br>aportado <b>%{y:,.2f}</b><extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=dados["Data"], y=dados["Investido"], mode="lines",
+        name="Posição", line=dict(color=Colors.PRIMARY, width=2),
+        fill="tonexty",
+        fillcolor="rgba(82,191,144,0.14)",
+        hovertemplate="%{x}<br>posição <b>%{y:,.2f}</b><extra></extra>"))
+    fig.update_layout(height=240, margin=dict(t=6, b=6, l=6, r=6),
+                      hovermode="x unified",
+                      legend=dict(orientation="h", y=1.15, x=0))
+    fig.update_xaxes(showgrid=False)
+    st.plotly_chart(fig, use_container_width=True, theme=None,
+                    config={"displayModeBar": False})
+    st.caption(
+        "A área entre as duas linhas é o rendimento acumulado."
+    )
 
 
 def _abas_manuais(df_transactions: pd.DataFrame) -> None:
