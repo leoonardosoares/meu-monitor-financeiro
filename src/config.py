@@ -16,7 +16,7 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     "financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo"],
     "cartao": [
         "Data Compra", "Mês da Fatura", "Cartão", "Descrição", "Categoria",
-        "Parcela", "Valor", "Status", "ID Pluggy",
+        "Parcela", "Valor", "Status", "ID Pluggy", "Origem",
     ],
     # Cadastro dos cartões: cada um com limite e datas próprias.
     "cartoes": [
@@ -95,6 +95,14 @@ DEFAULT_CARD_NAME = "Principal"
 # derivado reproduzir o do banco, e contá-lo como receita ou despesa
 # inventaria um ganho ou um gasto que nunca aconteceu.
 TRANSFER_CATEGORIES = ["Investimento", "Transferência", "Ajuste"]
+
+# Quem trouxe cada linha do cartão. Guardar isso não é enfeite: é o que
+# separa o que o banco cobrou do que o app deduziu. Uma parcela projetada
+# pode ser substituída quando o banco a lançar de verdade; uma linha do
+# extrato, nunca — apagá-la tira da fatura uma cobrança real.
+ORIGEM_BANCO = "banco"
+ORIGEM_MANUAL = "manual"
+ORIGEM_PROJECAO = "projeção"
 CATEGORIA_TRANSFERENCIA = "Transferência"
 CATEGORIA_INVESTIMENTO = "Investimento"
 CATEGORIA_AJUSTE = "Ajuste"

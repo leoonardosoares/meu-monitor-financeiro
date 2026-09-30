@@ -256,7 +256,6 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             due_day=int(settings["vencimento"]), lido_em=date.today())
     if linhas_fatura:
         repository.merge_bank_bills(linhas_fatura)
-        _dar_baixa_nas_fechadas(linhas_fatura)
     _aprender_datas(ativas, destinos, transacoes, faturas, df_cards)
 
     st.session_state["pluggy_pendentes"] = pendentes
@@ -264,7 +263,7 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
     st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes
 
 
-def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
+def _dar_baixa_nas_fechadas() -> None:
     """Marca como paga a fatura que o banco fechou e já venceu.
 
     Sem isso, a importação deixa tudo Pendente para sempre: o pagamento
@@ -272,14 +271,16 @@ def _dar_baixa_nas_fechadas(linhas_fatura: list[dict]) -> None:
     Faturas de meses atrás ficavam "vencidas", inflando a dívida e a
     projeção do próximo mês.
     """
+    faturas_gravadas = repository.load_bank_bills()
     vencimentos: dict[tuple[str, str], date] = {}
-    for linha in linhas_fatura:
+    for _, linha in faturas_gravadas.iterrows():
         bruto = str(linha.get("Vencimento") or "").strip()
         if not bruto:
             continue
         lido = pd.to_datetime(bruto, errors="coerce")
         if not pd.isna(lido):
-            vencimentos[(linha["Cartão"], linha["Mês"])] = lido.date()
+            vencimentos[(str(linha["Cartão"]).strip(),
+                         str(linha["Mês"]).strip())] = lido.date()
 
     atual = repository.load_credit_card()
     novo, quantas = cc.settle_closed_bills(atual, vencimentos,
@@ -453,6 +454,11 @@ def _commit(aceitos: list, df_transactions: pd.DataFrame,
     repository.save_imports(
         pd.concat([repository.load_imports(), pd.DataFrame(registro)],
                   ignore_index=True))
+
+    # A baixa vem depois da gravação. Rodando na busca, ela não via as
+    # linhas que esta importação acabaria de criar — e faturas já pagas
+    # voltavam a aparecer como vencidas a cada leva nova.
+    _dar_baixa_nas_fechadas()
 
     st.session_state["pluggy_pendentes"] = None
     st.success(

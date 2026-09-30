@@ -19,7 +19,7 @@ from datetime import date
 import pandas as pd
 
 from src import credit_card as cc
-from src.config import CATEGORIA_TRANSFERENCIA
+from src.config import CATEGORIA_TRANSFERENCIA, ORIGEM_BANCO
 from src.dates import month_label, parse_dates
 
 # Onde cada conta da Pluggy pode desaguar.
@@ -534,6 +534,9 @@ def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dic
                 # saber que duas compras iguais no mesmo dia são duas
                 # compras, e não a mesma lançada duas vezes.
                 "ID Pluggy": p.pluggy_id,
+                # Quem trouxe a linha. O que veio do banco nunca é
+                # candidato a limpeza de parcela projetada.
+                "Origem": ORIGEM_BANCO,
             })
         else:
             banco.append({

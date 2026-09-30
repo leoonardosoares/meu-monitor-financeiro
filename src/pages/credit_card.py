@@ -188,6 +188,47 @@ def _parcelas_projetadas() -> None:
             st.dataframe(falhas, hide_index=True, use_container_width=True)
 
 
+def _completar_parcelamentos() -> None:
+    """Deduz as parcelas contratadas que o banco ainda não lançou.
+
+    A Pluggy só entrega o que já foi cobrado; uma compra em 10x tem as
+    parcelas seguintes acordadas mas invisíveis. Como o valor e a
+    quantidade já estão fechados, deduzi-las é honesto — e sem elas a
+    projeção do próximo ano fica vazia justamente onde há compromisso.
+    """
+    df_tx = repository.load_credit_card()
+    novas = reconcile.project_installments(df_tx, today=date.today())
+    if not novas:
+        return
+
+    total = sum(n["Valor"] for n in novas)
+    meses = sorted({n["Mês da Fatura"] for n in novas})
+    with st.expander(
+        md(f"➕ {len(novas)} parcela(s) contratada(s) que o banco ainda "
+           f"não lançou — {brl(total)}")
+    ):
+        st.caption(
+            "Deduzidas do parcelamento: se a última parcela conhecida é "
+            "a 4/10, faltam seis, no mesmo valor e um mês depois da "
+            "outra. Elas entram marcadas como **projeção**, para você "
+            "saber que não vieram do extrato."
+        )
+        st.dataframe(pd.DataFrame([{
+            "Cartão": n["Cartão"], "Fatura": n["Mês da Fatura"],
+            "Descrição": n["Descrição"], "Parcela": n["Parcela"],
+            "Valor": brl(n["Valor"]),
+        } for n in novas]), hide_index=True, use_container_width=True)
+        st.caption(md(f"De {meses[0]} a {meses[-1]}."))
+
+        if st.button(f"➕ Incluir {len(novas)} parcela(s) projetada(s)",
+                     type="primary", key="projetar_parcelas"):
+            repository.save_credit_card(pd.concat(
+                [df_tx, pd.DataFrame(novas)], ignore_index=True))
+            st.success(md(f"{len(novas)} parcela(s) incluída(s) — "
+                          f"{brl(total)}."))
+            st.rerun()
+
+
 def _faturas_do_banco() -> dict[tuple[str, str], float]:
     """{(cartão, mês): total informado pela instituição}."""
     df = repository.load_bank_bills()
@@ -264,6 +305,7 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
     _remover_duplicatas()
     _parcelas_projetadas()
+    _completar_parcelamentos()
     _faturas(df_cards, df_tx, df_pay, names, banco_faturas)
 
 
