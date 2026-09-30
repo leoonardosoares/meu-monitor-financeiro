@@ -240,6 +240,9 @@ def _open_finance_tab() -> None:
     if not st.button("🔌 Testar conexão", type="primary"):
         return
 
+    # A sonda usa um id real para conseguir chamar /investments e
+    # /accounts, que exigem itemId.
+    st.session_state["pluggy_items"] = salvos
     itens, erros = _fetch_items(salvos)
 
     if not itens:

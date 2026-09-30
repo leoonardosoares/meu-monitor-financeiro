@@ -136,8 +136,15 @@ def probe() -> list[dict]:
     parâmetro que mudaram entre versões, e cada combinação errada
     devolve o mesmo 400 opaco.
     """
+    ids = [i.strip() for i in
+           st.session_state.get("pluggy_items", "").split(",") if i.strip()]
+    um = ids[0] if ids else None
     tentativas = [
         ("GET /connectors", "/connectors", {"pageSize": 1}),
+        *([("GET /investments?itemId=…", "/investments", {"itemId": um}),
+           ("GET /investments (sem filtro)", "/investments", None),
+           ("GET /accounts?itemId=…", "/accounts", {"itemId": um})]
+          if um else []),
         ("GET /v2/items", "/v2/items", None),
         ("GET /connectors (todos)", "/connectors", None),
         ("GET /items", "/items", None),
@@ -389,4 +396,19 @@ def list_bills(account_id: str) -> list[dict]:
 
 
 def list_investments(item_id: str) -> list[dict]:
-    return (_get("/investments", {"itemId": item_id}).get("results") or [])
+    """Carteira de uma conexão.
+
+    A resposta não tem um formato só: dependendo do endpoint a lista vem
+    em `results`, em `investments`, ou é a própria resposta. Aceitar os
+    três evita devolver carteira vazia por causa do nome da chave —
+    sintoma que já apareceu aqui com a conta cheia no Meu Pluggy e zero
+    na tela.
+    """
+    bruto = _get("/investments", {"itemId": item_id})
+    if isinstance(bruto, list):
+        return bruto
+    for chave in ("results", "investments", "data", "items"):
+        valor = bruto.get(chave)
+        if isinstance(valor, list):
+            return valor
+    return []

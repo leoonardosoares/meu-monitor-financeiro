@@ -112,7 +112,14 @@ def _css() -> str:
         white-space: normal !important;
         overflow: visible !important;
     }}
-    [data-testid="stMetricDelta"] {{ font-size: .78rem !important; }}
+    /* O delta é uma pilha cinza sobre cinza no tema nativo; sem cor
+       própria ele fica ilegível nos dois modos. */
+    [data-testid="stMetricDelta"] {{
+        font-size: .76rem !important;
+        font-weight: 600 !important;
+        color: var(--muted) !important;
+    }}
+    [data-testid="stMetricDelta"] svg {{ fill: currentColor !important; }}
 
     /* ── Contêineres com borda viram cartão ── */
     [data-testid="stVerticalBlockBorderWrapper"] > div:has(> [data-testid="stVerticalBlock"]) {{
@@ -145,6 +152,40 @@ def _css() -> str:
         border-color: var(--green-hover);
         color: var(--on-primary);
         box-shadow: 0 6px 18px rgba(82,191,144,.22);
+    }}
+
+    /* ── Campos ──────────────────────────────────────────────────────
+       Os widgets vêm do BaseWeb e seguem o tema nativo do Streamlit,
+       que é lido na inicialização e não muda. Sem forçar cada peça, o
+       seletor de período aparecia como uma caixa preta num app claro. */
+    [data-baseweb="select"] > div,
+    [data-baseweb="select"] div[role="button"],
+    [data-baseweb="input"], [data-baseweb="base-input"],
+    [data-baseweb="textarea"], [data-baseweb="datepicker"] input {{
+        background: var(--surface-2) !important;
+        border-color: var(--border) !important;
+        color: var(--text) !important;
+    }}
+    [data-baseweb="select"] *, [data-baseweb="input"] * {{
+        color: var(--text) !important;
+    }}
+    [data-baseweb="select"] svg {{ fill: var(--muted) !important; }}
+    /* A lista que abre é renderizada fora da árvore do componente. */
+    [data-baseweb="popover"] [role="listbox"],
+    [data-baseweb="menu"], [data-baseweb="calendar"] {{
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+    }}
+    [role="option"], [data-baseweb="menu"] li {{
+        background: var(--surface) !important;
+        color: var(--text) !important;
+    }}
+    [role="option"]:hover, [data-baseweb="menu"] li:hover {{
+        background: var(--surface-2) !important;
+    }}
+    [data-baseweb="tag"] {{
+        background: var(--primary-soft) !important;
+        color: var(--text) !important;
     }}
 
     /* ── Campos ── */
