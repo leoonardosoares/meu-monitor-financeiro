@@ -17,7 +17,7 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from src import components, credit_card as cc, pluggy, repository
+from src import components, credit_card as cc, pluggy, reconcile, repository
 from src import pluggy_import as pi
 from src.config import ConfigKeys
 from src.finance import suggest_category
@@ -448,9 +448,22 @@ def _commit(aceitos: list, df_transactions: pd.DataFrame,
         repository.save_transactions(
             pd.concat([base, pd.DataFrame(banco)], ignore_index=True))
     if cartao:
-        repository.save_credit_card(
-            pd.concat([df_credit_card, pd.DataFrame(cartao)],
-                      ignore_index=True))
+        juntado = pd.concat([df_credit_card, pd.DataFrame(cartao)],
+                            ignore_index=True)
+        # Se alguma das parcelas que acabaram de chegar já tinha sido
+        # projetada, a projeção sai agora — não numa tela de limpeza
+        # depois. Deixá-la para o usuário notar significa a fatura contar
+        # a mesma parcela duas vezes até ele notar, e o valor que ele
+        # confere é justamente esse.
+        obsoletas = reconcile.supersede_projections(juntado)
+        if len(obsoletas):
+            juntado = juntado.drop(index=obsoletas).reset_index(drop=True)
+        repository.save_credit_card(juntado)
+        if len(obsoletas):
+            st.info(
+                f"♻️ {len(obsoletas)} parcela(s) que estavam projetadas "
+                "foram substituídas pela cobrança real do banco."
+            )
     repository.save_imports(
         pd.concat([repository.load_imports(), pd.DataFrame(registro)],
                   ignore_index=True))
