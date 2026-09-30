@@ -295,11 +295,13 @@ def _open_finance_tab() -> None:
     st.divider()
     st.markdown("**2. Informar as conexões criadas**")
     st.caption(
-        "Esta conta da Pluggy não permite *listar* as conexões — a chave lê "
-        "uma conexão específica, mas não enumera todas. Então os "
-        "identificadores ficam guardados aqui. Pegue cada um no dashboard "
-        "da Pluggy, em **Dados Financeiros → Execuções**: é o `itemId`, um "
-        "código no formato `a1b2c3d4-...`."
+        "Esta conta da Pluggy não permite *listar* as conexões — a chave "
+        "lê uma conexão específica, mas não enumera todas. Então os "
+        "identificadores ficam guardados aqui.\n\n"
+        "O identificador aparece **na caixa verde do passo 1**, ao "
+        "terminar de conectar. Se a conexão já existe e você não o tem "
+        "mais, gere o link de novo: ele vem no fim do endereço da "
+        "janela de autorização, depois de `state=`."
     )
     salvos = repository.load_config_text(ConfigKeys.PLUGGY_ITEMS)
     with st.form("pluggy_items"):
@@ -369,6 +371,53 @@ def _open_finance_tab() -> None:
                 "Número": c.get("number"),
                 "Saldo": brl(float(c.get("balance") or 0)),
             } for c in contas]), hide_index=True, use_container_width=True)
+
+            _faturas_cruas(contas)
+
+
+def _faturas_cruas(contas: list[dict]) -> None:
+    """O que a API devolve em /bills, campo por campo.
+
+    O diagnóstico antigo só aparecia quando algo falhava — mas há
+    perguntas que só se respondem com a chamada funcionando, como
+    saber se a instituição publica as faturas futuras. Aqui a resposta
+    fica visível mesmo quando tudo dá certo.
+    """
+    cartoes = [c for c in contas
+               if str(c.get("type") or "").upper() == "CREDIT"]
+    if not cartoes:
+        return
+
+    with st.expander("🔍 O que o banco devolve em /bills"):
+        st.caption(
+            "Uma linha por fatura, com os campos crus. Serve para ver "
+            "se a instituição publica as faturas em aberto e futuras, "
+            "ou só as já fechadas."
+        )
+        for conta in cartoes:
+            nome = str(conta.get("name") or "cartão")
+            try:
+                faturas = pluggy.list_bills(str(conta.get("id") or ""))
+            except pluggy.PluggyError as exc:
+                st.error(f"🚨 {nome}: {exc}")
+                continue
+            if not faturas:
+                st.warning(
+                    f"**{nome}**: a API não devolveu nenhuma fatura. "
+                    "Nesse caso o app soma as compras para chegar ao "
+                    "total."
+                )
+                continue
+            st.markdown(f"**{nome}** — {len(faturas)} fatura(s)")
+            campos: list[str] = []
+            for f in faturas:
+                for k in f:
+                    if k not in campos:
+                        campos.append(k)
+            st.dataframe(
+                pd.DataFrame([{k: str(f.get(k, "")) for k in campos}
+                              for f in faturas]),
+                hide_index=True, use_container_width=True)
 
 
 def _fetch_items(salvos: str) -> tuple[list[dict], list[str]]:
