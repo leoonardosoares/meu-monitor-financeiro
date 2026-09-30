@@ -272,6 +272,25 @@ for _modo, _cores in PALETTES.items():
     check(f"{_modo}: amplitude da banda de contraste abaixo de 1,5",
           round(max(_banda) - min(_banda), 2) < 1.5, True)
 
+print("  Tabela de leitura não usa o widget nativo")
+# `st.dataframe` é desenhado num canvas e segue o tema do config.toml,
+# que é lido na inicialização e não muda: no modo claro virava um
+# retângulo preto de texto branco no meio da página, e folha de estilo
+# nenhuma alcança aquilo. Onde o usuário só lê, a tabela é HTML.
+# `st.data_editor` continua valendo: ali ele edita.
+_nativas = []
+for _pasta, _, _arqs in os.walk(_RAIZ):
+    if "__pycache__" in _pasta:
+        continue
+    for _nome in sorted(_arqs):
+        if not _nome.endswith(".py"):
+            continue
+        for _n, _l in enumerate(
+                open(os.path.join(_pasta, _nome), encoding="utf-8"), 1):
+            if "st.dataframe(" in _l:
+                _nativas.append(f"{_nome}:{_n}")
+check("nenhum st.dataframe nas telas", _nativas, [])
+
 print("  O título da página é maior que o de seção")
 # Os dois eram h3: o nome da página tinha o peso de cada bloco dentro
 # dela, e a tela não tinha começo. Depois de dar 1,15rem à seção, a

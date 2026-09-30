@@ -1,6 +1,8 @@
 """Componentes/widgets reutilizáveis do Streamlit + Plotly."""
 from __future__ import annotations
 
+from html import escape
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -201,6 +203,55 @@ def section(title: str, sub: str | None = None, *,
         partes.append(f'<div class="mf-sec__sub">{sub}</div>')
     partes.append("</div>")
     st.markdown("".join(partes), unsafe_allow_html=True)
+
+
+def table(df: pd.DataFrame, *, align_right: tuple[str, ...] = (),
+          empty_msg: str = "Nada para mostrar.", max_rows: int = 200) -> None:
+    """Tabela de leitura em HTML, com as cores do tema.
+
+    `st.dataframe` é desenhado num canvas e segue o tema nativo do
+    Streamlit, que é lido do `config.toml` na inicialização e não muda.
+    Num app claro ele aparecia como um retângulo preto de texto branco no
+    meio da página — e nenhuma folha de estilo alcança aquilo, porque não
+    é HTML.
+
+    Esta serve só para tabela de leitura. Onde o usuário edita, o
+    `st.data_editor` continua sendo a peça certa.
+
+    Dinheiro aqui NÃO passa por `md()`. A regra do `$` que vira LaTeX
+    vale para texto markdown; num bloco de HTML o Streamlit repassa o
+    conteúdo sem processar inline, e o cartão de estatística já prova
+    isso na prática — ele imprime quatro valores em reais no mesmo bloco
+    e todos aparecem certos. Escapar aqui produziria uma barra invertida
+    visível antes de cada cifrão.
+    """
+    if df is None or df.empty:
+        st.caption(empty_msg)
+        return
+
+    recorte = df.head(max_rows)
+    # A descrição vem do banco e entra num bloco com `unsafe_allow_html`:
+    # sem escapar, um "<" no nome de um estabelecimento quebra a tabela
+    # inteira, e o resto da página junto.
+    cabecalho = "".join(
+        f'<th class="{"mf-tbl--num" if c in align_right else ""}">'
+        f"{escape(str(c))}</th>"
+        for c in recorte.columns)
+    corpo = []
+    for _, linha in recorte.iterrows():
+        celulas = "".join(
+            f'<td class="{"mf-tbl--num" if c in align_right else ""}">'
+            f'{"" if pd.isna(linha[c]) else escape(str(linha[c]))}</td>'
+            for c in recorte.columns)
+        corpo.append(f"<tr>{celulas}</tr>")
+    st.markdown(
+        f'<div class="mf-tbl-wrap"><table class="mf-tbl">'
+        f"<thead><tr>{cabecalho}</tr></thead>"
+        f'<tbody>{"".join(corpo)}</tbody></table></div>',
+        unsafe_allow_html=True,
+    )
+    if len(df) > max_rows:
+        st.caption(f"…e mais {len(df) - max_rows} linha(s).")
 
 
 def invoice_card(*, card: str, month: str, value: str, state: str,

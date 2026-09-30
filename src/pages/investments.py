@@ -93,15 +93,14 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
             md(f"📈 Carteira — {len(guardada.ativos)} ativo(s) · "
                f"{brl(guardada.investido)}")
         ):
-            st.dataframe(pd.DataFrame([{
+            components.table(pd.DataFrame([{
                 "Ativo": a.nome, "Instituição": a.instituicao,
                 "Classe": a.classe or "—",
                 "Valor": brl(a.valor),
                 "% da carteira": (
                     f"{a.valor / guardada.investido * 100:.1f}%"
                     if guardada.investido else "—"),
-            } for a in sorted(guardada.ativos, key=lambda x: -x.valor)]),
-                hide_index=True, use_container_width=True)
+            } for a in sorted(guardada.ativos, key=lambda x: -x.valor)]))
     with dir_:
         porc = {}
         for a in guardada.ativos:
@@ -377,7 +376,7 @@ def _wallet_table(positions: list[inv.Position]) -> None:
     for col in ("Aplicado", "Bruto hoje", "Impostos", "Líquido hoje",
                 "Rende (líq.)"):
         display[col] = display[col].apply(brl)
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
 
 
 def _rate_label(p: inv.Position) -> str:
@@ -601,7 +600,7 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
             "`Aporte` ou `Resgate`."
         )
         with st.expander("Ver linhas ignoradas"):
-            st.dataframe(invalidas, hide_index=True, use_container_width=True)
+            components.table(invalidas)
 
     _reconciliation_panel(df_transactions, df_moves)
 
@@ -877,7 +876,7 @@ def _portfolio_projection(positions: list[inv.Position],
         detail["Data"] = pd.to_datetime(detail["Data"]).dt.strftime("%m/%Y")
         for col in ("Principal", "Bruto", "IOF", "IR", "Líquido"):
             detail[col] = detail[col].apply(brl)
-        st.dataframe(detail, hide_index=True, use_container_width=True)
+        components.table(detail)
 
 
 def _asset_projection(position: inv.Position, rates: inv.MarketRates,
@@ -1028,7 +1027,7 @@ def _redemption_scenarios(position: inv.Position,
     display = df.copy()
     for col in ("Bruto", "IOF", "IR", "Líquido", "Ganho líquido"):
         display[col] = display[col].apply(brl)
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
     st.caption(md(
         f"Maior valor líquido: **{best['Cenário']}** "
         f"({best['Data']}) — {brl(best['Líquido'])}. Projeção assume que a "
@@ -1235,8 +1234,7 @@ def _position_tab(*, positions: list[inv.Position],
                 "Desvio": f"{desvio_pct:+.2f}%",
                 "Rendimento real (líq.)": brl(p.yield_net_today),
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True,
-                     use_container_width=True)
+        components.table(pd.DataFrame(rows))
         st.caption(
             "Desvio positivo: o ativo rendeu **mais** que a taxa presumida. "
             "Negativo: rendeu menos — vale revisar a taxa cadastrada ou as "
@@ -1380,7 +1378,7 @@ def _total_performance(positions: list[inv.Position]) -> None:
     for col in ("Aplicado", "Bruto", "Líquido", "Rendimento líq."):
         display[col] = display[col].apply(brl)
     display["%"] = df["%"].apply(lambda v: f"{v:+.2f}%")
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
 
     if len(df) >= 2:
         fig = px.bar(

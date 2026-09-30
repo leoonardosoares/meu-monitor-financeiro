@@ -221,15 +221,13 @@ def _parcelas_projetadas() -> None:
             f"Vão de **{meses[0]}** a **{meses[-1]}**. A fatura do mês "
             "corrente não é tocada."
         ))
-        st.dataframe(pd.DataFrame([{
+        components.table(pd.DataFrame([{
             "Cartão": r.get("Cartão"), "Fatura": r.get("Mês da Fatura"),
             "Descrição": r.get("Descrição"), "Parcela": r.get("Parcela"),
             "Valor": brl(float(pd.to_numeric(r.get("Valor"),
                                              errors="coerce") or 0)),
-        } for _, r in alvo.head(40).iterrows()]), hide_index=True,
-            use_container_width=True)
-        if len(alvo) > 40:
-            st.caption(f"…e mais {len(alvo) - 40} linha(s).")
+        } for _, r in alvo.iterrows()]), align_right=("Valor",),
+            max_rows=40)
 
         if st.button(f"🧹 Remover {len(idx)} linha(s) criada(s) à mão",
                      type="primary", key="limpar_projetadas"):
@@ -248,7 +246,7 @@ def _parcelas_projetadas() -> None:
                 "buraco aponta linha faltando; uma repetição, linha "
                 "inventada."
             )
-            st.dataframe(falhas, hide_index=True, use_container_width=True)
+            components.table(falhas)
 
 
 def _completar_parcelamentos() -> None:
@@ -282,11 +280,11 @@ def _completar_parcelamentos() -> None:
             "marcadas como **projeção**, para você saber que não vieram "
             "do extrato."
         )
-        st.dataframe(pd.DataFrame([{
+        components.table(pd.DataFrame([{
             "Cartão": n["Cartão"], "Fatura": n["Mês da Fatura"],
             "Descrição": n["Descrição"], "Parcela": n["Parcela"],
             "Valor": brl(n["Valor"]),
-        } for n in novas]), hide_index=True, use_container_width=True)
+        } for n in novas]), align_right=("Valor",))
         st.caption(md(f"De {meses[0]} a {meses[-1]}."))
 
         if st.button(f"➕ Incluir {len(novas)} parcela(s) que faltam",
@@ -625,10 +623,7 @@ def _remover_duplicatas() -> None:
             "Linhas idênticas em cartão, fatura, descrição, parcela, "
             "valor e data da compra. Uma de cada fica."
         )
-        st.dataframe(previa.head(30), hide_index=True,
-                     use_container_width=True)
-        if len(previa) > 30:
-            st.caption(f"…e mais {len(previa) - 30} grupo(s).")
+        components.table(previa, max_rows=30)
         if st.button(f"🧹 Remover {quantas} cópia(s)", type="primary",
                      key="dedup_cartao"):
             limpo = df_tx.drop(
@@ -788,8 +783,7 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                 st.caption(f"{i.paid_pct:.0f}% da fatura já foi adiantado.")
             compras = _invoice_lines(df_tx, i.card, i.month)
             if not compras.empty:
-                st.dataframe(compras, hide_index=True,
-                             use_container_width=True)
+                components.table(compras, align_right=("Valor",))
 
 
 def _invoice_lines(df_tx: pd.DataFrame, card: str, month: str) -> pd.DataFrame:
@@ -1150,7 +1144,7 @@ def _reschedule_section(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             f"**{len(drift)}** parcela(s) pendente(s) de **{alvo}** estão em "
             f"um mês que não corresponde ao fechamento no dia {fech}."
         )
-        st.dataframe(preview, hide_index=True, use_container_width=True)
+        components.table(preview)
 
         if st.button(f"Aplicar em {alvo}", type="primary",
                      key="card_reschedule_apply"):

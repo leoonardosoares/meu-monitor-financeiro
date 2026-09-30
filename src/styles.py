@@ -306,43 +306,150 @@ def _css() -> str:
         font-size: .85rem;
     }
 
-    /* ── Abas ───────────────────────────────────────────────────────────
-       Viraram a navegação de primeiro nível das páginas grandes, então
-       precisam parecer navegação: pílula no selecionado, não só cor de
-       texto — que era indistinguível de um link no modo claro. */
+    /* ── Abas: controle segmentado ──────────────────────────────────────
+       O bloco verde atrás da aba escolhida ficava sujo — um retângulo de
+       cor chapada em volta do texto. Aqui a lista inteira é uma calha
+       afundada e a aba escolhida é a única pastilha ERGUIDA dentro dela:
+       o destaque vem do relevo, não de um fundo colorido. */
     .stTabs [data-baseweb="tab-list"] {
-        gap: .25rem;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: .1rem;
-        margin-bottom: .4rem;
+        gap: .2rem;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: .25rem;
+        margin-bottom: 1rem;
+        display: inline-flex;
+        flex-wrap: wrap;
     }
     .stTabs [data-baseweb="tab"] {
-        color: var(--muted);
+        color: var(--muted) !important;
         font-weight: 600;
-        font-size: .9rem;
-        padding: .5rem .9rem;
-        border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+        font-size: .875rem;
+        padding: .45rem .95rem !important;
+        border-radius: 9px;
+        border: 1px solid transparent;
+        transition: background .16s ease, color .16s ease,
+                    box-shadow .16s ease;
     }
-    .stTabs [data-baseweb="tab"]:hover {
-        background: var(--surface-2);
-        color: var(--text);
+    .stTabs [data-baseweb="tab"] p {
+        color: inherit !important;
+        font-weight: 600;
     }
+    .stTabs [data-baseweb="tab"]:hover { color: var(--text) !important; }
     .stTabs [aria-selected="true"] {
-        color: var(--green) !important;
-        background: var(--green-soft);
-    }
-    .stTabs [data-baseweb="tab-highlight"] { background: var(--green); }
-    .stTabs [data-baseweb="tab-border"] { background: transparent; }
-
-    /* ── Expander ── */
-    [data-testid="stExpander"] {
         background: var(--surface);
+        border-color: var(--border);
+        color: var(--green) !important;
+        box-shadow: var(--shadow);
+    }
+    .stTabs [aria-selected="true"] p { color: var(--green) !important; }
+    /* O sublinhado do BaseWeb competia com a pastilha. */
+    .stTabs [data-baseweb="tab-highlight"],
+    .stTabs [data-baseweb="tab-border"] {
+        background: transparent !important;
+        height: 0 !important;
+    }
+
+    /* ── Tabela de leitura (components.table) ───────────────────────────
+       `st.dataframe` é desenhado num canvas e segue o tema nativo do
+       Streamlit, fixo no config.toml: num app claro virava um retângulo
+       preto no meio da página, e folha de estilo nenhuma alcança aquilo.
+       Estas são HTML de verdade, então seguem o tema. */
+    .mf-tbl-wrap {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow-x: auto;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        margin-bottom: .5rem;
+    }
+    .mf-tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: .86rem;
+    }
+    .mf-tbl thead th {
+        background: var(--surface-2);
+        color: var(--faint);
+        font-size: .7rem;
+        font-weight: 700;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+        text-align: left;
+        padding: .6rem .85rem;
+        white-space: nowrap;
+        border-bottom: 1px solid var(--border);
+    }
+    .mf-tbl tbody td {
+        color: var(--text);
+        padding: .55rem .85rem;
+        border-top: 1px solid var(--border);
+        white-space: nowrap;
+    }
+    .mf-tbl tbody tr:first-child td { border-top: 0; }
+    .mf-tbl tbody tr:hover td { background: var(--surface-2); }
+    .mf-tbl--num { text-align: right !important; font-variant-numeric: tabular-nums; }
+
+    /* ── Expander ───────────────────────────────────────────────────────
+       O cabeçalho vinha do tema nativo e aparecia como uma barra preta
+       num app claro. O fundo é forçado em cada camada: o Streamlit pinta
+       tanto o <details> quanto o <summary> quanto o <div> interno. */
+    [data-testid="stExpander"] {
+        background: var(--surface) !important;
         border: 1px solid var(--border);
         border-radius: var(--radius);
         box-shadow: var(--shadow);
+        overflow: hidden;
     }
-    [data-testid="stExpander"] summary { color: var(--text); font-weight: 600; }
-    [data-testid="stExpander"] summary:hover { color: var(--green); }
+    [data-testid="stExpander"] details,
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] > div,
+    [data-testid="stExpanderDetails"] {
+        background: var(--surface) !important;
+        border-color: var(--border) !important;
+    }
+    [data-testid="stExpander"] summary {
+        color: var(--text) !important;
+        font-weight: 600;
+    }
+    [data-testid="stExpander"] summary p { color: var(--text) !important; }
+    [data-testid="stExpander"] summary:hover,
+    [data-testid="stExpander"] summary:hover p { color: var(--green) !important; }
+
+    /* ── O que o tema nativo ainda pinta ────────────────────────────────
+       O `base` do config.toml é lido uma vez, na inicialização, e não
+       muda: no modo claro sobravam caixas pretas onde o Streamlit aplica
+       a própria cor. Cada uma é reafirmada aqui.
+
+       Onde isso não alcança é o `st.dataframe`, desenhado num canvas —
+       e é por isso que as tabelas de leitura passaram a ser HTML
+       (components.table). */
+    .stApp, [data-testid="stAppViewContainer"],
+    [data-testid="stMain"], [data-testid="stBottomBlockContainer"] {
+        background: var(--bg) !important;
+    }
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+    [data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+    [data-testid="stNumberInput"] div, [data-testid="stTextInput"] div,
+    [data-testid="stDateInput"] div[data-baseweb="input"] {
+        background: var(--surface) !important;
+        border-color: var(--border) !important;
+    }
+    [data-testid="stNumberInput"] button {
+        background: var(--surface-2) !important;
+        color: var(--text) !important;
+        border-color: var(--border) !important;
+    }
+    [data-testid="stForm"] {
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: var(--radius);
+    }
+    /* O editor de tabela é canvas, mas a moldura é HTML. */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"],
+    [data-testid="stDataFrameResizable"] {
+        background: var(--surface) !important;
+    }
 
     /* ── Sidebar ── */
     [data-testid="stSidebar"] {
@@ -384,30 +491,44 @@ def _css() -> str:
        no modo claro vinham quatro azuis e vermelhos de outra família,
        sem relação com as cores do app. Cada um recebe a tinta calculada
        da sua própria cor semântica. */
+    /* O aviso era uma faixa inteira de cor — no escuro dava um verde-oliva
+       sujo atravessando a tela. Agora o fundo é o próprio cartão e a cor
+       fica só numa barra à esquerda: o alerta é reconhecível pela cor sem
+       pintar o texto inteiro por trás. */
     [data-testid="stAlert"] {
         border-radius: 12px;
-        border: 1px solid var(--border);
         box-shadow: none;
     }
     [data-testid="stAlert"] p, [data-testid="stAlert"] li,
     [data-testid="stAlert"] strong {
         color: var(--text) !important;
     }
+    [data-testid="stAlert"] > div,
+    [data-testid="stAlertContentSuccess"],
+    [data-testid="stAlertContentWarning"],
+    [data-testid="stAlertContentError"],
+    [data-testid="stAlertContentInfo"] {
+        background: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+        border-left: 3px solid var(--neutral) !important;
+        border-radius: 12px !important;
+        box-shadow: var(--shadow) !important;
+    }
     [data-testid="stAlertContentSuccess"] {
+        border-left-color: var(--green) !important;
         background: var(--ok-soft) !important;
-        border: 1px solid var(--ok-line) !important;
     }
     [data-testid="stAlertContentWarning"] {
+        border-left-color: var(--amber) !important;
         background: var(--warn-soft) !important;
-        border: 1px solid var(--warn-line) !important;
     }
     [data-testid="stAlertContentError"] {
+        border-left-color: var(--red) !important;
         background: var(--err-soft) !important;
-        border: 1px solid var(--err-line) !important;
     }
     [data-testid="stAlertContentInfo"] {
+        border-left-color: var(--blue) !important;
         background: var(--info-soft) !important;
-        border: 1px solid var(--info-line) !important;
     }
     [data-testid="stAlert"] [data-testid="stIconMaterial"] {
         color: var(--muted) !important;

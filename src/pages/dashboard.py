@@ -228,8 +228,7 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
             "Instituição": a.instituicao, "Conta": a.nome,
             "Tipo": "Investimento", "Valor": brl(a.valor),
         } for a in guardada.ativos]
-        st.dataframe(pd.DataFrame(linhas), hide_index=True,
-                     use_container_width=True)
+        components.table(pd.DataFrame(linhas))
         if not guardada.ativos:
             st.caption(
                 "Nenhum investimento veio das conexões. Nem toda "
@@ -520,17 +519,17 @@ def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
                       df_transactions) -> None:
     """A conta aberta, linha a linha, para poder ser conferida."""
     with st.expander("Como cheguei nesse número"):
-        st.dataframe(pd.DataFrame([
+        components.table(pd.DataFrame([
             {"Linha": "Saldo em conta hoje", "Valor": brl(saldo_hoje)},
             {"Linha": "Receita prevista", "Valor": brl(receita)},
             {"Linha": "Custos fixos", "Valor": f"− {brl(fixos)}"},
             {"Linha": "Faturas a pagar", "Valor": f"− {brl(faturas)}"},
             {"Linha": f"Sobra ao fim de {alvo}", "Valor": brl(sobra)},
-        ]), hide_index=True, use_container_width=True)
+        ]))
 
         if a_pagar:
             st.markdown("**As faturas que entram na conta**")
-            st.dataframe(pd.DataFrame([{
+            components.table(pd.DataFrame([{
                 "Cartão": i.card, "Fatura": i.month,
                 "Vence": f"{i.due:%d/%m/%Y}",
                 "Valor": brl(_valor_a_pagar(i, banco_totais)),
@@ -538,7 +537,7 @@ def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
                           if (i.card, i.month) in banco_totais
                           else "soma das linhas"),
                 "Situação": "vencida" if i.overdue else "a vencer",
-            } for i in a_pagar]), hide_index=True, use_container_width=True)
+            } for i in a_pagar]))
             st.caption(
                 "Entra tudo que sai da conta daqui até o fim do mês: o "
                 "que venceu e não foi pago, o que ainda vence neste mês "

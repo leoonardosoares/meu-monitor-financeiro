@@ -232,13 +232,14 @@ PALETTES = {
         "SHADOW": "0 1px 2px rgba(0,0,0,.28)",
         "SHADOW_LIFT": "0 8px 24px rgba(0,0,0,.36)",
         "GLOW": "0 6px 18px rgba(82,191,144,.22)",
-        # Tintas de alerta, calculadas: a cor semântica diluída no
-        # cartão, no ponto em que o texto do corpo ainda passa de 11:1 e
-        # a própria cor se destaca sobre a tinta.
-        "OK_SOFT": "#1E3231", "OK_LINE": "#2A5347",
-        "WARN_SOFT": "#302D22", "WARN_LINE": "#564622",
-        "ERR_SOFT": "#362327", "ERR_LINE": "#632D2F",
-        "INFO_SOFT": "#1E2B3C", "INFO_LINE": "#2A4260",
+        # Tintas de alerta: a cor semântica diluída a 8% no cartão. A
+        # 14% davam uma faixa chapada — o aviso virava um verde-oliva
+        # sujo atravessando a tela. O que identifica o alerta é a barra
+        # colorida à esquerda; a tinta só aquece o fundo.
+        "OK_SOFT": "#1B282B", "OK_LINE": "#2A5347",
+        "WARN_SOFT": "#252522", "WARN_LINE": "#564622",
+        "ERR_SOFT": "#281F25", "ERR_LINE": "#632D2F",
+        "INFO_SOFT": "#1B2431", "INFO_LINE": "#2A4260",
         "SERIES": ["#3CA368", "#528ED9", "#BA7F14",
                    "#A474C7", "#CF6963", "#00A4A4"],
     },
@@ -269,10 +270,10 @@ PALETTES = {
         "SHADOW_LIFT": "0 2px 4px rgba(15,23,42,.05), "
                        "0 12px 28px rgba(15,23,42,.10)",
         "GLOW": "0 6px 18px rgba(44,122,91,.20)",
-        "OK_SOFT": "#ECF3F0", "OK_LINE": "#C4DAD1",
-        "WARN_SOFT": "#F7F1E9", "WARN_LINE": "#E5D3BA",
-        "ERR_SOFT": "#FAECEC", "ERR_LINE": "#EFC3C3",
-        "INFO_SOFT": "#EEF4FA", "INFO_LINE": "#CBDCF1",
+        "OK_SOFT": "#F2F7F5", "OK_LINE": "#C4DAD1",
+        "WARN_SOFT": "#F9F6F0", "WARN_LINE": "#E5D3BA",
+        "ERR_SOFT": "#FCF2F2", "ERR_LINE": "#EFC3C3",
+        "INFO_SOFT": "#F3F7FB", "INFO_LINE": "#CBDCF1",
         # Os mesmos seis hues, escurecidos até todos darem ~3,6:1 sobre a
         # superfície interna clara. A série do escuro fica entre 2,80 e
         # 3,59:1 no claro — três abaixo do piso de 3:1 para objeto
