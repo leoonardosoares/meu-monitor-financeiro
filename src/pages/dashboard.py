@@ -385,73 +385,143 @@ def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
     )
 
 
+def _totais_do_banco() -> dict[tuple[str, str], float]:
+    """{(cartão, mês): total que a instituição informa para a fatura}."""
+    df = repository.load_bank_bills()
+    if df.empty or not {"Cartão", "Mês", "Total"}.issubset(df.columns):
+        return {}
+    out: dict[tuple[str, str], float] = {}
+    for _, linha in df.iterrows():
+        valor = pd.to_numeric(linha.get("Total"), errors="coerce")
+        if not pd.isna(valor):
+            out[(str(linha["Cartão"]).strip(),
+                 str(linha["Mês"]).strip())] = abs(float(valor))
+    return out
+
+
+def _valor_a_pagar(fatura, banco: dict[tuple[str, str], float]) -> float:
+    """Quanto essa fatura tira da conta.
+
+    O total do banco manda quando existe: ele conhece compras que ainda
+    não foram importadas. A soma das linhas entra só quando a fatura
+    ainda não foi emitida — parcela futura, que o banco não faturou.
+    """
+    do_banco = banco.get((fatura.card, fatura.month))
+    if do_banco is None:
+        return fatura.balance
+    return max(do_banco - fatura.advances, 0.0)
+
+
 def _projection_section(*, df_credit_card: pd.DataFrame,
                         df_card_payments: pd.DataFrame,
                         df_cards: pd.DataFrame,
                         df_fixed_costs: pd.DataFrame,
                         df_transactions: pd.DataFrame,
                         selected_month: str) -> None:
+    """Com quanto você fica ao fim do próximo mês.
+
+    Parte do dinheiro que existe hoje — lido do banco, não somado de
+    lançamentos — e tira tudo que vence daqui até lá. É a pergunta que
+    se faz olhando o mês seguinte; "quanto sobra do salário" responde
+    outra coisa e some com o que já está na conta.
+    """
     st.subheader("Visão do próximo mês")
 
     hoje = date.today()
     alvo, veio_do_filtro = projection_target(selected_month, today=hoje)
 
     agendadas, ilegiveis = cc.schedule_invoices(
-        df_credit_card, df_card_payments, df_cards, today=hoje,
-    )
-    do_mes = cc.invoices_due_in(agendadas, alvo)
-    atrasadas = cc.overdue_invoices(agendadas)
-    antes = cc.invoices_due_before(agendadas, alvo)
+        df_credit_card, df_card_payments, df_cards, today=hoje)
+    banco_totais = _totais_do_banco()
+    a_pagar = cc.invoices_due_through(agendadas, alvo)
+    faturas = sum(_valor_a_pagar(i, banco_totais) for i in a_pagar)
 
-    invoice_total = sum(i.balance for i in do_mes)
-    expected_income = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
-    fixed_total, fixed_card = fixed_costs_split(
-        df_fixed_costs, {i.card for i in do_mes})
-    projected = expected_income - fixed_total - invoice_total
+    posicao = positions.from_rows(repository.load_positions())
+    saldo_hoje = posicao.em_conta
+    receita = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
+    fixos, fixos_cartao = fixed_costs_split(
+        df_fixed_costs, {i.card for i in a_pagar})
+    sobra = saldo_hoje + receita - fixos - faturas
 
     if veio_do_filtro:
-        st.caption(f"Projeção para **{alvo}**, o mês escolhido no filtro.")
+        st.caption(f"Projeção até o fim de **{alvo}**, o mês do filtro.")
     else:
         st.caption(
-            f"Projeção para **{alvo}**. Esta seção não segue o filtro da "
-            "sidebar — ela sempre olha para frente."
+            f"Projeção até o fim de **{alvo}**. Esta seção não segue o "
+            "filtro da sidebar — ela sempre olha para frente."
         )
 
-    _projection_warnings(atrasadas, antes, agendadas, ilegiveis)
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Saldo hoje (+)", brl(saldo_hoje),
+              delta="no banco", delta_color="off")
+    c2.metric("Receita prevista (+)", brl(receita))
+    c3.metric("Custos fixos (−)", brl(fixos))
+    c4.metric("Faturas a pagar (−)", brl(faturas),
+              delta=f"{len(a_pagar)} fatura(s)", delta_color="off")
+    c5.metric("Sobra ao fim de " + alvo, brl(sobra),
+              delta_color="normal" if sobra >= 0 else "inverse")
 
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Receita prevista (+)", brl(expected_income))
-    p2.metric("Custos fixos (−)", brl(fixed_total))
-    abertas = [i for i in do_mes if not i.closed]
-    p3.metric(
-        f"Faturas que vencem em {alvo} (−)", brl(invoice_total),
-        delta=(f"mínimo — {len(abertas)} ainda não fechou(aram)"
-               if abertas else "valor já fechado"),
-        delta_color="off",
-    )
-    label = "Saldo livre" if projected >= 0 else "Saldo livre (negativo)"
-    p4.metric(label, brl(projected),
-              delta_color="normal" if projected >= 0 else "inverse")
-
-    _projection_footnotes(
-        df_transactions=df_transactions, projected=projected,
-        fixed_card=fixed_card, do_mes=do_mes, alvo=alvo,
-    )
-
-
-def _projection_warnings(atrasadas: list, antes: list, agendadas: list,
-                         ilegiveis: list[str]) -> None:
-    if antes:
-        linhas = " · ".join(
-            f"{i.card} {i.month} ({brl(i.balance)}, vence {i.due:%d/%m})"
-            for i in antes
-        )
+    if posicao.vazia:
         st.info(md(
-            f"💳 **{brl(sum(i.balance for i in antes))} vencem antes disso** "
-            f"— {linhas}. Sai da conta antes do mês projetado, então não "
-            "está somado abaixo."
+            "O saldo de hoje está zerado porque ainda não li as "
+            "instituições. Vá ao topo do Dashboard e clique em "
+            "**Atualizar**."
         ))
 
+    _projection_warnings(agendadas, ilegiveis)
+    _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
+                      faturas, sobra, alvo, fixos_cartao, df_transactions)
+
+
+def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
+                      faturas, sobra, alvo, fixos_cartao,
+                      df_transactions) -> None:
+    """A conta aberta, linha a linha, para poder ser conferida."""
+    with st.expander("Como cheguei nesse número"):
+        st.dataframe(pd.DataFrame([
+            {"Linha": "Saldo em conta hoje", "Valor": brl(saldo_hoje)},
+            {"Linha": "Receita prevista", "Valor": brl(receita)},
+            {"Linha": "Custos fixos", "Valor": f"− {brl(fixos)}"},
+            {"Linha": "Faturas a pagar", "Valor": f"− {brl(faturas)}"},
+            {"Linha": f"Sobra ao fim de {alvo}", "Valor": brl(sobra)},
+        ]), hide_index=True, use_container_width=True)
+
+        if a_pagar:
+            st.markdown("**As faturas que entram na conta**")
+            st.dataframe(pd.DataFrame([{
+                "Cartão": i.card, "Fatura": i.month,
+                "Vence": f"{i.due:%d/%m/%Y}",
+                "Valor": brl(_valor_a_pagar(i, banco_totais)),
+                "Fonte": ("banco"
+                          if (i.card, i.month) in banco_totais
+                          else "soma das linhas"),
+                "Situação": "vencida" if i.overdue else "a vencer",
+            } for i in a_pagar]), hide_index=True, use_container_width=True)
+            st.caption(
+                "Entra tudo que sai da conta daqui até o fim do mês: o "
+                "que venceu e não foi pago, o que ainda vence neste mês "
+                "e o do mês projetado."
+            )
+
+        if fixos_cartao > 0:
+            st.caption(md(
+                f"{brl(fixos_cartao)} de custos fixos na categoria "
+                "*Cartão de Crédito* foram excluídos: a fatura já entra "
+                "pelo seu próprio valor."
+            ))
+
+        variavel = avg_monthly_expense(df_transactions, months=6,
+                                       exclude_card_invoices=True)
+        if variavel > 0:
+            st.caption(md(
+                f"Esta conta não inclui gasto variável no banco, que tem "
+                f"média de {brl(variavel)}/mês nos últimos 6 meses. "
+                f"Descontando, sobrariam {brl(sobra - variavel)}."
+            ))
+
+
+def _projection_warnings(agendadas: list, ilegiveis: list[str]) -> None:
+    atrasadas = cc.overdue_invoices(agendadas)
     if atrasadas:
         linhas = " · ".join(
             f"{i.card} {i.month} ({brl(i.balance)}, venceu {i.due:%d/%m})"
@@ -459,9 +529,9 @@ def _projection_warnings(atrasadas: list, antes: list, agendadas: list,
         )
         st.warning(md(
             f"⚠️ **{brl(sum(i.balance for i in atrasadas))} em fatura "
-            f"vencida e não paga** — {linhas}. Esse valor é dívida "
-            "acumulada, não despesa do mês, então fica **fora** da conta "
-            "abaixo. Dê baixa na aba Cartão de Crédito."
+            f"vencida e não paga** — {linhas}. Já está incluída nas "
+            "faturas a pagar acima, porque esse dinheiro sai da conta de "
+            "qualquer forma. Dê baixa na aba Cartão de Crédito."
         ))
 
     estimados = sorted({i.card for i in agendadas if i.estimated})
@@ -481,54 +551,3 @@ def _projection_warnings(atrasadas: list, antes: list, agendadas: list,
             "**Mês da Fatura** no extrato — o formato é MM/AAAA."
         )
 
-
-def _projection_footnotes(*, df_transactions: pd.DataFrame, projected: float,
-                          fixed_card: float, do_mes: list, alvo: str) -> None:
-    # Sem excluir os lançamentos de fatura, a média conteria as faturas
-    # que `projected` já subtraiu, e o rodapé descontaria o cartão duas
-    # vezes — erro que cresce junto com o uso do cartão.
-    variavel = avg_monthly_expense(
-        df_transactions, months=6, exclude_card_invoices=True,
-    )
-    if variavel > 0:
-        st.caption(md(
-            f"O saldo livre conta apenas receita, custos fixos e faturas. "
-            f"Seu gasto variável no banco — sem contar pagamento de fatura, "
-            f"que já está acima — tem média de **{brl(variavel)}/mês** nos "
-            f"últimos 6 meses; descontando isso, sobrariam "
-            f"**{brl(projected - variavel)}**."
-        ))
-    if fixed_card > 0:
-        st.caption(md(
-            f"{brl(fixed_card)} de custos fixos na categoria *Cartão de "
-            "Crédito* foram excluídos para não descontar a fatura duas vezes."
-        ))
-
-    if not do_mes:
-        st.caption(f"Nenhuma fatura vence em {alvo}.")
-        return
-
-    with st.expander("Como cheguei nesse número"):
-        st.dataframe(pd.DataFrame([{
-            "Cartão": i.card,
-            "Fatura": i.month,
-            "Fecha": f"{i.closing:%d/%m/%Y}",
-            "Vence": f"{i.due:%d/%m/%Y}",
-            "Total": brl(i.total),
-            "Já quitado": brl(i.settled),
-            "Já adiantado": brl(i.advances),
-            "Falta pagar": brl(i.balance),
-        } for i in do_mes]), hide_index=True, use_container_width=True)
-        abertas = [i for i in do_mes if not i.closed]
-        if abertas:
-            dias = min((i.closing.date() - date.today()).days for i in abertas)
-            st.caption(
-                f"É um piso: {len(abertas)} fatura(s) ainda não fecharam — a "
-                f"primeira fecha em {dias} dia(s), e tudo que for comprado até "
-                "lá entra nesse valor."
-            )
-        st.caption(
-            f"Aqui só entra o que vence em {alvo}. O **Em aberto** da página "
-            "Cartão de Crédito soma todas as faturas abertas, inclusive "
-            "parcelas de meses futuros — por isso os dois números diferem."
-        )

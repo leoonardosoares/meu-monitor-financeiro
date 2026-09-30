@@ -614,6 +614,22 @@ def overdue_invoices(scheduled: list[ScheduledInvoice],
     return [i for i in scheduled if i.overdue]
 
 
+def invoices_due_through(scheduled: list[ScheduledInvoice],
+                         month: str) -> list[ScheduledInvoice]:
+    """Tudo que sai da conta daqui até o fim de `month`.
+
+    Junta o que já venceu e não foi pago, o que ainda vence neste mês e
+    o que vence no mês-alvo — porque todas essas saem do mesmo dinheiro
+    que está na conta hoje. Separar por mês responde "quanto gastei"; o
+    que se quer aqui é "com quanto eu fico".
+    """
+    inicio = parse_month_label(month)
+    if inicio is None:
+        return []
+    fim = inicio + pd.DateOffset(months=1)
+    return [i for i in scheduled if i.balance > 1e-6 and i.due < fim]
+
+
 def invoices_due_before(scheduled: list[ScheduledInvoice],
                         month: str) -> list[ScheduledInvoice]:
     """Faturas que ainda vão vencer, mas antes do mês-alvo.
