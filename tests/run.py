@@ -540,6 +540,61 @@ check("compras sem cartão preenchido caem no padrão",
       len(TX))
 
 
+
+# ---------------------------------------------------------------------------
+# Fatura que o banco já recebeu não é fatura vencida
+# ---------------------------------------------------------------------------
+#
+# A planilha guarda a compra como Pendente para sempre: o pagamento da
+# fatura aparece no extrato da CONTA, não no do cartão, e nada liga os
+# dois. `settle_closed_bills` resolve isso, mas só roda na importação —
+# entre uma e outra a tela decidia pela data e chamava de "vencida"
+# fatura que o banco não cobra mais. O usuário via três, somando mais que
+# a dívida inteira que a instituição informa.
+print("  Fatura já recebida pelo banco não aparece como vencida")
+_bills = pd.DataFrame([
+    {"Cartão": "Principal", "Mês": "06/2026", "Total": 2678.77,
+     "Fechamento": "2026-06-08", "Vencimento": "2026-06-15",
+     "Situação": "CLOSED", "Lido em": "2026-09-30"},
+    {"Cartão": "Principal", "Mês": "07/2026", "Total": 3371.12,
+     "Fechamento": "2026-07-08", "Vencimento": "2026-07-15",
+     "Situação": "CLOSED", "Lido em": "2026-09-30"},
+    {"Cartão": "Principal", "Mês": "10/2026", "Total": 1539.14,
+     "Fechamento": "2026-10-08", "Vencimento": "2026-10-15",
+     "Situação": "OPEN", "Lido em": "2026-09-30"},
+])
+_hoje = date(2026, 9, 30)
+_liq = cc.settled_by_bank(_bills, today=_hoje)
+check("as duas vencidas entram, a que ainda vai vencer não",
+      _liq, {("Principal", "06/2026"), ("Principal", "07/2026")})
+
+_agendadas = [
+    cc.ScheduledInvoice(
+        card="Principal", month="06/2026", total=2678.77, settled=0.0,
+        advances=0.0, balance=2678.77, closed=True,
+        closing=pd.Timestamp("2026-06-08"), due=pd.Timestamp("2026-06-15"),
+        overdue=True, estimated=False),
+    cc.ScheduledInvoice(
+        card="Principal", month="10/2026", total=1539.14, settled=0.0,
+        advances=0.0, balance=1539.14, closed=False,
+        closing=pd.Timestamp("2026-10-08"), due=pd.Timestamp("2026-10-15"),
+        overdue=False, estimated=False),
+]
+_sem = cc.situations(_agendadas, _hoje)
+check("sem o aviso do banco, a de junho é dada como vencida",
+      _sem[("Principal", "06/2026")], "Vencida")
+_com = cc.situations(_agendadas, _hoje, _liq)
+check("com o aviso, ela é paga", _com[("Principal", "06/2026")], "Paga")
+check("e a que ainda não venceu segue atual",
+      _com[("Principal", "10/2026")], "Atual")
+
+check("sem faturas do banco, nada é dado por pago",
+      cc.settled_by_bank(pd.DataFrame(), today=_hoje), set())
+check("vencimento ilegível não liquida nada",
+      cc.settled_by_bank(pd.DataFrame([
+          {"Cartão": "P", "Mês": "06/2026", "Vencimento": "sem data"}]),
+          today=_hoje), set())
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

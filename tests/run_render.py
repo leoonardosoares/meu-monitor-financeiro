@@ -160,7 +160,8 @@ sys.modules["oauth2client"].service_account = \
 sys.modules["oauth2client.service_account"].ServiceAccountCredentials = object
 
 from src import components, repository  # noqa: E402
-from src.config import PALETTES, SHEETS_SCHEMA  # noqa: E402
+from src.config import (ConfigKeys, PALETTES,  # noqa: E402
+                        SHEETS_SCHEMA)
 from src.finance import filter_by_month  # noqa: E402
 from src.pages import (  # noqa: E402
     credit_card as pg_cartao, dashboard as pg_painel,
@@ -234,12 +235,45 @@ def _dados_cartoes() -> pd.DataFrame:
     ])
 
 
-def _instala_repositorio(*, com_dados: bool) -> None:
+def _posicao_real() -> pd.DataFrame:
+    """O retrato lido das instituições: conta, cartão e investimento.
+
+    Sem ele, `_saldo_do_banco()` devolve vazio e metade da tela do cartão
+    — justamente a metade que consulta o banco — nunca roda no teste.
+    """
+    quando = "2026-09-30T09:00"
+    return pd.DataFrame([
+        {"Data": quando, "Origem": "Itaú", "Nome": "Conta corrente",
+         "Classe": "BANK", "Valor": 4210.55, "Chave": "acc-itau"},
+        {"Data": quando, "Origem": "Nu Pagamentos", "Nome": "Nubank",
+         "Classe": "CREDIT", "Valor": -2679.04, "Chave": "acc-nu-card"},
+        {"Data": quando, "Origem": "Nu Pagamentos", "Nome": "Caixinha",
+         "Classe": "INVESTIMENTO", "Valor": 12350.0, "Chave": ""},
+    ])
+
+
+def _faturas_banco() -> pd.DataFrame:
+    """Faturas como a instituição as reporta, incluindo uma já vencida."""
+    return pd.DataFrame([
+        {"Cartão": "Nubank", "Mês": "09/2026", "Total": 2281.47,
+         "Fechamento": "2026-09-08", "Vencimento": "2026-09-15",
+         "Situação": "CLOSED", "Lido em": "2026-09-30"},
+        {"Cartão": "Nubank", "Mês": "10/2026", "Total": 2679.04,
+         "Fechamento": "2026-10-08", "Vencimento": "2026-10-15",
+         "Situação": "OPEN", "Lido em": "2026-09-30"},
+    ])
+
+
+def _instala_repositorio(*, com_dados: bool, com_banco: bool = False) -> None:
     """Troca cada leitura da planilha por tabela em memória."""
     tabelas = {
         "financeiro": _dados_financeiro() if com_dados else _vazia("financeiro"),
         "cartao": _dados_cartao() if com_dados else _vazia("cartao"),
         "cartoes": _dados_cartoes() if com_dados else _vazia("cartoes"),
+        "posicao_real": (_posicao_real() if com_banco
+                         else _vazia("posicao_real")),
+        "faturas_banco": (_faturas_banco() if com_banco
+                          else _vazia("faturas_banco")),
     }
     vazias = {
         "load_card_payments": "cartao_pagamentos",
@@ -252,17 +286,23 @@ def _instala_repositorio(*, com_dados: bool) -> None:
         "load_asset_moves": "investimento_movimentacoes",
         "load_asset_snapshots": "posicao_ativos",
         "load_imports": "importacoes",
-        "load_positions": "posicao_real",
-        "load_bank_bills": "faturas_banco",
     }
     repository.load_transactions = lambda: tabelas["financeiro"].copy()
     repository.load_credit_card = lambda: tabelas["cartao"].copy()
     repository.load_cards = lambda: tabelas["cartoes"].copy()
+    repository.load_positions = lambda: tabelas["posicao_real"].copy()
+    repository.load_bank_bills = lambda: tabelas["faturas_banco"].copy()
     for metodo, aba in vazias.items():
         setattr(repository, metodo,
                 (lambda _aba=aba: _vazia(_aba).copy()))
     repository.load_config = lambda chave, padrao=0.0: padrao
-    repository.load_config_text = lambda chave, padrao="": padrao
+    def _config_text(chave, padrao=""):
+        if com_banco and chave == ConfigKeys.PLUGGY_MAPA:
+            return "acc-nu-card=Nubank"
+        if com_banco and chave == ConfigKeys.PLUGGY_ITEMS:
+            return "item-1"
+        return padrao
+    repository.load_config_text = _config_text
     for metodo in [m for m in dir(repository) if m.startswith("save_")]:
         setattr(repository, metodo, lambda *a, **k: None)
     repository.append_position = lambda *a, **k: None
@@ -298,9 +338,10 @@ def _desenha(nome: str, funcao, **kwargs) -> None:
     check(f"{nome} desenhou algo", len(CHAMADAS) > 0)
 
 
-def _roda_tudo(rotulo: str, *, com_dados: bool, mes: str) -> None:
+def _roda_tudo(rotulo: str, *, com_dados: bool, mes: str,
+               com_banco: bool = False) -> None:
     """Chama cada página com os mesmos argumentos que o `app.py` passa."""
-    _instala_repositorio(com_dados=com_dados)
+    _instala_repositorio(com_dados=com_dados, com_banco=com_banco)
     df_tx = _com_derivadas(repository.load_transactions())
     df_cc = repository.load_credit_card()
     categorias = ["Outros", "Supermercado", "Aluguel"]
@@ -342,6 +383,17 @@ def _roda_tudo(rotulo: str, *, com_dados: bool, mes: str) -> None:
              categories=categorias, selected_month=mes)
 
 
+# Antes de desenhar: o estado "banco" precisa realmente acionar as duas
+# leituras da instituição. Se `load_positions` ou o mapa de contas saírem
+# de sincronia, as funções devolvem vazio, a tela cai no caminho "soma das
+# linhas" e o teste passaria sem nunca exercitar o que interessa.
+print("O estado com dados do banco aciona as leituras da instituição")
+_instala_repositorio(com_dados=True, com_banco=True)
+check("o saldo do cartão chega do banco",
+      pg_cartao._saldo_do_banco().get("Nubank") == 2679.04)
+check("as faturas emitidas chegam do banco",
+      ("Nubank", "10/2026") in pg_cartao._faturas_do_banco())
+
 print("Cada página desenha nos dois temas, com e sem dados")
 for _tema in PALETTES:
     components.use_theme(_tema)
@@ -349,6 +401,10 @@ for _tema in PALETTES:
     for _mes in ("09/2026", "Todos os Meses"):
         _roda_tudo(f"{_tema}/vazio/{_mes}", com_dados=False, mes=_mes)
         _roda_tudo(f"{_tema}/dados/{_mes}", com_dados=True, mes=_mes)
+        # Com a posição e as faturas lidas do banco: é o estado real do
+        # usuário, e o único em que metade da tela do cartão roda.
+        _roda_tudo(f"{_tema}/banco/{_mes}", com_dados=True, mes=_mes,
+                   com_banco=True)
 
 # O componente novo tem de aceitar o que as páginas passam para ele: era
 # `st.subheader(titulo)` e virou `section(titulo, sub, eyebrow=...)`.

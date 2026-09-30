@@ -14,6 +14,7 @@ linha para apagar, e é aí que o ajuste é a resposta certa.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -316,14 +317,43 @@ def _total_parcelas(valor) -> int:
 # porque o valor e a quantidade já foram acordados.
 
 
-def project_installments(df: pd.DataFrame, *,
-                         today: date) -> list[dict]:
+# O banco escreve a parcela DENTRO da descrição: a mesma compra chega
+# como "Amo Atendimento Medi 1/3" num mês e "Amo Atendimento Medi 2/3" no
+# outro. Agrupar pela descrição crua fazia de cada parcela uma compra
+# diferente, e cada uma projetava a série inteira a partir de si mesma —
+# a 1/3 gerava 2/3 e 3/3, a 2/3 gerava outra 3/3. Era isso que enchia a
+# tela de parcela repetida indo até 2027.
+_MARCA_PARCELA = re.compile(r"\s*\b\d{1,2}\s*/\s*\d{1,2}\s*$")
+
+
+def purchase_identity(descricao: object) -> str:
+    """A compra por trás da descrição, sem o marcador de parcela.
+
+    "Amo Atendimento Medi 1/3" e "Amo Atendimento Medi 2/3" são a mesma
+    compra. Sem tirar o sufixo, o app as trata como duas — e projeta a
+    série duas vezes.
+    """
+    texto = str(descricao or "").strip()
+    return _MARCA_PARCELA.sub("", texto).strip().casefold()
+
+
+def project_installments(df: pd.DataFrame, *, today: date,
+                         faturadas: set[tuple[str, str]] | None = None,
+                         ) -> list[dict]:
     """Linhas das parcelas contratadas que o banco ainda não lançou.
 
-    Parte da última parcela conhecida de cada compra e completa a
-    série. Devolve linhas prontas para a aba `cartao`, marcadas na
-    origem como projeção — elas são compromisso deduzido, não extrato,
-    e a tela precisa poder dizer isso.
+    Junta as parcelas da mesma compra — mesmo quando o banco escreve o
+    "N/M" na descrição e elas parecem compras diferentes —, vê quais
+    números já são conhecidos e completa só o que falta. Se a fatura de
+    setembro tem a KaBuM 2/3, a única coisa a deduzir é a 3/3 de outubro.
+
+    `faturadas` são os pares (cartão, mês) cuja fatura o banco já
+    publicou. Nesses meses não se projeta nada: o total é o que a
+    instituição informou, e acrescentar linha ali afasta o app do banco
+    em vez de aproximar.
+
+    As linhas saem marcadas na origem como projeção — são compromisso
+    deduzido, não extrato, e a tela precisa poder dizer isso.
     """
     precisa = {"Cartão", "Descrição", "Parcela", "Mês da Fatura", "Valor"}
     if df.empty or not precisa.issubset(df.columns):
@@ -337,12 +367,16 @@ def project_installments(df: pd.DataFrame, *,
         return []
     base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
     base = base[base["_mes"].notna()]
+    if base.empty:
+        return []
+    base["_compra"] = base["Descrição"].map(purchase_identity)
 
     hoje_mes = pd.Timestamp(today).normalize().replace(day=1)
+    ja_faturadas = faturadas or set()
     novas: list[dict] = []
 
-    for (cartao, desc, total), grupo in base.groupby(
-            ["Cartão", "Descrição", "_total"], dropna=False):
+    for (cartao, _compra, total), grupo in base.groupby(
+            ["Cartão", "_compra", "_total"], dropna=False):
         total = int(total)
         conhecidas = {int(n) for n in grupo["_n"]}
         if len(conhecidas) >= total:
@@ -355,17 +389,25 @@ def project_installments(df: pd.DataFrame, *,
         if valor <= 0:
             continue
 
+        # A descrição da projeção sai sem o "N/M" do banco: repetir
+        # "Mercadolivre 1/10" numa linha cuja parcela é 8/10 é a mesma
+        # confusão que causou o defeito, só que na tela.
+        desc = _MARCA_PARCELA.sub("", str(ultima["Descrição"] or "")).strip()
+
         for i in range(n_ultima + 1, total + 1):
             if i in conhecidas:
                 continue
             mes = mes_ultima + pd.DateOffset(months=i - n_ultima)
             if mes < hoje_mes:
                 continue                  # já passou; não se projeta o passado
+            rotulo = month_label(mes)
+            if (cartao, rotulo) in ja_faturadas:
+                continue                  # o banco já fechou essa fatura
             novas.append({
                 "Data Compra": str(ultima.get("Data Compra") or ""),
-                "Mês da Fatura": month_label(mes),
+                "Mês da Fatura": rotulo,
                 "Cartão": cartao,
-                "Descrição": desc,
+                "Descrição": desc or str(ultima["Descrição"] or ""),
                 "Categoria": str(ultima.get("Categoria") or "Outros"),
                 "Parcela": f"{i}/{total}",
                 "Valor": round(valor, 2),
@@ -402,7 +444,11 @@ def supersede_projections(df: pd.DataFrame) -> pd.Index:
 
     base = df.copy()
     base["_cartao"] = base["Cartão"].astype(str).str.strip()
-    base["_desc"] = base["Descrição"].astype(str).str.strip().str.casefold()
+    # Pela identidade da compra, e não pelo texto cru: a projeção nasce
+    # sem o "N/M" que o banco escreve na descrição, então comparar as
+    # duas literalmente faria a substituição nunca casar — e a parcela
+    # ficaria contada duas vezes, que é o defeito que isto evita.
+    base["_desc"] = base["Descrição"].map(purchase_identity)
     base["_parc"] = base["Parcela"].astype(str).str.strip()
     base["_proj"] = (base["Origem"].astype(str).str.strip().str.casefold()
                      == ORIGEM_PROJECAO.casefold())

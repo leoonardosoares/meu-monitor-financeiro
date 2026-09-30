@@ -85,10 +85,10 @@ def _conciliar_tab() -> None:
          "Planilha soma": atual.invested,
          "Diferença": guardada.investido - atual.invested},
     ]
-    st.dataframe(pd.DataFrame([
+    components.table(pd.DataFrame([
         {k: (brl(v) if isinstance(v, float) else v) for k, v in linha.items()}
         for linha in linhas
-    ]), hide_index=True, use_container_width=True)
+    ]))
 
     ajustes = reconcile.adjustments(
         saldo_real=guardada.em_conta, saldo_planilha=atual.bank_balance,
@@ -108,11 +108,11 @@ def _conciliar_tab() -> None:
         ))
 
     st.markdown("**Lançamentos que serão criados**")
-    st.dataframe(pd.DataFrame([{
+    components.table(pd.DataFrame([{
         "Data": a.data.strftime("%d/%m/%Y"), "Descrição": a.descricao,
         "Categoria": a.categoria, "Tipo": a.tipo, "Valor": brl(a.valor),
         "Por quê": a.motivo,
-    } for a in ajustes]), hide_index=True, use_container_width=True)
+    } for a in ajustes]))
 
     if st.button("✅ Lançar conciliação", type="primary"):
         repository.save_transactions(pd.concat(
@@ -157,11 +157,11 @@ def _reset_tab(_df_period) -> None:
         "cartao_pagamentos": "Pagamentos de fatura",
         "importacoes": "Registro de importação",
     }
-    st.dataframe(pd.DataFrame([
+    components.table(pd.DataFrame([
         {"Aba": rotulos[k], "Linhas que serão apagadas": v,
          "Cópia guardada em": reset.ARQUIVOS.get(k) or "— (não precisa)"}
         for k, v in plano.contagem.items()
-    ]), hide_index=True, use_container_width=True)
+    ]))
 
     corte = reset.cutoff(date.today())
     st.info(
@@ -255,15 +255,14 @@ def _open_finance_tab() -> None:
             else:
                 campos = ficha.get("credentials") or []
                 if campos:
-                    st.dataframe(pd.DataFrame([{
+                    components.table(pd.DataFrame([{
                         "Campo": c.get("name"),
                         "Rótulo": c.get("label"),
                         "Tipo": c.get("type"),
                         "Formato": c.get("validation") or c.get("placeholder"),
                         "Instruções": c.get("instructions"),
                         "Opcional": c.get("optional"),
-                    } for c in campos]), hide_index=True,
-                        use_container_width=True)
+                    } for c in campos]))
                 else:
                     st.caption("O conector não declara campos de entrada.")
                 st.caption(
@@ -336,10 +335,8 @@ def _open_finance_tab() -> None:
             "malformada; **401/403** é falta de permissão; **200** com lista "
             "vazia é vínculo ausente."
         )
-        st.dataframe(pd.DataFrame(pluggy.probe(
-            [i.strip() for i in salvos.split(",") if i.strip()])),
-            hide_index=True,
-                     use_container_width=True)
+        components.table(pd.DataFrame(pluggy.probe(
+            [i.strip() for i in salvos.split(",") if i.strip()])))
         return
 
     for e in erros:
@@ -365,12 +362,12 @@ def _open_finance_tab() -> None:
             if not contas:
                 st.caption("Nenhuma conta nesta conexão ainda.")
                 continue
-            st.dataframe(pd.DataFrame([{
+            components.table(pd.DataFrame([{
                 "Conta": c.get("name"),
                 "Tipo": c.get("type"),
                 "Número": c.get("number"),
                 "Saldo": brl(float(c.get("balance") or 0)),
-            } for c in contas]), hide_index=True, use_container_width=True)
+            } for c in contas]))
 
             _faturas_cruas(contas)
 
@@ -414,10 +411,9 @@ def _faturas_cruas(contas: list[dict]) -> None:
                 for k in f:
                     if k not in campos:
                         campos.append(k)
-            st.dataframe(
+            components.table(
                 pd.DataFrame([{k: str(f.get(k, "")) for k in campos}
-                              for f in faturas]),
-                hide_index=True, use_container_width=True)
+                              for f in faturas]))
 
 
 def _fetch_items(salvos: str) -> tuple[list[dict], list[str]]:
@@ -576,7 +572,7 @@ def _render_category_transactions(*, category: str,
                 "_ord", ascending=False,
             ).drop(columns="_ord")
         df["Valor"] = df["Valor"].apply(brl)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        components.table(df)
 
     if not card_in_cat.empty:
         st.markdown(md(
@@ -590,7 +586,7 @@ def _render_category_transactions(*, category: str,
         if "Data Compra" in df.columns:
             df = df.sort_values("Data Compra", ascending=False)
         df["Valor"] = df["Valor"].apply(brl)
-        st.dataframe(df, hide_index=True, use_container_width=True)
+        components.table(df)
 
 
 def _fixed_costs_tab(df_fixed_costs: pd.DataFrame, *,
@@ -669,10 +665,8 @@ def _generate_fixed_costs_section(df_fixed_costs: pd.DataFrame) -> None:
     with st.expander("Pré-visualizar lançamentos"):
         preview = valid_costs.copy()
         preview["Valor (R$)"] = preview["Valor"].apply(brl)
-        st.dataframe(
-            preview[["Descrição", "Categoria", "Valor (R$)"]],
-            use_container_width=True, hide_index=True,
-        )
+        components.table(
+            preview[["Descrição", "Categoria", "Valor (R$)"]])
 
     if st.button("🚀 Gerar lançamentos agora", type="primary"):
         df_current = repository.load_transactions().drop(

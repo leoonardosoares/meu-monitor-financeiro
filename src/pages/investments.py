@@ -93,15 +93,14 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
             md(f"📈 Carteira — {len(guardada.ativos)} ativo(s) · "
                f"{brl(guardada.investido)}")
         ):
-            st.dataframe(pd.DataFrame([{
+            components.table(pd.DataFrame([{
                 "Ativo": a.nome, "Instituição": a.instituicao,
                 "Classe": a.classe or "—",
                 "Valor": brl(a.valor),
                 "% da carteira": (
                     f"{a.valor / guardada.investido * 100:.1f}%"
                     if guardada.investido else "—"),
-            } for a in sorted(guardada.ativos, key=lambda x: -x.valor)]),
-                hide_index=True, use_container_width=True)
+            } for a in sorted(guardada.ativos, key=lambda x: -x.valor)]))
     with dir_:
         porc = {}
         for a in guardada.ativos:
@@ -221,8 +220,12 @@ def _goals_tab(*, df_transactions: pd.DataFrame, invested: float,
     extra = max(liquido - new_goal, 0.0)
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Patrimônio investido", brl(liquido),
-              delta=base_label, delta_color="off")
+    c1.metric("Carteira cadastrada (líquido)", brl(liquido),
+              delta=base_label, delta_color="off",
+              help="Soma dos ativos que você cadastrou aqui, já "
+                   "descontado IOF/IR. É outra conta que o "
+                   "\"Patrimônio\" do Dashboard, que soma conta + "
+                   "investimentos − cartões.")
     c2.metric("Fundo de emergência", brl(reserve))
     c3.metric("Acima da meta", brl(extra))
 
@@ -373,7 +376,7 @@ def _wallet_table(positions: list[inv.Position]) -> None:
     for col in ("Aplicado", "Bruto hoje", "Impostos", "Líquido hoje",
                 "Rende (líq.)"):
         display[col] = display[col].apply(brl)
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
 
 
 def _rate_label(p: inv.Position) -> str:
@@ -404,8 +407,11 @@ def _wallet_allocation(positions: list[inv.Position]) -> None:
     c1, c2 = st.columns(2)
     with c1:
         by_class = df.groupby("Classe")["Valor"].sum().reset_index()
+        # A série do tema, e não a Set2 do Plotly: era o único gráfico
+        # do app com paleta própria, e as fatias não combinavam com
+        # nenhuma outra tela.
         fig = px.pie(by_class, values="Valor", names="Classe", hole=0.5,
-                     color_discrete_sequence=px.colors.qualitative.Set2)
+                     color_discrete_sequence=Colors.SERIES)
         fig.update_traces(textinfo="percent+label", textposition="inside")
         fig.update_layout(showlegend=False, height=320,
                           margin=dict(t=10, b=10, l=10, r=10))
@@ -594,7 +600,7 @@ def _moves_tab(*, df_assets: pd.DataFrame, df_moves: pd.DataFrame,
             "`Aporte` ou `Resgate`."
         )
         with st.expander("Ver linhas ignoradas"):
-            st.dataframe(invalidas, hide_index=True, use_container_width=True)
+            components.table(invalidas)
 
     _reconciliation_panel(df_transactions, df_moves)
 
@@ -870,7 +876,7 @@ def _portfolio_projection(positions: list[inv.Position],
         detail["Data"] = pd.to_datetime(detail["Data"]).dt.strftime("%m/%Y")
         for col in ("Principal", "Bruto", "IOF", "IR", "Líquido"):
             detail[col] = detail[col].apply(brl)
-        st.dataframe(detail, hide_index=True, use_container_width=True)
+        components.table(detail)
 
 
 def _asset_projection(position: inv.Position, rates: inv.MarketRates,
@@ -946,7 +952,7 @@ def _gross_net_chart(curve: pd.DataFrame, *, title: str) -> None:
     ))
     fig.add_trace(go.Scatter(
         x=x, y=curve["Bruto"], name="Valor bruto",
-        mode="lines", line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        mode="lines", line=dict(color=Colors.SERIES[1], width=3),
         hovertemplate="Bruto: R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -1021,7 +1027,7 @@ def _redemption_scenarios(position: inv.Position,
     display = df.copy()
     for col in ("Bruto", "IOF", "IR", "Líquido", "Ganho líquido"):
         display[col] = display[col].apply(brl)
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
     st.caption(md(
         f"Maior valor líquido: **{best['Cenário']}** "
         f"({best['Data']}) — {brl(best['Líquido'])}. Projeção assume que a "
@@ -1228,8 +1234,7 @@ def _position_tab(*, positions: list[inv.Position],
                 "Desvio": f"{desvio_pct:+.2f}%",
                 "Rendimento real (líq.)": brl(p.yield_net_today),
             })
-        st.dataframe(pd.DataFrame(rows), hide_index=True,
-                     use_container_width=True)
+        components.table(pd.DataFrame(rows))
         st.caption(
             "Desvio positivo: o ativo rendeu **mais** que a taxa presumida. "
             "Negativo: rendeu menos — vale revisar a taxa cadastrada ou as "
@@ -1282,7 +1287,7 @@ def _real_vs_projected_chart(position: inv.Position,
     fig.add_trace(go.Scatter(
         x=pd.to_datetime(curve["Data"]), y=curve["Bruto"],
         name="Projetado", mode="lines",
-        line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        line=dict(color=Colors.SERIES[1], width=3),
         hovertemplate="Projetado: R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -1373,7 +1378,7 @@ def _total_performance(positions: list[inv.Position]) -> None:
     for col in ("Aplicado", "Bruto", "Líquido", "Rendimento líq."):
         display[col] = display[col].apply(brl)
     display["%"] = df["%"].apply(lambda v: f"{v:+.2f}%")
-    st.dataframe(display, hide_index=True, use_container_width=True)
+    components.table(display)
 
     if len(df) >= 2:
         fig = px.bar(

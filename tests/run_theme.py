@@ -272,6 +272,101 @@ for _modo, _cores in PALETTES.items():
     check(f"{_modo}: amplitude da banda de contraste abaixo de 1,5",
           round(max(_banda) - min(_banda), 2) < 1.5, True)
 
+print("  Tabela de leitura não usa o widget nativo")
+# `st.dataframe` é desenhado num canvas e segue o tema do config.toml,
+# que é lido na inicialização e não muda: no modo claro virava um
+# retângulo preto de texto branco no meio da página, e folha de estilo
+# nenhuma alcança aquilo. Onde o usuário só lê, a tabela é HTML.
+# `st.data_editor` continua valendo: ali ele edita.
+_nativas = []
+for _pasta, _, _arqs in os.walk(_RAIZ):
+    if "__pycache__" in _pasta:
+        continue
+    for _nome in sorted(_arqs):
+        if not _nome.endswith(".py"):
+            continue
+        for _n, _l in enumerate(
+                open(os.path.join(_pasta, _nome), encoding="utf-8"), 1):
+            if "st.dataframe(" in _l:
+                _nativas.append(f"{_nome}:{_n}")
+check("nenhum st.dataframe nas telas", _nativas, [])
+
+print("  O título da página é maior que o de seção")
+# Os dois eram h3: o nome da página tinha o peso de cada bloco dentro
+# dela, e a tela não tinha começo. Depois de dar 1,15rem à seção, a
+# hierarquia chegou a ficar invertida — seção maior que página.
+_css_atual = styles._css()
+
+
+def _tamanho(classe: str) -> float:
+    """font-size da regra daquela classe, em rem.
+
+    Pela abertura da regra (`.classe {`), e não pela primeira menção ao
+    nome: um comentário que cita `.mf-sec__title` casava antes da regra.
+    """
+    _bloco = re.search(
+        r"\." + re.escape(classe) + r"\s*\{([^}]*)\}", _css_atual)
+    return float(re.search(r"font-size:\s*([\d.]+)rem", _bloco.group(1)).group(1))
+
+
+_pagina, _secao = _tamanho("mf-page__title"), _tamanho("mf-sec__title")
+check("página acima de seção", _pagina > _secao, True)
+check("e com degrau perceptível (>= 15%)",
+      round(_pagina / _secao, 2) >= 1.15, True)
+
+print("  A escada de superfícies separa página, cartão e campo")
+# O que delimita um bloco do outro é o degrau entre as superfícies. No
+# claro ele era de 1,055:1 entre a página e o cartão — imperceptível, e
+# por isso a tela lia como uma folha só, sem nada delimitando nada.
+for _modo, _cores in PALETTES.items():
+    _degrau = _razao(_cores["BG"], _cores["SURFACE"])
+    check(f"{_modo}: página e cartão se distinguem",
+          round(_degrau, 3) >= 1.09, True)
+    # O campo tem de se separar do cartão em que está, senão o input
+    # desaparece dentro dele.
+    check(f"{_modo}: campo se separa do cartão",
+          round(_razao(_cores["SURFACE_2"], _cores["SURFACE"]), 3) >= 1.05,
+          True)
+    # E o texto do corpo tem de passar nas três.
+    for _superficie in ("BG", "SURFACE", "SURFACE_2"):
+        check(f"{_modo}: texto sobre {_superficie} >= 7:1",
+              round(_razao(_cores["TEXT"], _cores[_superficie]), 2) >= 7.0,
+              True)
+
+print("  Nenhum gráfico com paleta própria")
+# A pizza de alocação usava px.colors.qualitative.Set2 — o único gráfico
+# do app que ignorava a série do tema, e as fatias não combinavam com
+# nenhuma outra tela.
+_proprias = []
+for _pasta, _, _arqs in os.walk(_RAIZ):
+    if "__pycache__" in _pasta:
+        continue
+    for _nome in sorted(_arqs):
+        if not _nome.endswith(".py"):
+            continue
+        _txt = open(os.path.join(_pasta, _nome), encoding="utf-8").read()
+        for _marca in ("px.colors.", "plotly.colors", "colors.qualitative",
+                       "colors.sequential"):
+            if _marca in _txt:
+                _proprias.append(f"{_nome}: {_marca}")
+check("nenhuma paleta do Plotly no lugar da do tema", _proprias, [])
+
+# PRIMARY_SOFT é fundo de realce (#2A4A3D no escuro). Como cor de traço
+# ela desaparece contra o cartão — estava em duas séries de gráfico.
+print("  Cor de fundo não é usada como cor de traço")
+_tracos = []
+for _pasta, _, _arqs in os.walk(_RAIZ):
+    if "__pycache__" in _pasta:
+        continue
+    for _nome in sorted(_arqs):
+        if not _nome.endswith(".py"):
+            continue
+        for _n, _l in enumerate(
+                open(os.path.join(_pasta, _nome), encoding="utf-8"), 1):
+            if "PRIMARY_SOFT" in _l and ("line=" in _l or "line_color" in _l):
+                _tracos.append(f"{_nome}:{_n}")
+check("PRIMARY_SOFT não aparece como traço", _tracos, [])
+
 print("  O hover do primário é visível")
 for _modo, _cores in PALETTES.items():
     # 1,10:1 era o caso do claro: mudança que não se percebe.
