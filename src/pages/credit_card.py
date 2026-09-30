@@ -125,6 +125,69 @@ def _saldo_do_banco() -> dict[str, float]:
     )
 
 
+def _parcelas_projetadas() -> None:
+    """Remove as parcelas futuras que o lançamento manual inventou.
+
+    O formulário manual cria, de uma vez, uma linha por parcela nos
+    meses seguintes. A importação não faz isso — cada parcela chega no
+    mês em que o banco a cobra. Convivendo, a mesma parcela existe duas
+    vezes, e como a data de compra difere o comparador de duplicatas
+    não as reconhece. É o que enche o app de faturas até 2028.
+    """
+    df_tx = repository.load_credit_card()
+    idx = reconcile.manual_future_rows(df_tx, today=date.today())
+    if len(idx) == 0:
+        return
+
+    alvo = df_tx.loc[idx]
+    total = float(pd.to_numeric(alvo["Valor"], errors="coerce").fillna(0).sum())
+    meses = sorted({str(m) for m in alvo["Mês da Fatura"]})
+
+    with st.expander(
+        md(f"📐 {len(idx)} parcela(s) projetada(s) à mão — {brl(total)}"),
+        expanded=True,
+    ):
+        st.caption(
+            "Linhas de meses futuros que **não vieram do banco**: foram "
+            "criadas pelo lançamento manual parcelado, que espalha a "
+            "compra pelos meses seguintes de uma vez. O banco cobra "
+            "essas parcelas no mês certo e a importação as traz — "
+            "manter as duas conta a mesma parcela duas vezes."
+        )
+        st.caption(md(
+            f"Vão de **{meses[0]}** a **{meses[-1]}**. A fatura do mês "
+            "corrente não é tocada."
+        ))
+        st.dataframe(pd.DataFrame([{
+            "Cartão": r.get("Cartão"), "Fatura": r.get("Mês da Fatura"),
+            "Descrição": r.get("Descrição"), "Parcela": r.get("Parcela"),
+            "Valor": brl(float(pd.to_numeric(r.get("Valor"),
+                                             errors="coerce") or 0)),
+        } for _, r in alvo.head(40).iterrows()]), hide_index=True,
+            use_container_width=True)
+        if len(alvo) > 40:
+            st.caption(f"…e mais {len(alvo) - 40} linha(s).")
+
+        if st.button(f"🧹 Remover {len(idx)} parcela(s) projetada(s)",
+                     type="primary", key="limpar_projetadas"):
+            repository.save_credit_card(
+                df_tx.drop(index=idx).reset_index(drop=True))
+            st.success(md(f"{len(idx)} linha(s) removida(s) — {brl(total)}."))
+            st.rerun()
+
+    falhas = reconcile.parcel_gaps(df_tx)
+    if not falhas.empty:
+        with st.expander(
+            f"⚠️ {len(falhas)} parcelamento(s) com mês fora de sequência"
+        ):
+            st.caption(
+                "A parcela 4/10 tem de cair um mês depois da 3/10. Um "
+                "buraco aponta linha faltando; uma repetição, linha "
+                "inventada."
+            )
+            st.dataframe(falhas, hide_index=True, use_container_width=True)
+
+
 def _faturas_do_banco() -> dict[tuple[str, str], float]:
     """{(cartão, mês): total informado pela instituição}."""
     df = repository.load_bank_bills()
@@ -200,6 +263,7 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
     _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
     _remover_duplicatas()
+    _parcelas_projetadas()
     _faturas(df_cards, df_tx, df_pay, names, banco_faturas)
 
 
