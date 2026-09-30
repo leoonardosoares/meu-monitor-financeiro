@@ -415,3 +415,34 @@ def save_archive(sheet_name: str, df: pd.DataFrame) -> None:
         return
     anterior = _read(sheet_name)
     _overwrite(sheet_name, pd.concat([anterior, df], ignore_index=True))
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def load_bank_bills() -> pd.DataFrame:
+    """Faturas como o banco as reporta."""
+    return _to_numeric(_read("faturas_banco"), ["Total"])
+
+
+def save_bank_bills(df: pd.DataFrame) -> None:
+    _overwrite("faturas_banco", df)
+    load_bank_bills.clear()
+
+
+def merge_bank_bills(rows: list[dict]) -> None:
+    """Grava as faturas lidas, substituindo a leitura anterior de cada uma.
+
+    Substituir, e não acumular: uma fatura ainda aberta muda de valor a
+    cada compra, e guardar o histórico dela faria a tela somar versões
+    diferentes da mesma fatura.
+    """
+    if not rows:
+        return
+    novo = pd.DataFrame(rows)
+    atual = load_bank_bills()
+    if not atual.empty and {"Cartão", "Mês"}.issubset(atual.columns):
+        chaves = set(zip(novo["Cartão"].astype(str),
+                         novo["Mês"].astype(str)))
+        manter = ~atual.apply(
+            lambda r: (str(r["Cartão"]), str(r["Mês"])) in chaves, axis=1)
+        atual = atual[manter]
+    save_bank_bills(pd.concat([atual, novo], ignore_index=True))

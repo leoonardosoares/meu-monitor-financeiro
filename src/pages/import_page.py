@@ -240,6 +240,23 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
             df_cards=df_cards, desde=desde, bills=faturas,
             sugerir=lambda d: suggest_category(d, df_transactions),
         )
+    # As faturas do banco são guardadas mesmo que nada novo entre: elas
+    # são o total que a tela do cartão precisa para se conferir.
+    linhas_fatura: list[dict] = []
+    for conta in ativas:
+        chave = pi.account_key(conta)
+        destino = destinos.get(chave, "")
+        if chave not in faturas or destino in ("", pi.DESTINO_BANCO,
+                                               pi.DESTINO_IGNORAR):
+            continue
+        settings = cc.card_settings(df_cards, destino)
+        linhas_fatura += pi.bill_rows(
+            faturas[chave], cartao=destino,
+            closing_day=int(settings["fechamento"]),
+            due_day=int(settings["vencimento"]), lido_em=date.today())
+    if linhas_fatura:
+        repository.merge_bank_bills(linhas_fatura)
+
     st.session_state["pluggy_pendentes"] = pendentes
     st.session_state["pluggy_avisos"] = avisos + mais
     st.session_state["pluggy_falhou"] = bool(avisos) and not transacoes

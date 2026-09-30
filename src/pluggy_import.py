@@ -131,6 +131,43 @@ def bill_index(bills: list[dict], *, closing_day: int,
     return out
 
 
+_CAMPOS_TOTAL = ("totalAmount", "total", "amount", "balance", "value")
+
+
+def bill_rows(bills: list[dict], *, cartao: str, closing_day: int,
+              due_day: int, lido_em: date) -> list[dict]:
+    """Faturas do banco em linhas, para a planilha guardar.
+
+    Guarda o total que a instituição informa. Somar as linhas que o app
+    tem só dá o mesmo número quando nenhuma compra faltou — e uma compra
+    que não chegou é invisível justamente na soma.
+    """
+    out: list[dict] = []
+    for bill in bills or []:
+        mes = bill_month(bill, closing_day=closing_day, due_day=due_day)
+        if not mes:
+            continue
+        total = 0.0
+        for campo in _CAMPOS_TOTAL:
+            if campo in bill:
+                valor = pd.to_numeric(bill.get(campo), errors="coerce")
+                if not pd.isna(valor) and float(valor):
+                    total = abs(float(valor))
+                    break
+        fechamento = _primeira_data(bill, _CAMPOS_FECHAMENTO)
+        vencimento = _primeira_data(bill, _CAMPOS_VENCIMENTO)
+        out.append({
+            "Cartão": cartao,
+            "Mês": mes,
+            "Total": round(total, 2),
+            "Fechamento": fechamento.isoformat() if fechamento else "",
+            "Vencimento": vencimento.isoformat() if vencimento else "",
+            "Situação": str(bill.get("status") or ""),
+            "Lido em": lido_em.isoformat(),
+        })
+    return out
+
+
 def bill_id(tx: dict) -> str:
     """Fatura a que a compra pertence, segundo o banco."""
     meta = tx.get("creditCardMetadata") or {}

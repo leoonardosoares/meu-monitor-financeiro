@@ -441,6 +441,56 @@ check("em bill_id", pi.bill_id({"creditCardMetadata": {"bill_id": "b"}}), "b")
 check("na raiz", pi.bill_id({"billId": "b"}), "b")
 check("ausente", pi.bill_id({"id": "t"}), "")
 
+# Somar as linhas que chegaram só dá o total certo se nenhuma compra
+# faltou — e uma compra que não chegou é invisível justamente na soma.
+print("  O total da fatura vem do banco, não da soma das linhas")
+from datetime import date as _d  # noqa: E402
+
+FATURAS = [
+    {"id": "b1", "dueDate": "2026-10-15", "totalAmount": 2679.04,
+     "status": "OPEN"},
+    {"id": "b2", "dueDate": "2026-09-15", "totalAmount": 333.48,
+     "status": "CLOSED"},
+]
+linhas = pi.bill_rows(FATURAS, cartao="Principal", closing_day=8,
+                      due_day=15, lido_em=_d(2026, 9, 30))
+check("uma linha por fatura", len(linhas), 2)
+check("meses certos", sorted(x["Mês"] for x in linhas),
+      ["09/2026", "10/2026"])
+check("total da aberta",
+      next(x["Total"] for x in linhas if x["Mês"] == "10/2026"), 2679.04)
+check("guarda o vencimento",
+      next(x["Vencimento"] for x in linhas if x["Mês"] == "10/2026"),
+      "2026-10-15")
+check("e a situação",
+      next(x["Situação"] for x in linhas if x["Mês"] == "10/2026"), "OPEN")
+
+print("  Total negativo vira dívida positiva")
+check("sinal normalizado",
+      pi.bill_rows([{"id": "x", "dueDate": "2026-10-15",
+                     "totalAmount": -500.0}],
+                   cartao="P", closing_day=8, due_day=15,
+                   lido_em=_d(2026, 9, 30))[0]["Total"], 500.0)
+
+print("  Campo de total varia por instituição")
+for campo in ("totalAmount", "total", "amount", "balance"):
+    r = pi.bill_rows([{"id": "x", "dueDate": "2026-10-15", campo: 10.0}],
+                     cartao="P", closing_day=8, due_day=15,
+                     lido_em=_d(2026, 9, 30))
+    check(f"lê {campo}", r[0]["Total"], 10.0)
+
+print("  Fatura sem mês legível fica de fora")
+check("sem datas", pi.bill_rows([{"id": "x"}], cartao="P", closing_day=8,
+                                due_day=15, lido_em=_d(2026, 9, 30)), [])
+check("lista vazia", pi.bill_rows([], cartao="P", closing_day=8, due_day=15,
+                                  lido_em=_d(2026, 9, 30)), [])
+check("None", pi.bill_rows(None, cartao="P", closing_day=8, due_day=15,
+                           lido_em=_d(2026, 9, 30)), [])
+
+print("  As colunas batem com a aba da planilha")
+from src.config import SHEETS_SCHEMA as _SS  # noqa: E402
+check("mesmo formato", sorted(linhas[0]), sorted(_SS["faturas_banco"]))
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")
