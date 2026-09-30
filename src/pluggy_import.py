@@ -69,8 +69,11 @@ def transfer_category(descricao: str, categoria_pluggy: str = "") -> str | None:
 
 # Campos em que a data de fechamento pode vir, na ordem de preferência.
 # Varia por instituição, e adivinhar um nome só zeraria o mapa.
-_CAMPOS_FECHAMENTO = ("closeDate", "closingDate", "billDate", "periodEnd",
-                      "endDate", "referenceDate")
+# `billClosingDate` é o nome que a Pluggy usa de fato — descoberto
+# olhando a resposta, depois de a coluna "Fecha" vir vazia por eu ter
+# apostado nos outros nomes. Os demais ficam como alternativas.
+_CAMPOS_FECHAMENTO = ("billClosingDate", "closeDate", "closingDate",
+                      "billDate", "periodEnd", "endDate", "referenceDate")
 _CAMPOS_VENCIMENTO = ("dueDate", "paymentDueDate", "due_date")
 
 
@@ -169,13 +172,18 @@ def bill_rows(bills: list[dict], *, cartao: str, closing_day: int,
 
 
 def _dia_mais_comum(datas: list[date]) -> int | None:
-    """Dia do mês que mais se repete — o ciclo do cartão é mensal."""
+    """Dia do mês que mais se repete — o ciclo do cartão é mensal.
+
+    No empate fica o MENOR dia. Vencimento que cai em fim de semana ou
+    feriado é empurrado para frente, nunca para trás, então o dia menor
+    é o nominal e o maior é a exceção daquele mês.
+    """
     if not datas:
         return None
     contagem: dict[int, int] = {}
     for d in datas:
         contagem[d.day] = contagem.get(d.day, 0) + 1
-    return max(contagem.items(), key=lambda x: (x[1], x[0]))[0]
+    return min(contagem.items(), key=lambda x: (-x[1], x[0]))[0]
 
 
 def infer_card_days(bills: list[dict],
@@ -196,7 +204,15 @@ def infer_card_days(bills: list[dict],
                    if d is not None]
     dia_venc = _dia_mais_comum(vencimentos)
 
-    # Última compra de cada fatura, que é o que o fechamento delimita.
+    # Quando a instituição informa o fechamento, ele é a resposta — não
+    # há por que deduzir do extrato o que veio escrito.
+    fechamentos = [d for d in
+                   (_primeira_data(b, _CAMPOS_FECHAMENTO) for b in bills or [])
+                   if d is not None]
+    if fechamentos:
+        return _dia_mais_comum(fechamentos), dia_venc
+
+    # Sem ele, a última compra de cada fatura denuncia onde ela fechou.
     ultimas: dict[str, date] = {}
     for tx in transactions or []:
         ident = bill_id(tx)
