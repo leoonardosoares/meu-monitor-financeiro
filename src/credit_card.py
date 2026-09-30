@@ -719,8 +719,37 @@ def match_payments(df_credit_card: pd.DataFrame,
     return df, quitadas
 
 
+def settled_by_bank(df_bills: pd.DataFrame, *,
+                    today: date) -> set[tuple[str, str]]:
+    """Faturas que a instituição já cobrou e recebeu.
+
+    Mesma regra de `settle_closed_bills`, disponível para a tela: o
+    banco só publica fatura fechada, e uma fechada cujo vencimento passou
+    foi paga — se não tivesse sido, o cartão estaria bloqueado e o saldo
+    devedor seria outro.
+
+    Existe porque aquela função só roda na importação. Entre uma
+    importação e outra, a tela decidia sozinha pela data e chamava de
+    "vencida" fatura que o banco não cobra mais — três delas, somando
+    mais que a dívida inteira que a instituição informa.
+    """
+    if df_bills.empty or not {"Cartão", "Mês"}.issubset(df_bills.columns):
+        return set()
+    dia = pd.Timestamp(today).normalize()
+    fora: set[tuple[str, str]] = set()
+    for _, linha in df_bills.iterrows():
+        venc = pd.to_datetime(str(linha.get("Vencimento") or "").strip(),
+                              errors="coerce")
+        if pd.isna(venc) or venc >= dia:
+            continue
+        fora.add((str(linha["Cartão"]).strip(), str(linha["Mês"]).strip()))
+    return fora
+
+
 def situations(scheduled: list[ScheduledInvoice],
-               hoje: date) -> dict[tuple[str, str], str]:
+               hoje: date,
+               liquidadas: set[tuple[str, str]] | None = None,
+               ) -> dict[tuple[str, str], str]:
     """Como o banco chamaria cada fatura, por cartão.
 
     São os estados que o app do cartão mostra: paga, a atual que ainda
@@ -731,8 +760,15 @@ def situations(scheduled: list[ScheduledInvoice],
     "Atual" é decidida por cartão, não por data isolada: é a primeira
     que ainda não fechou. Sem olhar a sequência, todas as parcelas dos
     próximos meses passariam por atuais.
+
+    `liquidadas` são as faturas que a instituição já recebeu (ver
+    `settled_by_bank`). Elas mandam sobre a data: a planilha pode ter a
+    linha ainda como Pendente, porque o pagamento aparece no extrato da
+    conta e não no do cartão, e sem esse aviso a tela inventa uma dívida
+    vencida que o banco não cobra.
     """
     dia = pd.Timestamp(hoje).normalize()
+    pagas_no_banco = liquidadas or set()
     out: dict[tuple[str, str], str] = {}
 
     por_cartao: dict[str, list[ScheduledInvoice]] = {}
@@ -745,7 +781,7 @@ def situations(scheduled: list[ScheduledInvoice],
         atual = (abertas[0].month if abertas else None)
         for f in faturas:
             chave = (f.card, f.month)
-            if f.balance <= 1e-6:
+            if f.balance <= 1e-6 or chave in pagas_no_banco:
                 out[chave] = "Paga"
             elif f.due < dia:
                 out[chave] = "Vencida"

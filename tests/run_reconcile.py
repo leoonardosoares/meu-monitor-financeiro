@@ -425,6 +425,73 @@ check("planilha sem a coluna Origem",
 _uma_vez = _proj.drop(index=rc.supersede_projections(_proj))
 check("idempotente", len(rc.supersede_projections(_uma_vez)), 0)
 
+
+# ---------------------------------------------------------------------------
+# O banco escreve a parcela dentro da descrição
+# ---------------------------------------------------------------------------
+#
+# A mesma compra chega como "Amo Atendimento Medi 1/3" num mês e
+# "Amo Atendimento Medi 2/3" no outro. Agrupando pela descrição crua,
+# cada parcela virava uma compra e projetava a série inteira a partir de
+# si mesma: a 1/3 gerava 2/3 e 3/3, a 2/3 gerava outra 3/3. Era o que
+# enchia a tela de parcela repetida até 2027.
+print("  Parcela escrita na descrição não vira compra nova")
+check("o sufixo sai da identidade",
+      rc.purchase_identity("Amo Atendimento Medi 1/3"),
+      rc.purchase_identity("Amo Atendimento Medi 2/3"))
+check("descrição sem sufixo não é alterada",
+      rc.purchase_identity("Mercado Livre"), "mercado livre")
+check("número no meio do nome fica",
+      rc.purchase_identity("Posto 24/7 Centro"), "posto 24/7 centro")
+
+
+def _compra(desc, parc, mes, valor, ident="x"):
+    return {"Data Compra": "2026-08-10", "Mês da Fatura": mes,
+            "Cartão": "Principal", "Descrição": desc, "Categoria": "Outros",
+            "Parcela": parc, "Valor": valor, "Status": "Pendente",
+            "ID Pluggy": ident, "Origem": ORIGEM_BANCO}
+
+
+_duas = pd.DataFrame([
+    _compra("Amo Atendimento Medi 1/3", "1/3", "09/2026", 133.34, "a1"),
+    _compra("Amo Atendimento Medi 2/3", "2/3", "10/2026", 133.33, "a2"),
+])
+_proj = rc.project_installments(_duas, today=date(2026, 9, 30))
+check("só falta a 3/3", [(p["Parcela"], p["Mês da Fatura"]) for p in _proj],
+      [("3/3", "11/2026")])
+check("e a descrição sai sem o marcador",
+      _proj[0]["Descrição"], "Amo Atendimento Medi")
+
+# O caso descrito pelo usuário: fatura de setembro com a 2/3.
+_kabum = pd.DataFrame([_compra("KaBuM 2/3", "2/3", "09/2026", 100.0, "k2")])
+check("KaBuM 2/3 em setembro deduz a 3/3 em outubro",
+      [(p["Parcela"], p["Mês da Fatura"])
+       for p in rc.project_installments(_kabum, today=date(2026, 9, 30))],
+      [("3/3", "10/2026")])
+
+print("  Não se projeta em fatura que o banco já emitiu")
+# O total daquele mês é o que a instituição informou; acrescentar linha
+# ali afasta o app do banco em vez de aproximar.
+_longa = pd.DataFrame([
+    _compra("Mercadolivre 1/10", "1/10", "08/2026", 235.31, "m1")])
+check("sem filtro, completa a série",
+      len(rc.project_installments(_longa, today=date(2026, 9, 30))), 9)
+check("com duas faturas já emitidas, pula as duas",
+      len(rc.project_installments(
+          _longa, today=date(2026, 9, 30),
+          faturadas={("Principal", "09/2026"), ("Principal", "10/2026")})), 7)
+
+print("  A substituição continua casando com a descrição do banco")
+# A projeção nasce sem o "N/M" e a linha do banco tem o marcador:
+# comparar texto cru faria a parcela ser contada duas vezes.
+_mistura = pd.DataFrame([
+    _compra("KaBuM 3/3", "3/3", "10/2026", 100.0, "k3"),
+    {**_compra("KaBuM", "3/3", "10/2026", 100.0, ""),
+     "Origem": ORIGEM_PROJECAO},
+])
+check("a projeção sai quando o banco cobra",
+      len(rc.supersede_projections(_mistura)), 1)
+
 print()
 for _linha in _fail:
     print(f"  FALHOU {_linha}")

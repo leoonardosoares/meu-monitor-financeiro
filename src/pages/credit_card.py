@@ -12,6 +12,7 @@ from src import (
 from src import pluggy_import as pi
 from src.config import (Colors, ConfigKeys, DEFAULT_CARD_NAME, ORIGEM_BANCO,
                         ORIGEM_MANUAL, ORIGEM_PROJECAO)
+from src.dates import parse_month_label
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
@@ -259,21 +260,27 @@ def _completar_parcelamentos() -> None:
     projeção do próximo ano fica vazia justamente onde há compromisso.
     """
     df_tx = repository.load_credit_card()
-    novas = reconcile.project_installments(df_tx, today=date.today())
+    # Nos meses cuja fatura o banco já emitiu, o total é o dele: deduzir
+    # linha ali afasta o app do banco em vez de aproximar.
+    novas = reconcile.project_installments(
+        df_tx, today=date.today(), faturadas=set(_faturas_do_banco()))
     if not novas:
         return
 
     total = sum(n["Valor"] for n in novas)
-    meses = sorted({n["Mês da Fatura"] for n in novas})
+    # Por data, não por texto: "MM/AAAA" ordenado como string põe
+    # 01/2027 antes de 12/2026, e a faixa saía invertida na tela.
+    meses = sorted({n["Mês da Fatura"] for n in novas},
+                   key=lambda m: parse_month_label(m) or pd.Timestamp.max)
     with st.expander(
         md(f"➕ {len(novas)} parcela(s) contratada(s) que o banco ainda "
            f"não cobrou — {brl(total)}")
     ):
         st.caption(
-            "Deduzidas do parcelamento: se a última parcela conhecida é "
-            "a 4/10, faltam seis, no mesmo valor e um mês depois da "
-            "outra. Elas entram marcadas como **projeção**, para você "
-            "saber que não vieram do extrato."
+            "Deduzidas do parcelamento: se a fatura de setembro tem a "
+            "parcela 2/3, falta só a 3/3 em outubro. Elas entram "
+            "marcadas como **projeção**, para você saber que não vieram "
+            "do extrato."
         )
         st.dataframe(pd.DataFrame([{
             "Cartão": n["Cartão"], "Fatura": n["Mês da Fatura"],
@@ -433,6 +440,50 @@ def _confronto_de_linhas(total_banco: float, total_linhas: float,
         ))
 
 
+def _baixa_pendente(agendadas: list, situacao: dict,
+                    liquidadas: set[tuple[str, str]]) -> None:
+    """Oferece acertar na planilha o que o banco já deu por pago.
+
+    A tela passa a mostrar essas faturas como pagas assim que a
+    instituição as reporta, mas as linhas continuam Pendente na
+    planilha — e é delas que saem o total do cartão, a média de gastos e
+    a projeção do próximo mês. Um clique alinha as duas coisas; deixar
+    para a próxima importação mantém o número inflado até lá.
+    """
+    alvo = [i for i in agendadas
+            if (i.card, i.month) in liquidadas and i.balance > 1e-6]
+    if not alvo:
+        return
+    total = sum(i.balance for i in alvo)
+    meses = ", ".join(f"{i.card} {i.month}" for i in alvo[:4])
+    st.info(md(
+        f"O banco já recebeu {len(alvo)} fatura(s) que a planilha ainda "
+        f"tem como pendente ({meses}"
+        + ("…" if len(alvo) > 4 else "")
+        + f") — {brl(total)}. Aqui elas já aparecem como pagas; o botão "
+        "acerta a planilha."
+    ))
+    if st.button(f"✅ Dar baixa em {len(alvo)} fatura(s)",
+                 key="baixa_faturas_banco"):
+        atual = repository.load_credit_card()
+        vencimentos = {}
+        df_bills = repository.load_bank_bills()
+        for _, linha in df_bills.iterrows():
+            venc = pd.to_datetime(str(linha.get("Vencimento") or "").strip(),
+                                  errors="coerce")
+            if not pd.isna(venc):
+                vencimentos[(str(linha["Cartão"]).strip(),
+                             str(linha["Mês"]).strip())] = venc.date()
+        novo, quantas = cc.settle_closed_bills(atual, vencimentos,
+                                               today=date.today())
+        if quantas:
+            repository.save_credit_card(novo)
+            st.success(f"{quantas} linha(s) marcada(s) como paga(s).")
+            st.rerun()
+        else:
+            st.warning("Nada mudou — as linhas já estavam em dia.")
+
+
 def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
              df_pay: pd.DataFrame, names: list[str],
              banco: dict[tuple[str, str], float]) -> None:
@@ -462,7 +513,13 @@ def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     if not agendadas:
         st.success("Nenhuma fatura em aberto.")
         return
-    situacao = cc.situations(agendadas, hoje)
+
+    # O banco só publica fatura fechada, e uma fechada cujo vencimento
+    # passou já foi paga. Sem isso a tela decidia pela data e inventava
+    # dívida vencida que a instituição não cobra mais.
+    liquidadas = cc.settled_by_bank(repository.load_bank_bills(), today=hoje)
+    situacao = cc.situations(agendadas, hoje, liquidadas)
+    _baixa_pendente(agendadas, situacao, liquidadas)
 
     # A ordem é a da urgência, não a do calendário: uma lista por mês
     # misturava dívida de hoje com compromisso de 2027, e era isso que
