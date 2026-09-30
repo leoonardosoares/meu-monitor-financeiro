@@ -244,7 +244,13 @@ PALETTES = {
     },
     "light": {
         "SCHEME": "light",
-        "BG": "#F7F9FC", "SURFACE": "#FFFFFF", "SURFACE_2": "#F1F5F9",
+        # A página é mais profunda que o cartão, e não quase igual: com
+        # #F7F9FC o cartão branco ficava a 1,055:1 do fundo — degrau que
+        # não se percebe em monitor comum, então nada delimitava nada e a
+        # tela lia como uma folha só. Em #EEF2F7 a separação vai a
+        # 1,124:1, acima da que o modo escuro tem (1,094:1), e o texto
+        # sobre a página continua em 15,9:1.
+        "BG": "#EEF2F7", "SURFACE": "#FFFFFF", "SURFACE_2": "#F1F5F9",
         "BORDER": "#E2E8F0", "BORDER_HOVER": "#CBD5E1",
         "TEXT": "#0F172A", "TEXT_MUTED": "#475569",
         "TEXT_FAINT": "#64748B", "SIDEBAR": "#FFFFFF",

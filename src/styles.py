@@ -173,12 +173,23 @@ def _css() -> str:
         white-space: normal !important;
         overflow: visible !important;
     }
-    /* O delta é uma pilha cinza sobre cinza no tema nativo; sem cor
-       própria ele fica ilegível nos dois modos. */
+    /* O delta precisa de cor legível nos dois modos, mas SEM `!important`
+       na cor: forçando-a, todo `delta_color` da página morria junto —
+       "Disponível" negativo não ficava vermelho e "acima de 80%" não
+       ficava vermelho tampouco, porque o cinza vencia o que o Streamlit
+       define. Aqui o cinza é só o padrão, e a semântica passa na frente. */
     [data-testid="stMetricDelta"] {
         font-size: .75rem !important;
         font-weight: 600 !important;
-        color: var(--muted) !important;
+        color: var(--muted);
+    }
+    /* E quando o Streamlit marca a direção, a cor é a da paleta, não a do
+       tema nativo dele — que está fixo no escuro. */
+    [data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Up"]) {
+        color: var(--green) !important;
+    }
+    [data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) {
+        color: var(--red) !important;
     }
     [data-testid="stMetricDelta"] svg { fill: currentColor !important; }
 

@@ -10,7 +10,8 @@ from src import (
     components, credit_card as cc, positions, reconcile, repository,
 )
 from src import pluggy_import as pi
-from src.config import Colors, ConfigKeys, DEFAULT_CARD_NAME
+from src.config import (Colors, ConfigKeys, DEFAULT_CARD_NAME, ORIGEM_BANCO,
+                        ORIGEM_MANUAL, ORIGEM_PROJECAO)
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
@@ -204,7 +205,8 @@ def _parcelas_projetadas() -> None:
     meses = sorted({str(m) for m in alvo["Mês da Fatura"]})
 
     with st.expander(
-        md(f"📐 {len(idx)} parcela(s) projetada(s) à mão — {brl(total)}"),
+        md(f"🧹 {len(idx)} parcela(s) lançada(s) à mão de uma vez — "
+           f"{brl(total)}"),
         expanded=True,
     ):
         st.caption(
@@ -228,7 +230,7 @@ def _parcelas_projetadas() -> None:
         if len(alvo) > 40:
             st.caption(f"…e mais {len(alvo) - 40} linha(s).")
 
-        if st.button(f"🧹 Remover {len(idx)} parcela(s) projetada(s)",
+        if st.button(f"🧹 Remover {len(idx)} linha(s) criada(s) à mão",
                      type="primary", key="limpar_projetadas"):
             repository.save_credit_card(
                 df_tx.drop(index=idx).reset_index(drop=True))
@@ -265,7 +267,7 @@ def _completar_parcelamentos() -> None:
     meses = sorted({n["Mês da Fatura"] for n in novas})
     with st.expander(
         md(f"➕ {len(novas)} parcela(s) contratada(s) que o banco ainda "
-           f"não lançou — {brl(total)}")
+           f"não cobrou — {brl(total)}")
     ):
         st.caption(
             "Deduzidas do parcelamento: se a última parcela conhecida é "
@@ -280,7 +282,7 @@ def _completar_parcelamentos() -> None:
         } for n in novas]), hide_index=True, use_container_width=True)
         st.caption(md(f"De {meses[0]} a {meses[-1]}."))
 
-        if st.button(f"➕ Incluir {len(novas)} parcela(s) projetada(s)",
+        if st.button(f"➕ Incluir {len(novas)} parcela(s) que faltam",
                      type="primary", key="projetar_parcelas"):
             repository.save_credit_card(pd.concat(
                 [df_tx, pd.DataFrame(novas)], ignore_index=True))
@@ -343,7 +345,8 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     esq, dir_ = st.columns(2)
     with esq:
         components.stat_card(
-            label="Em aberto nos cartões", value=total_banco, divida=True,
+            label="Devendo agora, segundo o banco", value=total_banco,
+            divida=True,
             bar=(total_banco / total_limite) if total_limite else None,
             bar_label=(f"{total_banco / total_limite * 100:.0f}% do limite "
                        f"de {brl(total_limite)}" if total_limite else ""),
@@ -370,7 +373,35 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
         ))
 
     _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
+    _duas_medidas(total_banco, banco_faturas, do_banco)
     _faturas(df_cards, df_tx, df_pay, names, banco_faturas)
+
+
+def _duas_medidas(saldo_agora: float, banco_faturas: dict, do_banco: dict
+                  ) -> None:
+    """Explica por que o cartão do topo não soma as faturas de baixo.
+
+    São duas leituras diferentes da instituição, e a tela mostrava as
+    duas com a mesma autoridade e nenhuma palavra sobre a diferença:
+
+    - o cartão do topo é o **saldo da conta de cartão** na Pluggy: o que
+      se deve neste instante;
+    - os totais das faturas vêm de `/bills`: o valor de cada fatura que o
+      banco **emitiu**.
+
+    Somar as faturas nunca dá o saldo, porque as futuras ainda não foram
+    cobradas e a atual ainda está recebendo compras. Quem compara os dois
+    números sem saber disso conclui, com razão, que o app está errado —
+    e era a principal causa de "as faturas não estão certas".
+    """
+    if not do_banco or not banco_faturas:
+        return
+    st.caption(md(
+        f"O {brl(saldo_agora)} acima é o saldo da sua conta de cartão "
+        "agora. Os totais das faturas abaixo são o valor de cada fatura "
+        "emitida. Somar as faturas não dá esse número: as futuras ainda "
+        "não foram cobradas e a atual continua recebendo compras."
+    ))
 
 
 def _confronto_de_linhas(total_banco: float, total_linhas: float,
@@ -413,8 +444,21 @@ def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     compromisso de 2027, que é o que fazia o total parecer absurdo.
     """
     hoje = date.today()
-    agendadas, _ = cc.schedule_invoices(df_tx, df_pay, df_cards, today=hoje)
+    agendadas, ilegiveis = cc.schedule_invoices(df_tx, df_pay, df_cards,
+                                                today=hoje)
     agendadas = [i for i in agendadas if i.card in names]
+    # `schedule_invoices` devolve as faturas de mês ilegível justamente
+    # para a tela poder avisar. Descartá-las calado era pior que um erro:
+    # elas somem desta lista mas continuam contadas no total do topo, e a
+    # divergência ficava sem nenhuma explicação na tela.
+    if ilegiveis:
+        st.warning(
+            f"⚠️ {len(ilegiveis)} fatura(s) não entram na lista abaixo "
+            f"porque o mês está ilegível: {', '.join(ilegiveis[:5])}"
+            + ("…" if len(ilegiveis) > 5 else "")
+            + ". Corrija o campo **Mês da Fatura** no extrato — o formato "
+            "é MM/AAAA."
+        )
     if not agendadas:
         st.success("Nenhuma fatura em aberto.")
         return
@@ -583,10 +627,22 @@ def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
 def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
                       df_pay: pd.DataFrame, card: str) -> None:
+    """Um cartão, com o mesmo número que a visão consolidada mostra.
+
+    Esta tela somava as linhas da planilha e nunca consultava o banco,
+    enquanto a consolidada logo ao lado lia `positions.card_balances`. O
+    mesmo cartão aparecia com dois valores conforme o seletor — e quem
+    abre um cartão para conferir contra o print do aplicativo estava
+    vendo justamente a versão que não fala com a instituição.
+    """
     settings = cc.card_settings(df_cards, card)
-    limite, disp = cc.available_limit(df_cards, df_tx, df_pay, card)
+    limite, disp_linhas = cc.available_limit(df_cards, df_tx, df_pay, card)
     abertas = cc.open_invoices(df_tx, df_pay, card=card)
-    saldo = sum(i.balance for i in abertas)
+    soma_linhas = sum(i.balance for i in abertas)
+
+    do_banco = _saldo_do_banco().get(card)
+    saldo = do_banco if do_banco is not None else soma_linhas
+    disp = limite - saldo if do_banco is not None else disp_linhas
 
     if int(settings["vencimento"]) > int(settings["fechamento"]):
         quando = "vence dia {} do mesmo mês".format(settings["vencimento"])
@@ -603,10 +659,14 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
     esq, dir_ = st.columns(2)
     with esq:
         components.stat_card(
-            label="Em aberto", value=saldo, divida=True,
+            label="Devendo agora", value=saldo, divida=True,
             bar=(saldo / limite) if limite else None,
             bar_label=(f"{uso:.0f}% do limite de {brl(limite)}"
                        if limite else "sem limite cadastrado"),
+            rows=[{"nome": "Fonte",
+                   "valor": "banco" if do_banco is not None
+                            else "soma das linhas",
+                   "classe": "mf-mut"}],
         )
     with dir_:
         components.stat_card(
@@ -619,9 +679,20 @@ def _single_card_view(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
             ],
         )
 
+    if do_banco is not None and abs(do_banco - soma_linhas) >= 1.0:
+        _confronto_de_linhas(do_banco, soma_linhas, True)
+
     if not abertas:
         st.success("Nenhuma fatura em aberto neste cartão.")
         return
+
+    # A mesma lista da consolidada, filtrada neste cartão: vencida,
+    # atual, fechada e futura. Antes eram expanders por fatura, sem
+    # situação nenhuma — duas telas para a mesma pergunta.
+    _faturas(df_cards, df_tx, df_pay, [card], _faturas_do_banco())
+    st.write("")
+    components.section("Compras de cada fatura",
+                       "Abra uma para ver o que a compõe.")
 
     st.write("")
     components.section("Faturas em aberto",
@@ -671,11 +742,27 @@ def _invoice_lines(df_tx: pd.DataFrame, card: str, month: str) -> pd.DataFrame:
         df_tx["Mês da Fatura"].astype(str).str.strip() == month
     )
     cols = [c for c in ("Data Compra", "Descrição", "Categoria", "Parcela",
-                        "Valor", "Status") if c in df_tx.columns]
+                        "Valor", "Status", "Origem") if c in df_tx.columns]
     out = df_tx.loc[mask, cols].copy()
     if "Valor" in out.columns:
         out["Valor"] = out["Valor"].apply(brl)
+    # A origem existia no dado e nunca chegava à tela: uma parcela que o
+    # app deduziu ficava indistinguível de uma que o banco cobrou. Como é
+    # justamente o que o usuário precisa saber para conferir a fatura, a
+    # coluna vira texto legível em vez do marcador interno.
+    if "Origem" in out.columns:
+        out["Origem"] = out["Origem"].map(_ORIGEM_LEGIVEL).fillna("do banco")
     return out
+
+
+# Como cada origem se chama na tela. O valor gravado é interno; o que o
+# usuário lê tem de dizer se pode confiar naquela linha.
+_ORIGEM_LEGIVEL = {
+    ORIGEM_BANCO: "do banco",
+    ORIGEM_PROJECAO: "deduzida",
+    ORIGEM_MANUAL: "digitada",
+    "": "do banco",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -1145,6 +1232,20 @@ def _extract_section(df_tx: pd.DataFrame, df_period: pd.DataFrame,
                     "Status", options=["Pendente", "Pago"], required=True),
                 "Valor": st.column_config.NumberColumn(
                     "Valor (R$)", min_value=0.0, format="%.2f"),
+                # Duas colunas internas ficavam como texto livre. O
+                # "ID Pluggy" é o que impede a mesma compra de entrar
+                # duas vezes e o que diz ao removedor de duplicatas qual
+                # linha veio do banco: digitar nele quebra as duas
+                # coisas em silêncio. Ficam visíveis, porque explicam a
+                # linha, e travadas, porque não são para editar.
+                "ID Pluggy": st.column_config.TextColumn(
+                    "ID do banco", disabled=True,
+                    help="Vem da importação. Não edite: é o que impede a "
+                         "compra de entrar duas vezes."),
+                "Origem": st.column_config.TextColumn(
+                    "Origem", disabled=True,
+                    help="Quem trouxe a linha: o banco, uma dedução de "
+                         "parcelamento ou digitação manual."),
             },
         )
         if st.form_submit_button("💾 Salvar alterações"):

@@ -404,8 +404,11 @@ def _wallet_allocation(positions: list[inv.Position]) -> None:
     c1, c2 = st.columns(2)
     with c1:
         by_class = df.groupby("Classe")["Valor"].sum().reset_index()
+        # A série do tema, e não a Set2 do Plotly: era o único gráfico
+        # do app com paleta própria, e as fatias não combinavam com
+        # nenhuma outra tela.
         fig = px.pie(by_class, values="Valor", names="Classe", hole=0.5,
-                     color_discrete_sequence=px.colors.qualitative.Set2)
+                     color_discrete_sequence=Colors.SERIES)
         fig.update_traces(textinfo="percent+label", textposition="inside")
         fig.update_layout(showlegend=False, height=320,
                           margin=dict(t=10, b=10, l=10, r=10))
@@ -946,7 +949,7 @@ def _gross_net_chart(curve: pd.DataFrame, *, title: str) -> None:
     ))
     fig.add_trace(go.Scatter(
         x=x, y=curve["Bruto"], name="Valor bruto",
-        mode="lines", line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        mode="lines", line=dict(color=Colors.SERIES[1], width=3),
         hovertemplate="Bruto: R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
@@ -1282,7 +1285,7 @@ def _real_vs_projected_chart(position: inv.Position,
     fig.add_trace(go.Scatter(
         x=pd.to_datetime(curve["Data"]), y=curve["Bruto"],
         name="Projetado", mode="lines",
-        line=dict(color=Colors.PRIMARY_SOFT, width=3),
+        line=dict(color=Colors.SERIES[1], width=3),
         hovertemplate="Projetado: R$ %{y:,.2f}<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
