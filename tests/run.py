@@ -420,6 +420,44 @@ check("o que vence no alvo está contido no que sai até lá",
 check("e a vencida entra só no segundo",
       ("Cartão Itaú", "08/2026") in _ate_chaves - _no_alvo, True)
 
+# São os estados que o app do cartão mostra. "Aberta" para tudo
+# escondia a diferença entre dever agora e dever em 2027.
+section("Faturas classificadas como o banco classifica")
+_hoje = date(2026, 9, 30)
+_ag2, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)
+_sit = cc.situations(_ag2, _hoje)
+check("a que passou do vencimento", _sit[("Cartão Itaú", "08/2026")],
+      "Vencida")
+check("a que ainda não fechou", _sit[("Cartão Itaú", "09/2026")], "Atual")
+check("as seguintes são futuras",
+      {_sit[("Cartão Itaú", m)] for m in
+       ("10/2026", "11/2026", "12/2026", "01/2027")}, {"Futura"})
+check("cada cartão tem a sua atual", _sit[("Principal", "10/2026")], "Atual")
+
+# Uma fatura atual por cartão: sem olhar a sequência, toda parcela dos
+# próximos meses passaria por atual.
+_atuais = [k for k, v in _sit.items() if v == "Atual"]
+check("uma por cartão", sorted(c for c, _ in _atuais),
+      ["Cartão Itaú", "Principal"])
+
+# Fatura ainda não baixada, mas já coberta por adiantamento: o saldo
+# zera e ela deixa de ser cobrança.
+_adiantada = pd.DataFrame([{
+    "Data": "2026-09-20", "Cartão": "Principal", "Mês da Fatura": "10/2026",
+    "Valor": 149.20, "Observação": "quitou antes do fechamento"}])
+_ag3, _ = cc.schedule_invoices(TX, _adiantada, CARDS, today=_hoje)
+check("coberta por adiantamento aparece como paga",
+      cc.situations(_ag3, _hoje).get(("Principal", "10/2026")), "Paga")
+
+# Uma fatura totalmente quitada não chega a aparecer: `open_invoices`
+# só devolve pares com parcela em aberto.
+_paga = TX.copy()
+_paga.loc[_paga["Cartão"] == "Principal", "Status"] = "Pago"
+_ag4, _ = cc.schedule_invoices(_paga, PAY, CARDS, today=_hoje)
+check("quitada some da lista",
+      ("Principal", "10/2026") in cc.situations(_ag4, _hoje), False)
+check("sem faturas", cc.situations([], _hoje), {})
+
 section("Carteira vazia e meses sem fatura")
 check("mês sem nada", total_em("07/2027"), 0.0)
 check("sem compras", total_em("10/2026", tx=TX.iloc[0:0]), 0.0)

@@ -200,8 +200,7 @@ def _all_cards_overview(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
 
     _confronto_de_linhas(total_banco, total_linhas, bool(do_banco))
     _remover_duplicatas()
-    _faturas_emitidas(names, banco_faturas)
-    _parcelas_futuras(df_tx, df_pay, banco_faturas)
+    _faturas(df_cards, df_tx, df_pay, names, banco_faturas)
 
 
 def _confronto_de_linhas(total_banco: float, total_linhas: float,
@@ -233,72 +232,71 @@ def _confronto_de_linhas(total_banco: float, total_linhas: float,
         ))
 
 
-def _data_br(valor) -> str:
-    """ISO -> dd/mm/aaaa; vazio continua vazio."""
-    texto = str(valor or "").strip()
-    if not texto:
-        return ""
-    lido = pd.to_datetime(texto, errors="coerce")
-    return "" if pd.isna(lido) else lido.strftime("%d/%m/%Y")
+def _faturas(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
+             df_pay: pd.DataFrame, names: list[str],
+             banco: dict[tuple[str, str], float]) -> None:
+    """As faturas como o app do banco as mostra.
 
-
-def _faturas_emitidas(names: list[str],
-                      banco: dict[tuple[str, str], float]) -> None:
-    """Faturas que o banco já emitiu, com o total dele."""
-    st.markdown("**Faturas emitidas pelo banco**")
-    if not banco:
-        st.caption(
-            "Aparecem depois da primeira sincronização em **Importar do "
-            "banco** — é de lá que vêm os totais da instituição."
-        )
-        return
-    df = repository.load_bank_bills()
-    if df.empty:
-        st.caption("Nenhuma fatura lida ainda.")
-        return
-    mostra = df[df["Cartão"].astype(str).isin(names)].copy()
-    mostra["_ord"] = pd.to_datetime(mostra["Mês"], format="%m/%Y",
-                                    errors="coerce")
-    mostra = mostra.sort_values("_ord", ascending=False)
-    tabela = pd.DataFrame([{
-        "Cartão": r["Cartão"], "Mês": r["Mês"],
-        "Total": brl(float(pd.to_numeric(r["Total"], errors="coerce") or 0)),
-        "Fecha": _data_br(r.get("Fechamento", "")),
-        "Vence": _data_br(r.get("Vencimento", "")),
-        "Situação": str(r.get("Situação", "") or ""),
-    } for _, r in mostra.iterrows()])
-    # Coluna vazia é ruído: a Pluggy nem sempre informa fechamento e
-    # situação, e uma coluna de traços só ocupa espaço.
-    vazias = [c for c in tabela.columns
-              if not tabela[c].astype(str).str.strip().any()]
-    st.dataframe(tabela.drop(columns=vazias), hide_index=True,
-                 use_container_width=True)
-
-
-def _parcelas_futuras(df_tx: pd.DataFrame, df_pay: pd.DataFrame,
-                      banco: dict[tuple[str, str], float]) -> None:
-    """Meses que o banco ainda não faturou, vindos das parcelas.
-
-    Separado das faturas emitidas de propósito: isto é compromisso
-    futuro, não dívida cobrada. Misturar os dois foi o que fazia o "em
-    aberto" passar do limite do cartão.
+    Um bloco por situação, na ordem em que importam: o que está
+    atrasado, o que está aberto agora, e o que ainda vai fechar. Uma
+    lista única ordenada por mês misturava dívida de hoje com
+    compromisso de 2027, que é o que fazia o total parecer absurdo.
     """
-    futuras = [i for i in cc.open_invoices(df_tx, df_pay)
-               if (i.card, i.month) not in banco and i.balance > 1e-6]
-    if not futuras:
+    hoje = date.today()
+    agendadas, _ = cc.schedule_invoices(df_tx, df_pay, df_cards, today=hoje)
+    agendadas = [i for i in agendadas if i.card in names]
+    if not agendadas:
+        st.success("Nenhuma fatura em aberto.")
         return
-    total = sum(i.balance for i in futuras)
-    with st.expander(
-        md(f"📅 Parcelas já compradas que o banco ainda não faturou — "
-           f"{brl(total)}")
-    ):
-        st.caption(
-            "Compras parceladas que vão virar fatura nos próximos meses. "
-            "Não entram no **Em aberto** acima, que é a dívida de hoje."
-        )
+    situacao = cc.situations(agendadas, hoje)
+
+    ordem = ["Vencida", "Atual", "Fechada · a pagar", "Futura"]
+    titulos = {
+        "Vencida": "🔴 Vencidas",
+        "Atual": "🔵 Fatura atual",
+        "Fechada · a pagar": "🟡 Fechadas, aguardando pagamento",
+        "Futura": "⚪ Futuras",
+    }
+    legendas = {
+        "Atual": "Ainda aberta — compras novas continuam entrando nela.",
+        "Futura": "Compras parceladas que só virão nos próximos meses.",
+    }
+
+    for estado in ordem:
+        grupo = [i for i in agendadas
+                 if situacao[(i.card, i.month)] == estado]
+        if not grupo:
+            continue
+        grupo.sort(key=lambda i: i.due)
+        total = sum(_valor_da_fatura(i, banco) for i in grupo)
+        st.markdown(md(f"**{titulos[estado]} — {brl(total)}**"))
+        if estado in legendas:
+            st.caption(legendas[estado])
         st.dataframe(pd.DataFrame([{
-            "Cartão": i.card, "Mês": i.month, "Valor": brl(i.balance),
-        } for i in futuras]), hide_index=True, use_container_width=True)
+            "Cartão": i.card,
+            "Fatura": i.month,
+            "Fecha": f"{i.closing:%d/%m/%Y}",
+            "Vence": f"{i.due:%d/%m/%Y}",
+            "Valor": brl(_valor_da_fatura(i, banco)),
+            "Fonte": "banco" if (i.card, i.month) in banco else "linhas",
+        } for i in grupo]), hide_index=True, use_container_width=True)
+
+    if any(v == "linhas" for v in
+           ("banco" if (i.card, i.month) in banco else "linhas"
+            for i in agendadas)):
+        st.caption(
+            "**Fonte** diz de onde veio o valor. *banco* é o total que a "
+            "instituição informou; *linhas* é a soma das compras que "
+            "chegaram — usado enquanto o banco não emite a fatura."
+        )
+
+
+def _valor_da_fatura(fatura, banco: dict[tuple[str, str], float]) -> float:
+    """O que se deve nessa fatura, preferindo o total do banco."""
+    do_banco = banco.get((fatura.card, fatura.month))
+    if do_banco is None:
+        return fatura.balance
+    return max(do_banco - fatura.advances, 0.0)
 
 
 def _remover_duplicatas() -> None:
