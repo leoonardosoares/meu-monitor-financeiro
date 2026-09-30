@@ -65,6 +65,7 @@ SYSTEM_CATEGORIES = [
     "Cartão de Crédito",
     "Investimento",
     "Transferência",
+    "Ajuste",
     "Receita/Salário",
     "Outros",
 ]
@@ -84,8 +85,13 @@ DEFAULT_CARD_NAME = "Principal"
 # entrada no outro. Sem neutralizar, um mês de R$ 5.000 vira R$ 10.000
 # de receita e R$ 5.000 de despesa — o saldo continua certo, porque é
 # lido do banco, mas taxa de poupança e orçamento saem todos errados.
-TRANSFER_CATEGORIES = ["Investimento", "Transferência"]
+# "Ajuste" entra junto: o lançamento de conciliação existe para o saldo
+# derivado reproduzir o do banco, e contá-lo como receita ou despesa
+# inventaria um ganho ou um gasto que nunca aconteceu.
+TRANSFER_CATEGORIES = ["Investimento", "Transferência", "Ajuste"]
 CATEGORIA_TRANSFERENCIA = "Transferência"
+CATEGORIA_INVESTIMENTO = "Investimento"
+CATEGORIA_AJUSTE = "Ajuste"
 
 # Chaves de configuração persistidas na aba `configuracoes`.
 class ConfigKeys:

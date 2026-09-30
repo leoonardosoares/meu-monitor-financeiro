@@ -7,8 +7,11 @@ import pandas as pd
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 
-from src import components, pluggy, repository, reset
+from src import (
+    components, pluggy, positions, reconcile, repository, reset,
+)
 from src.config import ConfigKeys
+from src.finance import compute_wealth
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
@@ -26,7 +29,7 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
     )
 
     tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos", "Open Finance",
-                    "Recomeçar"])
+                    "Conciliar", "Recomeçar"])
 
     with tabs[0]:
         _categories_tab(df_categories)
@@ -42,7 +45,84 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
     with tabs[3]:
         _open_finance_tab()
     with tabs[4]:
+        _conciliar_tab()
+    with tabs[5]:
         _reset_tab(df_transactions_period)
+
+
+def _conciliar_tab() -> None:
+    """Fecha a diferença que sobra depois de tirar as duplicatas.
+
+    Vem depois da limpeza de propósito. Ajustar por cima de linha
+    repetida esconde o defeito: o total fica certo e a fatura continua
+    mostrando a mesma compra duas vezes.
+    """
+    st.subheader("Conciliar com o banco")
+
+    guardada = positions.from_rows(repository.load_positions())
+    if guardada.vazia:
+        st.info(
+            "Preciso da posição real primeiro. Vá ao **Dashboard** e "
+            "clique em **Atualizar**."
+        )
+        return
+
+    df_tx = repository.load_transactions().drop(
+        columns=["Data_DT", "Mes_Ano"], errors="ignore")
+    atual = compute_wealth(df_tx, df_tx)
+
+    st.caption(
+        "Compara o que a planilha soma com o que as instituições "
+        "reportam e cria um lançamento para cada diferença. O ajuste "
+        "entra numa categoria neutra — não vira receita nem despesa."
+    )
+
+    linhas = [
+        {"O quê": "Saldo em conta", "Banco diz": guardada.em_conta,
+         "Planilha soma": atual.bank_balance,
+         "Diferença": guardada.em_conta - atual.bank_balance},
+        {"O quê": "Investido", "Banco diz": guardada.investido,
+         "Planilha soma": atual.invested,
+         "Diferença": guardada.investido - atual.invested},
+    ]
+    st.dataframe(pd.DataFrame([
+        {k: (brl(v) if isinstance(v, float) else v) for k, v in linha.items()}
+        for linha in linhas
+    ]), hide_index=True, use_container_width=True)
+
+    ajustes = reconcile.adjustments(
+        saldo_real=guardada.em_conta, saldo_planilha=atual.bank_balance,
+        investido_real=guardada.investido, investido_planilha=atual.invested,
+        quando=date.today(),
+    )
+    if not ajustes:
+        st.success("Já bate com o banco. Nada a conciliar.")
+        return
+
+    if any(abs(linha["Diferença"]) > 1000 for linha in linhas):
+        st.warning(md(
+            "⚠️ Diferença grande. Antes de ajustar, confira se não há "
+            "**lançamento repetido** — ajuste por cima de duplicata "
+            "deixa o total certo e o extrato errado. A aba Cartão de "
+            "Crédito tem um removedor de duplicatas."
+        ))
+
+    st.markdown("**Lançamentos que serão criados**")
+    st.dataframe(pd.DataFrame([{
+        "Data": a.data.strftime("%d/%m/%Y"), "Descrição": a.descricao,
+        "Categoria": a.categoria, "Tipo": a.tipo, "Valor": brl(a.valor),
+        "Por quê": a.motivo,
+    } for a in ajustes]), hide_index=True, use_container_width=True)
+
+    if st.button("✅ Lançar conciliação", type="primary"):
+        repository.save_transactions(pd.concat(
+            [df_tx, pd.DataFrame([a.to_row() for a in ajustes])],
+            ignore_index=True))
+        st.success(
+            f"{len(ajustes)} lançamento(s) criado(s). A planilha passa a "
+            "reproduzir o banco."
+        )
+        st.rerun()
 
 
 def _reset_tab(_df_period) -> None:
