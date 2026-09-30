@@ -6,7 +6,9 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src import components, credit_card as cc, positions, repository
+from src import (
+    components, credit_card as cc, positions, reconcile, repository,
+)
 from src.config import Colors, ConfigKeys, DEFAULT_CARD_NAME
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
@@ -186,6 +188,8 @@ def _confronto_com_banco(total_app: float) -> None:
         f"{brl(guardada.em_cartao)}** — diferença de "
         f"{brl(abs(diferenca))}."
     ))
+    _remover_duplicatas()
+
     with st.expander("O que costuma causar isso"):
         st.markdown(md(
             "**Compra lançada duas vezes** é a causa mais comum: o "
@@ -200,6 +204,45 @@ def _confronto_com_banco(total_app: float) -> None:
             "todas as parcelas futuras. Nesse caso a planilha fica "
             "maior, mas não o dobro."
         ))
+
+
+def _remover_duplicatas() -> None:
+    """Apaga a cópia de compras lançadas duas vezes.
+
+    É o conserto certo quando a planilha soma o dobro do banco: existem
+    duas linhas para a mesma compra, uma digitada e outra importada.
+    Mantém sempre uma de cada — apagar o grupo inteiro trocaria um
+    excesso por uma falta, que é pior, porque excesso aparece no total
+    e falta não aparece em lugar nenhum.
+    """
+    df_tx = repository.load_credit_card()
+    previa = reconcile.duplicate_preview(df_tx, reconcile.CHAVES_CARTAO)
+    if previa.empty:
+        return
+
+    quantas = int(previa["Cópias a remover"].sum())
+    valor = float(pd.to_numeric(
+        df_tx.loc[reconcile.duplicates(df_tx, reconcile.CHAVES_CARTAO),
+                  "Valor"], errors="coerce").fillna(0).sum())
+
+    with st.expander(
+        f"🧹 {quantas} compra(s) repetida(s) — {brl(valor)}", expanded=True
+    ):
+        st.caption(
+            "Linhas idênticas em cartão, fatura, descrição, parcela, "
+            "valor e data da compra. Uma de cada fica."
+        )
+        st.dataframe(previa.head(30), hide_index=True,
+                     use_container_width=True)
+        if len(previa) > 30:
+            st.caption(f"…e mais {len(previa) - 30} grupo(s).")
+        if st.button(f"🧹 Remover {quantas} cópia(s)", type="primary",
+                     key="dedup_cartao"):
+            limpo = df_tx.drop(
+                index=reconcile.duplicates(df_tx, reconcile.CHAVES_CARTAO))
+            repository.save_credit_card(limpo.reset_index(drop=True))
+            st.success(md(f"{quantas} cópia(s) removida(s) — {brl(valor)}."))
+            st.rerun()
 
 
 def _drift_warning(df_cards: pd.DataFrame, df_tx: pd.DataFrame,
