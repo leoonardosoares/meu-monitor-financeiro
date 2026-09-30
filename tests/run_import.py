@@ -262,8 +262,10 @@ p, avisos = montar(
         tx("k3", "2026-09-05", "Crédito de parcelamento", 46.29, "CREDIT"),
     ]})
 check("só a compra entra", [x.descricao for x in p], ["Padaria"])
-check("os créditos são reportados", len(avisos), 1)
-check("o aviso diz o risco", "aumentaria o valor devido" in avisos[0], True)
+check("os créditos são reportados",
+      sum("crédito(s) em fatura" in a for a in avisos), 1)
+check("o aviso diz o risco",
+      any("aumentaria o valor devido" in a for a in avisos), True)
 
 print("  No banco, crédito continua sendo receita")
 p, avisos = montar(
@@ -374,6 +376,70 @@ print("  A categoria é reconhecida como transferência pelo app")
 from src.config import TRANSFER_CATEGORIES, SYSTEM_CATEGORIES  # noqa: E402
 check("neutralizada nos KPIs", "Transferência" in TRANSFER_CATEGORIES, True)
 check("aparece nos selects", "Transferência" in SYSTEM_CATEGORIES, True)
+
+# A fatura informada pelo banco é resposta, não estimativa. Deduzir
+# pelo dia de fechamento foi a origem de várias idas e vindas: bastava
+# o dia cadastrado estar errado para a compra cair no mês errado.
+print("  A fatura vem do banco, não da nossa regra")
+
+CARTAO_PLUGGY = {"id": "acc-cartao", "name": "platinum", "number": "9366",
+                 "type": "CREDIT"}
+
+
+def com_fatura(id_, bill, faturas, cartao="Cartão Itaú"):
+    t = tx(id_, "2026-09-25", "Padaria", -20.0, "DEBIT")
+    if bill:
+        t["creditCardMetadata"] = {"billId": bill}
+    return pi.build_pending(
+        accounts=[(CARTAO_PLUGGY, cartao)], transactions={"acc-cartao": [t]},
+        ja_importados=set(), df_cards=CARDS, bills={"acc-cartao": faturas})
+
+
+# Mesmo vencimento em outubro, rótulos diferentes: o Itaú fecha dia 30 e
+# vence no mês seguinte, o Principal fecha dia 8 e vence no próprio mês.
+p, _ = com_fatura("b1", "x", [{"id": "x", "dueDate": "2026-10-07"}])
+check("Itaú: vence 07/10 -> fatura 09/2026", p[0].mes_fatura, "09/2026")
+p, _ = com_fatura("b2", "y", [{"id": "y", "dueDate": "2026-10-15"}],
+                  cartao="Principal")
+check("Principal: vence 15/10 -> fatura 10/2026", p[0].mes_fatura, "10/2026")
+
+print("  Data de fechamento informada manda sobre tudo")
+p, _ = com_fatura("b3", "z", [{"id": "z", "closeDate": "2026-08-30",
+                               "dueDate": "2026-10-07"}])
+check("usa o fechamento", p[0].mes_fatura, "08/2026")
+for campo in ("closingDate", "billDate", "periodEnd", "endDate"):
+    p, _ = com_fatura("b4", "w", [{"id": "w", campo: "2026-07-30"}])
+    check(f"aceita {campo}", p[0].mes_fatura, "07/2026")
+
+print("  Sem a fatura do banco, deduz e avisa")
+p, avisos = com_fatura("b5", None, [{"id": "z", "dueDate": "2026-10-07"}])
+check("caiu na dedução", p[0].mes_fatura, "09/2026")
+check("avisou", any("deduzido" in a for a in avisos), True)
+
+p, avisos = com_fatura("b6", "nao-existe",
+                       [{"id": "z", "dueDate": "2026-10-07"}])
+check("billId desconhecido também deduz",
+      any("deduzido" in a for a in avisos), True)
+
+print("  Com a fatura do banco, nenhum aviso de dedução")
+p, avisos = com_fatura("b7", "z", [{"id": "z", "dueDate": "2026-10-07"}])
+check("silêncio", any("deduzido" in a for a in avisos), False)
+
+print("  O índice de faturas ignora o que não dá para usar")
+idx = pi.bill_index(
+    [{"id": "a", "dueDate": "2026-10-07"}, {"id": "", "dueDate": "2026-10-07"},
+     {"dueDate": "2026-10-07"}, {"id": "b"}],
+    closing_day=30, due_day=7)
+check("só a fatura completa entra", idx, {"a": "09/2026"})
+check("lista vazia", pi.bill_index([], closing_day=8, due_day=15), {})
+check("None", pi.bill_index(None, closing_day=8, due_day=15), {})
+
+print("  O billId é lido de onde a Pluggy o coloca")
+check("em creditCardMetadata",
+      pi.bill_id({"creditCardMetadata": {"billId": "b"}}), "b")
+check("em bill_id", pi.bill_id({"creditCardMetadata": {"bill_id": "b"}}), "b")
+check("na raiz", pi.bill_id({"billId": "b"}), "b")
+check("ausente", pi.bill_id({"id": "t"}), "")
 
 print()
 for _linha in _fail:

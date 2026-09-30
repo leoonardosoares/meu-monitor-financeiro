@@ -215,6 +215,7 @@ def _stale(*, hours: int) -> bool:
 def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
                       *, desde) -> None:
     transacoes: dict[str, list[dict]] = {}
+    faturas: dict[str, list[dict]] = {}
     avisos: list[str] = []
     with st.spinner("Buscando lançamentos…"):
         for conta in ativas:
@@ -223,12 +224,20 @@ def _fetch_into_state(ativas, destinos, df_cards, df_transactions,
                 transacoes[chave] = pluggy.list_transactions(chave)
             except pluggy.PluggyError as exc:
                 avisos.append(f"{pi.account_label(conta)}: {exc}")
+            # As faturas dizem a qual delas cada compra pertence, o que
+            # dispensa deduzir pelo dia de fechamento cadastrado.
+            if str(conta.get("type") or "").upper() == "CREDIT":
+                try:
+                    faturas[chave] = pluggy.list_bills(chave)
+                except pluggy.PluggyError as exc:
+                    avisos.append(
+                        f"{pi.account_label(conta)} (faturas): {exc}")
 
         pendentes, mais = pi.build_pending(
             accounts=[(c, destinos.get(pi.account_key(c), "")) for c in ativas],
             transactions=transacoes,
             ja_importados=repository.imported_ids(),
-            df_cards=df_cards, desde=desde,
+            df_cards=df_cards, desde=desde, bills=faturas,
             sugerir=lambda d: suggest_category(d, df_transactions),
         )
     st.session_state["pluggy_pendentes"] = pendentes

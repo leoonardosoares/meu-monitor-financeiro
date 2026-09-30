@@ -143,6 +143,7 @@ def probe(item_ids: list[str] | None = None) -> list[dict]:
     tentativas = [
         ("GET /connectors", "/connectors", {"pageSize": 1}),
         *([("GET /investments?itemId=…", "/investments", {"itemId": um}),
+           ("GET /bills?accountId=…", "/bills", {"accountId": um}),
            ("GET /investments (sem filtro)", "/investments", None),
            ("GET /accounts?itemId=…", "/accounts", {"itemId": um})]
           if um else []),
@@ -391,9 +392,24 @@ def list_transactions(account_id: str) -> list[dict]:
     return _paginate("/v2/transactions", {"accountId": account_id})
 
 
+def _lista(bruto) -> list[dict]:
+    """Extrai a lista de uma resposta, aceitando os formatos que a API usa."""
+    if isinstance(bruto, list):
+        return bruto
+    for chave in ("results", "bills", "investments", "data", "items"):
+        valor = bruto.get(chave)
+        if isinstance(valor, list):
+            return valor
+    return []
+
+
 def list_bills(account_id: str) -> list[dict]:
-    """Faturas de um cartão, com data de fechamento e vencimento."""
-    return (_get("/bills", {"accountId": account_id}).get("results") or [])
+    """Faturas de um cartão, com datas e identificador.
+
+    É o que permite pôr cada compra na fatura que o banco diz, em vez de
+    deduzir pelo dia de fechamento cadastrado.
+    """
+    return _lista(_get("/bills", {"accountId": account_id}))
 
 
 def list_investments(item_id: str) -> list[dict]:
@@ -405,11 +421,4 @@ def list_investments(item_id: str) -> list[dict]:
     sintoma que já apareceu aqui com a conta cheia no Meu Pluggy e zero
     na tela.
     """
-    bruto = _get("/investments", {"itemId": item_id})
-    if isinstance(bruto, list):
-        return bruto
-    for chave in ("results", "investments", "data", "items"):
-        valor = bruto.get(chave)
-        if isinstance(valor, list):
-            return valor
-    return []
+    return _lista(_get("/investments", {"itemId": item_id}))
