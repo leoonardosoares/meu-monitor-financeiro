@@ -559,6 +559,7 @@ def _salvar_cartao(df_cards, df_tx, alvo, novo, inst, limite, fech, venc,
                                         alvo, novo)
         repository.save_credit_card(tx)
         repository.save_card_payments(pay)
+        _renomear_ligacoes(alvo, novo)
     if cards.empty or "Nome" not in cards.columns or \
             novo not in set(cards["Nome"].astype(str).str.strip()):
         cards = pd.concat([cards, pd.DataFrame([{"Nome": novo}])],
@@ -571,6 +572,28 @@ def _salvar_cartao(df_cards, df_tx, alvo, novo, inst, limite, fech, venc,
     repository.save_cards(cards)
     st.success(f"{novo} salvo.")
     st.rerun()
+
+
+def _renomear_ligacoes(antigo: str, novo: str) -> None:
+    """Leva o nome novo para o mapa de contas e as faturas do banco.
+
+    O livro casa a conta da Pluggy e as faturas emitidas pelo NOME do
+    cartão. Renomear só o cadastro e as compras deixava o cartão sem
+    limite, sem datas e sem total do banco até a próxima sincronização
+    — e a fatura antiga, gravada com o nome velho, órfã para sempre.
+    """
+    from src import pluggy_import as pi
+    mapa = pi.parse_mapping(repository.load_config_text(ConfigKeys.PLUGGY_MAPA))
+    if antigo in mapa.values():
+        repository.save_config_text(ConfigKeys.PLUGGY_MAPA, pi.format_mapping(
+            {k: (novo if v == antigo else v) for k, v in mapa.items()}))
+    faturas = repository.load_bank_bills()
+    if not faturas.empty and "Cartão" in faturas.columns:
+        mudar = faturas["Cartão"].astype(str).str.strip() == antigo
+        if mudar.any():
+            faturas = faturas.copy()
+            faturas.loc[mudar, "Cartão"] = novo
+            repository.save_bank_bills(faturas)
 
 
 def _formulario_novo(nomes: list[str], *, chave: str = "novo_cartao",

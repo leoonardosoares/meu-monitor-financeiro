@@ -139,6 +139,24 @@ check("data salva vale", sync.cutoff("2026-08-15", today=HOJE),
 check("data torta cai no 1º do mês", sync.cutoff("ontem", today=HOJE),
       date(2026, 10, 1))
 
+print("A mesma compra do banco gravada duas vezes fica uma")
+_dupid = pd.DataFrame([compra("10/2026", "Loja", 100.0, "t1"),
+                       compra("10/2026", "Loja", 100.0, "t1")])
+_arr3 = sync.housekeeping(_dupid, today=HOJE)
+check("uma sai para o arquivo", (len(_arr3.manter), len(_arr3.arquivar)),
+      (1, 1))
+
+print("Falha não se passa por sucesso")
+_r = sync.Resultado(erros=["Nubank: timeout"])
+check("tudo falhou: o resumo diz", _r.resumo().startswith("Não consegui"),
+      True)
+_r2 = sync.Resultado(novos_cartao=2, erros=["Itaú: timeout"])
+check("falha parcial é contada", "conexão(ões) com erro" in _r2.resumo(),
+      True)
+_r3 = sync.Resultado(retidos=[1, 2, 3])
+check("lote retido é avisado", "aguardando confirmação" in _r3.resumo(),
+      True)
+
 print("Saber quando sincronizar de novo")
 _agora = datetime(2026, 10, 2, 12, 0)
 check("nunca sincronizou", sync.stale("", hours=6, now=_agora), True)
@@ -262,12 +280,29 @@ check("a segunda rodada não traz nada de novo",
 check("nem duplica linhas", len(_planilha["cartao"]), 2)
 
 print("Lote grande demais espera confirmação")
+_config[ConfigKeys.PLUGGY_ULTIMA_SYNC] = "carimbo-anterior"
 _antes = sync.LOTE_SUSPEITO
 sync.LOTE_SUSPEITO = 0
 _planilha["importacoes"] = _planilha["importacoes"].iloc[0:0]
 _res3 = sync.run(ids=["item-1"], today=HOJE)
 check("nada gravado", (_res3.novos_conta, _res3.novos_cartao), (0, 0))
 check("mas os retidos ficam à mão", len(_res3.retidos) > 0, True)
+check("e o carimbo não avança: a próxima abertura tenta de novo",
+      _config[ConfigKeys.PLUGGY_ULTIMA_SYNC], "carimbo-anterior")
+
+print("Conexão que falha não apaga o cartão do retrato")
+_bom = _planilha["posicao_real"].copy()
+_item_ok = pluggy.item
+def _quebra(i):
+    raise pluggy.PluggyError("fora do ar")
+pluggy.item = _quebra
+_res4 = sync.run(ids=["item-1"], today=HOJE)
+pluggy.item = _item_ok
+check("o erro aparece", bool(_res4.erros), True)
+check("o cartão continua com o limite do retrato anterior",
+      next((c.limite for c in positions.from_rows(
+          _planilha["posicao_real"]).contas if c.chave == "acc-nu"), None),
+      5000.0)
 sync.LOTE_SUSPEITO = _antes
 
 print()

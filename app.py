@@ -39,13 +39,22 @@ def _bootstrap_categories() -> list[str]:
 
 
 def _sincronizar_se_preciso() -> None:
-    """Sincroniza ao abrir o app, uma vez por sessão, se estiver velho.
+    """Sincroniza quando a última passou de 6 horas.
 
-    Uma vez por sessão porque o Streamlit reexecuta o script inteiro a
-    cada clique; sem a marca, cada interação viraria uma ida aos bancos.
+    O Streamlit reexecuta o script a cada clique, então há uma trava por
+    sessão: no máximo uma tentativa a cada 30 minutos. Sem ela, uma
+    conexão fora do ar faria cada clique ir ao banco; com uma trava de
+    "uma vez por sessão", uma aba aberta por dias nunca sincronizava.
     """
-    if st.session_state.get("sync_tentado") or not pluggy.is_configured():
+    import time
+    if not pluggy.is_configured():
         return
+    ultima = st.session_state.get("sync_tentado_em", 0)
+    if st.session_state.get("sync_tentado") is False:
+        ultima = 0                       # o "Recomeçar" pediu agora
+    if time.time() - ultima < 30 * 60:
+        return
+    st.session_state["sync_tentado_em"] = time.time()
     st.session_state["sync_tentado"] = True
     ids = import_page.item_ids()
     carimbo = repository.load_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC)
@@ -53,10 +62,15 @@ def _sincronizar_se_preciso() -> None:
         return
     import_page.executar(ids, repository.load_transactions())
     res = st.session_state.get("sync_resultado")
-    if isinstance(res, str):
-        st.toast(f"⚠️ Não consegui sincronizar: {res}")
-    elif res is not None:
-        st.toast(f"🔄 {res.resumo()}")
+    texto = (f"⚠️ Não consegui sincronizar: {res}" if isinstance(res, str)
+             else f"🔄 {res.resumo()}" if res is not None else "")
+    if texto:
+        # Há versões do Streamlit em que o toast estoura neste ponto da
+        # página; o aviso não vale derrubar o app.
+        try:
+            st.toast(texto)
+        except Exception:                                 # noqa: BLE001
+            st.caption(texto)
 
 
 def main() -> None:

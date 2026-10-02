@@ -96,7 +96,12 @@ def _status(ids: list[str], df_transactions: pd.DataFrame) -> None:
     if isinstance(res, str):
         st.error(f"A sincronização falhou: {res}")
         return
-    st.success(res.resumo())
+    if res.falhou:
+        st.error(res.resumo())
+    elif res.erros or res.retidos:
+        st.warning(res.resumo())
+    else:
+        st.success(res.resumo())
     if res.datas_aprendidas:
         st.info("📆 Datas atualizadas a partir do banco — "
                 + " · ".join(res.datas_aprendidas))

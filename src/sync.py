@@ -135,6 +135,13 @@ def housekeeping(df: pd.DataFrame, *, today: date) -> Arrumacao:
 
     copias = _copias_de_compra_do_banco(base)
     sair |= set(copias)
+    # A mesma compra do banco gravada duas vezes (a aba do cartão foi
+    # salva e o registro de importação falhou antes de ser salvo).
+    if "ID Pluggy" in base.columns:
+        ids = base["ID Pluggy"].astype(str).str.strip()
+        repetidas = base.index[(ids != "") & ids.duplicated(keep="first")]
+        copias = list(copias) + [i for i in repetidas if i not in sair]
+        sair |= set(repetidas)
 
     idx = sorted(sair)
     return Arrumacao(
@@ -216,7 +223,13 @@ class Resultado:
             self.novos_conta or self.novos_cartao or self.faturas_lidas)
 
     def resumo(self) -> str:
+        if self.falhou:
+            return ("Não consegui falar com o banco: "
+                    + "; ".join(self.erros[:2]))
         partes = []
+        if self.retidos:
+            partes.append(f"{len(self.retidos)} lançamento(s) aguardando "
+                          "confirmação em Sincronização")
         if self.novos_conta or self.novos_cartao:
             partes.append(f"{self.novos_conta + self.novos_cartao} "
                           "lançamento(s) novo(s)")
@@ -232,6 +245,8 @@ class Resultado:
         if self.projecoes_removidas:
             partes.append(f"{self.projecoes_removidas} parcela(s) projetada"
                           "(s) gravadas por versão antiga removidas")
+        if self.erros:
+            partes.append(f"{len(self.erros)} conexão(ões) com erro")
         return " · ".join(partes) if partes else "Tudo já estava em dia."
 
 
@@ -258,8 +273,17 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
     # 1. Posição: saldos, limites, datas da fatura aberta, investimentos.
     posicao = positions.fetch(ids)
     res.erros += list(posicao.erros)
+    if posicao.erros:
+        # Uma conexão que falhou sumiria do retrato novo, e com ela o
+        # cartão perderia limite e datas até a próxima leitura boa. O que
+        # ela tinha no retrato anterior é mantido.
+        posicao = positions.carry_forward(
+            posicao, positions.from_rows(repository.load_positions()))
     if not posicao.vazia:
-        repository.append_position(positions.to_rows(posicao))
+        try:
+            repository.append_position(positions.to_rows(posicao))
+        except Exception as exc:                          # noqa: BLE001
+            res.erros.append(f"Gravar a posição: {exc}")
 
     # 2. Contas mapeadas, com transações e faturas.
     contas: list[dict] = []
@@ -365,7 +389,11 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
     if res.realinhadas or arr.mudou or res.baixas:
         repository.save_credit_card(df)
 
-    repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, res.quando)
+    # Sem carimbo quando tudo falhou ou o lote ficou retido: a próxima
+    # abertura do app tenta de novo, em vez de dizer "sincronizado" por
+    # seis horas com dados velhos.
+    if not res.falhou and not res.retidos:
+        repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, res.quando)
     return res
 
 

@@ -211,6 +211,25 @@ COLUNAS = ["Data", "Origem", "Nome", "Classe", "Valor", "Chave",
            "Limite", "Disponível", "Fechamento", "Vencimento"]
 
 
+def carry_forward(nova: Posicao, anterior: Posicao) -> Posicao:
+    """Completa um retrato parcial com o que o anterior tinha.
+
+    Contas que não vieram (a conexão delas falhou) são copiadas do
+    retrato anterior pela chave; investimentos, pela instituição que não
+    respondeu nada desta vez.
+    """
+    chaves = {c.chave for c in nova.contas if c.chave}
+    contas = list(nova.contas) + [c for c in anterior.contas
+                                  if c.chave and c.chave not in chaves]
+    com_ativos = {a.instituicao for a in nova.ativos}
+    ativos = list(nova.ativos) + [a for a in anterior.ativos
+                                  if a.instituicao not in com_ativos
+                                  and a.instituicao not in
+                                  {c.instituicao for c in nova.contas}]
+    return Posicao(contas=contas, ativos=ativos, erros=nova.erros,
+                   quando=nova.quando)
+
+
 def card_accounts(posicao: Posicao, mapa: dict[str, str]) -> dict[str, Conta]:
     """{cartão cadastrado: conta da Pluggy}, com os dados de crédito.
 
