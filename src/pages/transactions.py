@@ -140,11 +140,25 @@ def _history_section(df_transactions: pd.DataFrame) -> None:
         f"Exibindo **{len(filtered)}** de **{len(editable_full)}** lançamentos."
     )
 
+    # Para mostrar: data como data (dd/mm/aaaa), valor como dinheiro, e
+    # o id interno escondido. Na volta, a data é gravada como antes.
+    vista = filtered.copy()
+    vista["Data"] = pd.to_datetime(vista["Data"], errors="coerce").dt.date
     with st.form("edit_transactions"):
         edited = st.data_editor(
-            filtered, num_rows="dynamic", use_container_width=True,
+            vista, num_rows="dynamic", use_container_width=True,
             hide_index=True,
+            column_config={
+                "Data": st.column_config.DateColumn("Data",
+                                                    format="DD/MM/YYYY"),
+                "Valor": st.column_config.NumberColumn("Valor",
+                                                       format="R$ %.2f"),
+                "ID Pluggy": None,
+            },
         )
+        edited = edited.copy()
+        edited["Data"] = pd.to_datetime(edited["Data"], errors="coerce") \
+            .dt.strftime("%Y-%m-%d").fillna("")
         if st.form_submit_button("💾 Salvar alterações"):
             _save_filtered_edits(
                 full=editable_full, filtered_before=filtered, edited=edited,

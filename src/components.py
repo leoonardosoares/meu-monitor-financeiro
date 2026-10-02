@@ -10,7 +10,7 @@ import plotly.io as pio
 import streamlit as st
 
 from src.config import Colors, TEMA_PADRAO
-from src.format import brl
+from src.format import brl, md
 from src.insights import Insight
 
 
@@ -29,11 +29,16 @@ def _template() -> go.layout.Template:
                 size=13,
                 color=Colors.TEXT_MUTED,
             ),
-            # Transparente para o gráfico sentar dentro do cartão, sem um
-            # retângulo mais claro denunciando onde o Plotly começa.
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
+            # Fundo da paleta, não transparente: o transparente deixava
+            # aparecer o fundo nativo do Streamlit, que era escuro mesmo
+            # no modo claro. O gráfico é desenhado como cartão (ver CSS
+            # de stPlotlyChart), então o fundo é o da superfície.
+            paper_bgcolor=Colors.SURFACE,
+            plot_bgcolor=Colors.SURFACE,
             colorway=Colors.SERIES,
+            # Decimal com vírgula e milhar com ponto: "R$ 4.000", não
+            # "R$ 4,000".
+            separators=",.",
             hoverlabel=dict(
                 bgcolor=Colors.SURFACE_2,
                 bordercolor=Colors.BORDER,
@@ -68,6 +73,31 @@ def use_theme(mode: str) -> None:
 use_theme(TEMA_PADRAO)
 
 
+def _com_fundo_do_tema(plotar):
+    """Envolve `st.plotly_chart` para gravar o fundo NA figura.
+
+    O Streamlit pinta o fundo do gráfico com a cor secundária do tema
+    nativo e ignora o que vem do template — o miolo do gráfico ficava de
+    outra cor dentro do cartão. Com o fundo gravado no layout da própria
+    figura, ele vale em todo gráfico do app, sem lembrar disso em cada um.
+    """
+    if getattr(plotar, "_com_fundo", False):
+        return plotar
+
+    def _plotar(fig, *args, **kwargs):
+        try:
+            fig.update_layout(paper_bgcolor=Colors.SURFACE,
+                              plot_bgcolor=Colors.SURFACE)
+        except Exception:                                 # noqa: BLE001
+            pass
+        return plotar(fig, *args, **kwargs)
+    _plotar._com_fundo = True
+    return _plotar
+
+
+st.plotly_chart = _com_fundo_do_tema(st.plotly_chart)
+
+
 # ---------------------------------------------------------------------------
 # Cartões no estilo painel financeiro
 # ---------------------------------------------------------------------------
@@ -97,6 +127,32 @@ def _texto(valor) -> str:
     t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
     t = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<i>\1</i>", t)
     return t
+
+
+def hero(*, label: str, value: float, note: str = "",
+         parts: list[tuple[str, float, bool]] | None = None) -> None:
+    """O número principal de uma tela, grande, com as partes que o formam.
+
+    `parts` é [(rótulo, valor, é_dívida)]. Dívida aparece com o sinal de
+    menos, porque é o que ela faz com o total.
+    """
+    classe = _classe(value, divida=False)
+    html = ['<div class="mf-hero">',
+            f'<div class="mf-hero__label">{_texto(label)}</div>',
+            f'<div class="mf-hero__value {classe}">{brl(value)}</div>']
+    if note:
+        html.append(f'<div class="mf-hero__note">{_texto(note)}</div>')
+    if parts:
+        html.append('<div class="mf-hero__parts">')
+        for rotulo, valor, divida in parts:
+            texto = f"− {brl(abs(valor))}" if divida else brl(valor)
+            cor = _classe(valor, divida=divida)
+            html.append(
+                f'<div class="mf-hero__part"><span>{_texto(rotulo)}</span>'
+                f'<b class="{cor}">{texto}</b></div>')
+        html.append("</div>")
+    html.append("</div>")
+    st.markdown("".join(html), unsafe_allow_html=True)
 
 
 def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
@@ -169,15 +225,20 @@ def area_trend(df: pd.DataFrame, x: str, y: str, *, color: str | None = None,
     if df.empty or len(df) < 2:
         return
     cor = color or Colors.PRIMARY
+    # Sem preencher até o zero: com o patrimônio na casa dos milhares, a
+    # área até o zero achatava a curva numa linha reta no topo.
     fig = go.Figure(go.Scatter(
-        x=df[x], y=df[y], mode="lines", line=dict(color=cor, width=2),
-        fill="tozeroy", fillcolor=tint(cor, 0.16),
-        hovertemplate="%{x}<br><b>%{y:,.2f}</b><extra></extra>",
+        x=df[x], y=df[y], mode="lines+markers",
+        line=dict(color=cor, width=2.5, shape="spline"),
+        marker=dict(size=7, color=cor),
+        hovertemplate="%{x|%d/%m}<br><b>R$ %{y:,.2f}</b><extra></extra>",
     ))
-    fig.update_layout(height=height, margin=dict(t=6, b=6, l=6, r=6),
+    fig.update_layout(height=height, margin=dict(t=18, b=34, l=16, r=22),
                       hovermode="x unified", showlegend=False)
-    fig.update_yaxes(showgrid=True)
-    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, tickprefix="R$ ", separatethousands=True)
+    # Um ponto por dia: o eixo mostra dias, não "00:00 / 12:00".
+    fig.update_xaxes(showgrid=False, type="date", tickformat="%d/%m",
+                     dtick=86400000 if len(df) <= 14 else None)
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False})
 
@@ -438,7 +499,6 @@ def budget_overview(df_status: pd.DataFrame, *,
         barmode="overlay",
         height=height,
         margin=dict(t=20, b=80, l=10, r=80),
-        plot_bgcolor="rgba(0,0,0,0)",
         xaxis=dict(
             title=dict(text="% do orçamento consumido",
                        font=dict(size=12, color=Colors.NEUTRAL)),
@@ -553,14 +613,17 @@ def insight_chips(insights: list[Insight]) -> None:
     if not insights:
         return
     for insight in insights:
+        # md(): dois valores em reais na mesma frase viravam fórmula
+        # LaTeX — "(R 230,00 vs R 4.035,64)" em fonte de código.
+        texto = md(f"{insight.icon} {insight.message}")
         if insight.severity == "critico":
-            st.error(f"{insight.icon} {insight.message}")
+            st.error(texto)
         elif insight.severity == "alerta":
-            st.warning(f"{insight.icon} {insight.message}")
+            st.warning(texto)
         elif insight.severity == "positivo":
-            st.success(f"{insight.icon} {insight.message}")
+            st.success(texto)
         else:
-            st.info(f"{insight.icon} {insight.message}")
+            st.info(texto)
 
 
 def metric_with_delta(container, *, label: str, value: float,

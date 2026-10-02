@@ -17,7 +17,7 @@ from src.finance import (
     monthly_investment_contributions, monthly_summary, previous_month,
     projection_target, savings_rate, spending_velocity,
 )
-from src.format import brl, md
+from src.format import brl, md, short_name
 from src.pages import import_page
 from src.sidebar import ALL_MONTHS
 
@@ -45,7 +45,7 @@ def render(*, df_transactions: pd.DataFrame, df_credit_card: pd.DataFrame,
     period_label = (selected_month if selected_month != ALL_MONTHS
                     else "todo o período")
     components.page_header(
-        "Resumo",
+        "Dashboard",
         f"Período em análise: {period_label}. A aba **Próximo mês** "
         "sempre olha para frente, independente do filtro.",
     )
@@ -169,57 +169,51 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
         )
         return
 
-    st.caption(f"Última leitura: {_quando(guardada.quando)}.")
+    livros = {c.nome: c for c in cb.load(
+        df_credit_card=repository.load_credit_card(),
+        df_cards=repository.load_cards())}
+    mapa = pi.parse_mapping(repository.load_config_text(ConfigKeys.PLUGGY_MAPA))
 
-    esq, dir_ = st.columns(2)
-    with esq:
+    # O número que se procura ao abrir o app vem primeiro, sozinho, com
+    # as três partes que o formam numa linha logo abaixo. Antes ele era o
+    # quarto de quatro cartões iguais, no canto inferior direito.
+    components.hero(
+        label="Patrimônio",
+        value=guardada.patrimonio,
+        note=f"Lido dos bancos em {_quando(guardada.quando)}",
+        parts=[
+            ("Em conta", guardada.em_conta, False),
+            ("Investido", guardada.investido, False),
+            ("Cartões", guardada.em_cartao, True),
+        ],
+    )
+    st.write("")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
         components.stat_card(
-            label="🏦 Contas bancárias", value=guardada.em_conta,
-            rows=[{"nome": c.instituicao, "sub": c.nome,
+            label="Contas", value=guardada.em_conta,
+            rows=[{"nome": short_name(c.nome) or c.instituicao,
+                   "sub": _sub_da_conta(c),
                    "valor": brl(c.saldo), "bruto": c.saldo}
                   for c in guardada.contas
                   if c.tipo == positions.TIPO_BANCO],
         )
-    with dir_:
-        # O valor é o saldo devedor que o banco informa — o mesmo que
-        # entra no patrimônio ao lado. A linha de cada cartão diz qual é a
-        # próxima fatura, tirada do mesmo livro que a tela do Cartão usa:
-        # um número de dívida só, e a fatura como contexto.
-        livros = {c.nome: c for c in cb.load(
-            df_credit_card=repository.load_credit_card(),
-            df_cards=repository.load_cards())}
-        mapa = pi.parse_mapping(
-            repository.load_config_text(ConfigKeys.PLUGGY_MAPA))
+    with c2:
+        # O saldo devedor que o banco informa — o mesmo que entra no
+        # patrimônio acima. A linha de cada cartão diz a próxima fatura,
+        # tirada do mesmo livro que a tela do Cartão usa.
         components.stat_card(
-            label="💳 Cartões — saldo devedor no banco",
-            value=guardada.em_cartao, divida=True,
+            label="Cartões", value=guardada.em_cartao, divida=True,
             rows=[_linha_de_cartao(c, mapa, livros)
                   for c in guardada.contas
                   if c.tipo == positions.TIPO_CARTAO],
         )
-
-    st.write("")
-    esq, dir_ = st.columns(2)
-    with esq:
+    with c3:
         components.stat_card(
-            label="📈 Investimentos", value=guardada.investido,
-            rows=[{"nome": a.nome, "sub": a.instituicao,
-                   "valor": brl(a.valor), "bruto": a.valor}
-                  for a in guardada.ativos[:6]],
+            label="Investimentos", value=guardada.investido,
+            rows=_linhas_de_investimento(guardada.ativos),
         )
-    with dir_:
-        components.stat_card(
-            label="💎 Patrimônio", value=guardada.patrimonio,
-            rows=[
-                {"nome": "Em conta", "valor": brl(guardada.em_conta),
-                 "bruto": guardada.em_conta},
-                {"nome": "Investido", "valor": brl(guardada.investido),
-                 "bruto": guardada.investido},
-                {"nome": "Cartões a pagar",
-                 "valor": f"− {brl(guardada.em_cartao)}", "divida": True},
-            ],
-        )
-
 
     with st.expander("Ver conta a conta"):
         linhas = [{
@@ -249,6 +243,50 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
             "Evolução do patrimônio",
             "Um ponto por dia em que a posição foi lida.")
         components.area_trend(historico, x="Data", y="Patrimônio")
+
+
+def _sub_da_conta(conta) -> str:
+    """A instituição embaixo do nome, só quando acrescenta algo.
+
+    "MeuPluggy" é o conector, não o banco; e "Itau" com "Itaú" embaixo é
+    a mesma palavra duas vezes.
+    """
+    import unicodedata
+
+    def base(t: str) -> str:
+        return unicodedata.normalize("NFKD", t).encode("ascii", "ignore") \
+            .decode().casefold().strip()
+    inst = conta.instituicao or ""
+    if base(inst) in ("meupluggy", base(short_name(conta.nome)),
+                      base(conta.nome)):
+        return ""
+    return inst
+
+
+def _linhas_de_investimento(ativos, *, mostrar: int = 4) -> list[dict]:
+    """Investimentos agrupados pelo nome curto, maiores primeiro.
+
+    O banco devolve cada aplicação separada e com a razão social inteira:
+    sete linhas de "CDB - NU FINANCEIRA S.A. - SOCIEDADE DE CREDITO…",
+    algumas de R$ 0,01. Agrupadas, viram "CDB · Nu Financeira — 5
+    aplicações", e o resto vai para uma linha de "outros".
+    """
+    grupos: dict[str, list] = {}
+    for a in ativos:
+        grupos.setdefault(short_name(a.nome) or a.nome, []).append(a)
+    linhas = sorted(((nome, sum(a.valor for a in itens), len(itens))
+                     for nome, itens in grupos.items()),
+                    key=lambda x: -x[1])
+    out = [{"nome": nome,
+            "sub": f"{n} aplicações" if n > 1 else "",
+            "valor": brl(valor), "bruto": valor}
+           for nome, valor, n in linhas[:mostrar]]
+    resto = linhas[mostrar:]
+    if resto:
+        total = sum(v for _, v, _ in resto)
+        out.append({"nome": f"Outros ({len(resto)})", "valor": brl(total),
+                    "bruto": total})
+    return out
 
 
 def _linha_de_cartao(conta, mapa: dict, livros: dict) -> dict:

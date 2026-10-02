@@ -92,8 +92,6 @@ def main() -> None:
         auth.render_login()
         return
 
-    st.title(f"{APP_ICON} {APP_TITLE}")
-    st.caption("Controle financeiro pessoal — dados sincronizados no Google Sheets.")
 
     # Antes de qualquer tela ler a planilha: se a última sincronização
     # passou de 6 horas, ela roda agora. Depois disso, o que cada página

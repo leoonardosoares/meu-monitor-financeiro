@@ -13,7 +13,7 @@ from src import (
 )
 from src.config import Colors, ConfigKeys
 from src.finance import compute_wealth, monthly_investment_contributions
-from src.format import brl, md
+from src.format import brl, md, short_name
 
 
 def _market_rates() -> inv.MarketRates:
@@ -46,6 +46,14 @@ def render(*, df_transactions: pd.DataFrame) -> None:
             "projetar rendimento e imposto dele."
         )
         _abas_manuais(df_transactions)
+
+
+# Como a Pluggy chama cada classe, e como o dono do app chama.
+_CLASSE = {
+    "FIXED_INCOME": "Renda fixa", "TREASURE": "Tesouro Direto",
+    "EQUITY": "Ações", "MUTUAL_FUND": "Fundos", "SECURITY": "Previdência",
+    "ETF": "ETFs", "COE": "COE", "OTHER": "Outros",
+}
 
 
 def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
@@ -94,8 +102,9 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
                f"{brl(guardada.investido)}")
         ):
             components.table(pd.DataFrame([{
-                "Ativo": a.nome, "Instituição": a.instituicao,
-                "Classe": a.classe or "—",
+                "Ativo": short_name(a.nome) or a.nome,
+                "Instituição": a.instituicao,
+                "Classe": _CLASSE.get(str(a.classe).upper(), a.classe or "—"),
                 "Valor": brl(a.valor),
                 "% da carteira": (
                     f"{a.valor / guardada.investido * 100:.1f}%"
@@ -104,7 +113,8 @@ def _posicao_automatica(df_transactions: pd.DataFrame) -> None:
     with dir_:
         porc = {}
         for a in guardada.ativos:
-            porc[a.classe or "Outros"] = porc.get(a.classe or "Outros", 0) + a.valor
+            rotulo = _CLASSE.get(str(a.classe).upper(), a.classe or "Outros")
+            porc[rotulo] = porc.get(rotulo, 0) + a.valor
         components.stat_card(
             label="🍰 Por classe", value=guardada.investido,
             rows=[{"nome": k, "bruto": v,
@@ -151,10 +161,12 @@ def _grafico_crescimento(aportado: float) -> None:
         fill="tonexty",
         fillcolor=components.tint(Colors.PRIMARY, 0.14),
         hovertemplate="%{x}<br>posição <b>%{y:,.2f}</b><extra></extra>"))
-    fig.update_layout(height=240, margin=dict(t=6, b=6, l=6, r=6),
+    fig.update_layout(height=260, margin=dict(t=30, b=34, l=16, r=22),
                       hovermode="x unified",
-                      legend=dict(orientation="h", y=1.15, x=0))
-    fig.update_xaxes(showgrid=False)
+                      legend=dict(orientation="h", y=1.12, x=0))
+    fig.update_xaxes(showgrid=False, type="date", tickformat="%d/%m",
+                     dtick=86400000)
+    fig.update_yaxes(tickprefix="R$ ", tickformat=",.0f")
     st.plotly_chart(fig, use_container_width=True, theme=None,
                     config={"displayModeBar": False})
     st.caption(
