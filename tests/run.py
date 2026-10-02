@@ -37,7 +37,8 @@ from src import card_book as cb  # noqa: E402
 from src import credit_card as cc  # noqa: E402
 from src.dates import parse_dates, parse_month_label  # noqa: E402
 from src.finance import (  # noqa: E402
-    avg_monthly_expense, fixed_costs_split, projection_target,
+    avg_monthly_expense, budget_status, expenses_by_category,
+    fixed_costs_split, projection_target,
 )
 from tests.fixture import (  # noqa: E402
     CARDS, ESPERADO_OUTUBRO, HOJE, MOSTRAVA_ANTES, TX,
@@ -323,6 +324,28 @@ check("o pagamento de fatura sai da média variável",
       round(avg_monthly_expense(_txv, months=6)
             - avg_monthly_expense(_txv, months=6, exclude_card_invoices=True), 2),
       75.0)
+
+# O pagamento da fatura é o mesmo dinheiro das compras do cartão. O
+# gráfico de despesas por categoria somava os dois: R$ 2.500 onde o
+# certo era R$ 2.000. E o crédito "pagamento recebido" na fatura é
+# quitação, não estorno.
+_banco = pd.DataFrame([
+    {"Categoria": "Cartão de Crédito", "Valor": 500.0, "Tipo": "Saída"},
+    {"Categoria": "Aluguel", "Valor": 1500.0, "Tipo": "Saída"}])
+_compras = pd.DataFrame([
+    {"Categoria": "Supermercado", "Valor": 300.0},
+    {"Categoria": "Lazer", "Valor": 200.0},
+    {"Categoria": "Cartao de Credito", "Valor": -500.0}])
+check("despesas por categoria não contam o cartão duas vezes",
+      round(expenses_by_category(_banco, _compras)["Valor"].sum(), 2), 2000.0)
+check("e não listam a quitação como categoria",
+      sorted(expenses_by_category(_banco, _compras)["Categoria"]),
+      ["Aluguel", "Lazer", "Supermercado"])
+check("orçamento ignora o pagamento em qualquer grafia",
+      budget_status(pd.DataFrame([{"Categoria": "Cartao de Credito",
+                                   "Limite": 100}]),
+                    _banco.assign(Categoria=["Cartao de Credito", "Aluguel"]),
+                    _compras)["Gasto"].tolist(), [0.0])
 check("mas o default não muda (reserva de emergência conta tudo)",
       round(avg_monthly_expense(_txv, months=6), 2), round(1250.0 / 6, 2))
 

@@ -9,8 +9,7 @@ vezes for preciso — cada passo é idempotente:
 4. grava os lançamentos novos, já com a categoria sugerida;
 5. **realinha o mês de fatura** das compras que o banco já faturou;
 6. arruma a aba do cartão: tira projeções gravadas por versões antigas e
-   arquiva (não apaga) cópias e parcelamentos digitados à mão que o banco
-   já cobre;
+   arquiva (não apaga) cópias digitadas de compras que o banco trouxe;
 7. marca como paga cada compra de fatura vencida.
 
 Antes, os passos 5 a 7 eram botões numa aba de ajustes — e enquanto
@@ -95,12 +94,10 @@ class Arrumacao:
     arquivar: pd.DataFrame
     projecoes: int = 0
     copias: int = 0
-    parcelamentos_manuais: int = 0
 
     @property
     def mudou(self) -> bool:
-        return bool(self.projecoes or self.copias
-                    or self.parcelamentos_manuais)
+        return bool(self.projecoes or self.copias)
 
 
 def housekeeping(df: pd.DataFrame, *, today: date) -> Arrumacao:
@@ -111,13 +108,17 @@ def housekeeping(df: pd.DataFrame, *, today: date) -> Arrumacao:
       duas vezes. Não vai para o arquivo; não há nada a guardar.
     - **Cópia digitada de compra que veio do banco**: vai para o arquivo.
       A do banco fica.
-    - **Parcelamento digitado à mão** (a compra espalhada em N meses de
-      uma vez, sem nenhuma parcela do banco no grupo): as parcelas futuras
-      vão para o arquivo. O banco cobra cada uma no mês certo, e o app já
-      deduz as que faltam.
 
     Arquivar, e não apagar: a aba `arquivo_cartao` guarda tudo com a data,
     e nada que o usuário digitou se perde por uma regra automática.
+
+    O parcelamento digitado à mão (a compra espalhada em N meses de uma
+    vez, como o formulário antigo fazia) NÃO é mexido. Arquivar as
+    parcelas futuras dele não muda total nenhum — o livro deduz de novo as
+    mesmas parcelas a partir da que fica — e, quando o banco também traz a
+    compra com outra descrição, também não desfaz a dupla contagem. Seria
+    mover dado do usuário sem efeito. Esse caso aparece na conferência do
+    cartão, como diferença contra o limite em uso do banco.
     """
     if df.empty:
         return Arrumacao(manter=df, arquivar=df.iloc[0:0])
@@ -135,16 +136,11 @@ def housekeeping(df: pd.DataFrame, *, today: date) -> Arrumacao:
     copias = _copias_de_compra_do_banco(base)
     sair |= set(copias)
 
-    manuais = reconcile.manual_future_rows(base.drop(index=list(sair)),
-                                           today=today)
-    sair |= set(manuais)
-
     idx = sorted(sair)
     return Arrumacao(
         manter=base.drop(index=idx).reset_index(drop=True),
         arquivar=base.loc[idx].reset_index(drop=True),
         projecoes=projecoes, copias=len(copias),
-        parcelamentos_manuais=len(manuais),
     )
 
 
@@ -231,8 +227,8 @@ class Resultado:
             partes.append(f"{self.baixas} compra(s) de faturas vencidas "
                           "marcadas como pagas")
         if self.arquivadas:
-            partes.append(f"{self.arquivadas} linha(s) digitada(s) que o "
-                          "banco já cobre foram para o arquivo")
+            partes.append(f"{self.arquivadas} cópia(s) digitada(s) de "
+                          "compras do banco foram para o arquivo")
         if self.projecoes_removidas:
             partes.append(f"{self.projecoes_removidas} parcela(s) projetada"
                           "(s) gravadas por versão antiga removidas")
@@ -316,11 +312,11 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
         res.faturas_lidas = len(linhas_fatura)
 
     # 5. Lançamentos novos, gravados já com a categoria sugerida.
-    desde_txt = repository.load_config_text(ConfigKeys.PLUGGY_DESDE)
-    try:
-        desde = date.fromisoformat(desde_txt) if desde_txt else None
-    except ValueError:
-        desde = None
+    desde = cutoff(repository.load_config_text(ConfigKeys.PLUGGY_DESDE),
+                   today=today)
+    if not repository.load_config_text(ConfigKeys.PLUGGY_DESDE):
+        # Gravada para aparecer no formulário e não mudar sozinha depois.
+        repository.save_config_text(ConfigKeys.PLUGGY_DESDE, desde.isoformat())
     pendentes, avisos = pi.build_pending(
         accounts=[(c, mapa.get(pi.account_key(c), "")) for c in ativas],
         transactions=transacoes, ja_importados=repository.imported_ids(),
@@ -356,7 +352,7 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
     arr = housekeeping(df, today=today)
     df = arr.manter
     res.projecoes_removidas = arr.projecoes
-    res.arquivadas = arr.copias + arr.parcelamentos_manuais
+    res.arquivadas = arr.copias
     if not arr.arquivar.empty:
         repository.save_archive("arquivo_cartao", arr.arquivar.assign(
             **{"Arquivado em": today.isoformat()}))
@@ -406,6 +402,20 @@ def _aprender_datas(ativas, mapa, transacoes, faturas,
         if partes:
             mudancas.append(f"{destino}: " + ", ".join(partes))
     return cards, mudancas
+
+
+def cutoff(salvo: str, *, today: date) -> date:
+    """A data a partir da qual os lançamentos do banco entram.
+
+    Sem data salva, o padrão é o 1º dia do mês corrente — e não "tudo".
+    O que foi digitado à mão não tem identificador do banco, e a
+    sincronização roda sozinha: trazer os 12 meses que a Pluggy guarda,
+    sem ninguém olhar, duplicaria todo o histórico manual de uma vez.
+    """
+    try:
+        return date.fromisoformat(salvo) if salvo else today.replace(day=1)
+    except ValueError:
+        return today.replace(day=1)
 
 
 def stale(carimbo: str, *, hours: float, now: datetime | None = None) -> bool:

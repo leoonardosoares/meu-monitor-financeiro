@@ -177,57 +177,6 @@ def adjustments(*, saldo_real: float, saldo_planilha: float,
 # duplicatas não as reconhece.
 
 
-def manual_future_rows(df: pd.DataFrame, *, today: date) -> pd.Index:
-    """Parcelas que o formulário manual projetou para os meses seguintes.
-
-    O formulário cria, de uma vez, uma linha por parcela nos meses à
-    frente — todas com a MESMA data de compra, porque nenhuma delas
-    aconteceu ainda. A importação faz o oposto: cada parcela chega com a
-    data em que o banco a lançou.
-
-    É essa repetição da data que identifica a projeção manual, e não a
-    falta de identificador: linhas importadas antes de o app passar a
-    guardar o id também estão sem ele, e mirar nelas apagava compra de
-    verdade — foi o que tirou R$ 1.139,90 de uma fatura atual.
-
-    O mês corrente fica de fora: a fatura dele ainda é cobrada.
-    """
-    if df.empty or "Mês da Fatura" not in df.columns:
-        return pd.Index([])
-    precisa = {"Descrição", "Parcela", "Data Compra"}
-    if not precisa.issubset(df.columns):
-        return pd.Index([])
-
-    base = df.copy()
-    base["_total"] = base["Parcela"].map(_total_parcelas)
-    base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
-    base["_compra"] = base["Data Compra"].astype(str).str.strip()
-    base["_desc"] = base["Descrição"].astype(str).str.strip()
-    if COLUNA_ID in base.columns:
-        base["_id"] = base[COLUNA_ID].fillna("").astype(str).str.strip()
-    else:
-        base["_id"] = ""
-
-    corte = pd.Timestamp(today).normalize().replace(day=1) + \
-        pd.DateOffset(months=1)
-
-    # A assinatura: parcelamento cuja mesma data de compra se repete em
-    # mais de um mês de fatura, e sem nenhuma linha vinda do banco.
-    suspeitos: list = []
-    for (desc, compra, total), grupo in base[base["_total"] > 1].groupby(
-            ["_desc", "_compra", "_total"], dropna=False):
-        meses = {m for m in grupo["_mes"] if m is not None}
-        if len(meses) < 2:
-            continue                      # parcela única por data: veio do banco
-        if any(grupo["_id"]):
-            continue                      # o banco confirmou este parcelamento
-        for idx, linha in grupo.iterrows():
-            if linha["_mes"] is not None and linha["_mes"] >= corte:
-                suspeitos.append(idx)
-
-    return pd.Index(suspeitos)
-
-
 def _indice_parcela(valor) -> float:
     try:
         return float(str(valor).split("/")[0].strip())

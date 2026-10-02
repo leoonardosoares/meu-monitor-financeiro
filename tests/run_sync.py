@@ -107,11 +107,11 @@ _explosao = pd.DataFrame([
     compra(m, "Geladeira", 300.0, "", f"{i}/6", data="2026-08-20")
     for i, m in enumerate(["09/2026", "10/2026", "11/2026", "12/2026",
                            "01/2027", "02/2027"], 1)])
+# Arquivar as futuras não mudaria total nenhum (o livro deduz de novo as
+# mesmas parcelas), então a sincronização não mexe nelas.
 _arr2 = sync.housekeeping(_explosao, today=HOJE)
-check("as parcelas futuras digitadas vão para o arquivo",
-      _arr2.parcelamentos_manuais, 4)
-check("passado e mês corrente ficam",
-      sorted(_arr2.manter["Mês da Fatura"]), ["09/2026", "10/2026"])
+check("o parcelamento digitado fica inteiro", len(_arr2.manter), 6)
+check("nada vai para o arquivo", len(_arr2.arquivar), 0)
 
 check("planilha vazia", sync.housekeeping(pd.DataFrame(), today=HOJE).mudou,
       False)
@@ -128,6 +128,16 @@ _pago, _nb = sync.settle_status(_df3, _livros)
 check("só a de setembro (venceu 15/09)", _nb, 1)
 check("status", list(_pago["Status"]), ["Pago", "Pendente"])
 check("idempotente", sync.settle_status(_pago, _livros)[1], 0)
+
+print("Data de corte padrão não traz o histórico inteiro")
+# A sincronização roda sozinha; sem data salva, trazer os 12 meses da
+# Pluggy duplicaria tudo que foi digitado à mão.
+check("sem data salva: 1º do mês", sync.cutoff("", today=HOJE),
+      date(2026, 10, 1))
+check("data salva vale", sync.cutoff("2026-08-15", today=HOJE),
+      date(2026, 8, 15))
+check("data torta cai no 1º do mês", sync.cutoff("ontem", today=HOJE),
+      date(2026, 10, 1))
 
 print("Saber quando sincronizar de novo")
 _agora = datetime(2026, 10, 2, 12, 0)

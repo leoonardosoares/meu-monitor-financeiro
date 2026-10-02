@@ -12,7 +12,7 @@ from typing import Literal
 import pandas as pd
 
 from src.config import TRANSFER_CATEGORIES
-from src.finance import pct_change, previous_month
+from src.finance import is_card_category, pct_change, previous_month
 from src.format import brl
 
 
@@ -117,7 +117,7 @@ def _insight_budget_pressure(curr: pd.DataFrame,
     if df_budgets.empty:
         return None
     curr_bank = curr[(curr["Tipo"] == "Saída") &
-                     (curr["Categoria"] != "Cartão de Crédito")] \
+                     ~is_card_category(curr["Categoria"])] \
         .groupby("Categoria")["Valor"].sum()
     curr_card = (
         df_card_period.groupby("Categoria")["Valor"].sum()

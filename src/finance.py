@@ -115,6 +115,12 @@ def expenses_by_category(df_transactions: pd.DataFrame,
         if not df_credit_card.empty else pd.DataFrame(columns=["Categoria", "Valor"])
     )
     combined = pd.concat([expenses_bank, expenses_card])
+    # O pagamento da fatura é o mesmo dinheiro das compras do cartão, que
+    # já entram aqui pelas categorias delas. Somar os dois contava o
+    # cartão duas vezes. Do lado do cartão, o crédito "pagamento
+    # recebido" também é quitação, não estorno.
+    if not combined.empty:
+        combined = combined[~is_card_category(combined["Categoria"])]
     all_exclude = list(TRANSFER_CATEGORIES) + list(exclude or [])
     combined = combined[~combined["Categoria"].isin(all_exclude)]
     if combined.empty:
@@ -456,7 +462,7 @@ def budget_status(df_budgets: pd.DataFrame,
     else:
         bank = df_transactions_period[
             (df_transactions_period["Tipo"] == "Saída") &
-            (df_transactions_period["Categoria"] != "Cartão de Crédito")
+            ~is_card_category(df_transactions_period["Categoria"])
         ]
         bank_by_cat = (
             bank.groupby("Categoria")["Valor"].sum() if not bank.empty
@@ -466,7 +472,9 @@ def budget_status(df_budgets: pd.DataFrame,
     if df_credit_card_period.empty:
         card_by_cat = pd.Series(dtype=float)
     else:
-        card_by_cat = df_credit_card_period.groupby("Categoria")["Valor"].sum()
+        cartao = df_credit_card_period[
+            ~is_card_category(df_credit_card_period["Categoria"])]
+        card_by_cat = cartao.groupby("Categoria")["Valor"].sum()
 
     rows = []
     for _, row in df_budgets.iterrows():

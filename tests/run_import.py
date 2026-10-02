@@ -285,6 +285,23 @@ check("os créditos são reportados",
       sum("crédito(s) em fatura" in a for a in avisos), 1)
 check("o aviso explica o abatimento",
       any("abatem a fatura" in a for a in avisos), True)
+# O pagamento é quitação; o estorno é devolução de compra. Na mesma
+# categoria comum, o pagamento abatia um gasto que nunca foi devolvido.
+check("o pagamento é categorizado como quitação",
+      next(x.categoria for x in p if x.descricao == "Pagamento recebido"),
+      "Cartão de Crédito")
+check("o estorno não",
+      next(x.categoria for x in p
+           if x.descricao == "Crédito de parcelamento") != "Cartão de Crédito",
+      True)
+
+print("  Na conta, 'pagamento recebido' não vira quitação de cartão")
+p, _ = montar(
+    [(CONTA_BANCO, pi.DESTINO_BANCO)],
+    {"acc-banco": [tx("k9", "2026-09-05", "Pagamento recebido", 300.0,
+                      "CREDIT")]})
+check("dinheiro de outra pessoa continua receita",
+      p[0].categoria != "Cartão de Crédito", True)
 
 print("  No banco, crédito continua sendo receita")
 p, avisos = montar(
