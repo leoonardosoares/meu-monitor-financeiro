@@ -246,7 +246,9 @@ def _posicao_real() -> pd.DataFrame:
         {"Data": quando, "Origem": "Itaú", "Nome": "Conta corrente",
          "Classe": "BANK", "Valor": 4210.55, "Chave": "acc-itau"},
         {"Data": quando, "Origem": "Nu Pagamentos", "Nome": "Nubank",
-         "Classe": "CREDIT", "Valor": -2679.04, "Chave": "acc-nu-card"},
+         "Classe": "CREDIT", "Valor": -2679.04, "Chave": "acc-nu-card",
+         "Limite": 3000.0, "Disponível": 320.96,
+         "Fechamento": "2026-10-08", "Vencimento": "2026-10-15"},
         {"Data": quando, "Origem": "Nu Pagamentos", "Nome": "Caixinha",
          "Classe": "INVESTIMENTO", "Valor": 12350.0, "Chave": ""},
     ])
@@ -389,10 +391,15 @@ def _roda_tudo(rotulo: str, *, com_dados: bool, mes: str,
 # linhas" e o teste passaria sem nunca exercitar o que interessa.
 print("O estado com dados do banco aciona as leituras da instituição")
 _instala_repositorio(com_dados=True, com_banco=True)
-check("o saldo do cartão chega do banco",
-      pg_cartao._saldo_do_banco().get("Nubank") == 2679.04)
-check("as faturas emitidas chegam do banco",
-      ("Nubank", "10/2026") in pg_cartao._faturas_do_banco())
+from src import card_book as _cb  # noqa: E402
+_livro_nu = next(c for c in _cb.load(
+    df_credit_card=repository.load_credit_card(),
+    df_cards=repository.load_cards()) if c.nome == "Nubank")
+check("limite e disponível chegam do banco",
+      (_livro_nu.limite, _livro_nu.disponivel) == (3000.0, 320.96))
+check("a fatura emitida chega do banco com o total dele",
+      next(f.total for f in _livro_nu.faturas if f.mes == "10/2026")
+      == 2679.04)
 
 print("Cada página desenha nos dois temas, com e sem dados")
 for _tema in PALETTES:

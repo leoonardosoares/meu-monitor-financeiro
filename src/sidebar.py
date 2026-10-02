@@ -4,11 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
+import pandas as pd
 import streamlit as st
 
 from src import repository
 from src.auth import logout
 from src.config import ConfigKeys, TEMA_PADRAO
+from src.dates import parse_month_label
 
 ALL_MONTHS = "Todos os Meses"
 
@@ -17,7 +19,7 @@ PAGES = [
     "Entradas e Saídas",
     "Cartão de Crédito",
     "Investimentos",
-    "Importar do banco",
+    "Sincronização",
     "Configurações e Orçamento",
 ]
 
@@ -43,7 +45,9 @@ def render(months: list[str]) -> SidebarState:
     current_month = date.today().strftime("%m/%Y")
     # Garante que o mês atual sempre apareça no select, mesmo que ainda
     # não haja lançamentos.
-    available = sorted(set(months) | {current_month}, reverse=True)
+    available = sorted(set(months) | {current_month},
+                       key=lambda m: parse_month_label(m) or pd.Timestamp.min,
+                       reverse=True)
     options = [ALL_MONTHS, *available]
     default_idx = options.index(current_month)
     month = st.sidebar.selectbox("Período:", options, index=default_idx)

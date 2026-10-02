@@ -4,7 +4,8 @@ Roda sem pytest e sem rede:
 
     python tests/run.py
 
-Só exercita os módulos puros (`credit_card`, `finance`, `dates`), que é
+Só exercita os módulos puros (`credit_card`, `card_book`, `finance`,
+`dates`), que é
 onde mora o dinheiro. As páginas dependem de streamlit e plotly e não
 entram aqui de propósito: o objetivo é poder rodar isto em qualquer
 lugar, inclusive antes de um commit.
@@ -32,13 +33,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd  # noqa: E402
 
+from src import card_book as cb  # noqa: E402
 from src import credit_card as cc  # noqa: E402
 from src.dates import parse_dates, parse_month_label  # noqa: E402
 from src.finance import (  # noqa: E402
-    avg_monthly_expense, fixed_costs_split, projection_target,
+    avg_monthly_expense, budget_status, expenses_by_category,
+    fixed_costs_split, projection_target,
 )
 from tests.fixture import (  # noqa: E402
-    CARDS, ESPERADO_OUTUBRO, HOJE, MOSTRAVA_ANTES, PAY, TX,
+    CARDS, ESPERADO_OUTUBRO, HOJE, MOSTRAVA_ANTES, TX,
 )
 
 _ok = 0
@@ -57,9 +60,24 @@ def section(title):
     print(f"  {title}")
 
 
-def total_em(mes, tx=TX, pay=PAY, cards=CARDS, hoje=HOJE):
-    ag, _ = cc.schedule_invoices(tx, pay, cards, today=hoje)
-    return round(sum(i.balance for i in cc.invoices_due_in(ag, mes)), 2)
+def livros(tx=TX, cards=CARDS, hoje=HOJE, bills=None):
+    return cb.build(compras=tx, df_bills=bills if bills is not None
+                    else pd.DataFrame(), df_cards=cards, today=hoje)
+
+
+def total_em(mes, tx=TX, cards=CARDS, hoje=HOJE):
+    """O que sai da conta no mês: faturas não pagas que vencem nele."""
+    ini = parse_month_label(mes)
+    if ini is None:
+        return 0.0
+    fim = (ini + pd.offsets.MonthEnd(0)).date()
+    return round(sum(
+        f.total for c in livros(tx, cards, hoje) for f in c.faturas
+        if f.situacao != cb.PAGA and ini.date() <= f.vencimento <= fim), 2)
+
+
+def chaves(faturas):
+    return sorted((f.cartao, f.mes) for f in faturas)
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +99,6 @@ check("31/12 vira o ano", inv(date(2026, 12, 31), 30), "01/2027")
 check("08/09 com fechamento 8 -> 09/2026", inv(date(2026, 9, 8), 8), "09/2026")
 check("09/09 já é a seguinte", inv(date(2026, 9, 9), 8), "10/2026")
 check("30/06 com fechamento 31 (mês curto)", inv(date(2026, 6, 30), 31), "06/2026")
-
-check("parcelamento parte da fatura certa",
-      [l["Mês da Fatura"] for l in cc.installments_for_purchase(
-          purchase_date=date(2026, 8, 22), description="x", category="y",
-          total_amount=1600.0, installments=6, closing_day=30)],
-      ["08/2026", "09/2026", "10/2026", "11/2026", "12/2026", "01/2027"])
 
 
 # ---------------------------------------------------------------------------
@@ -121,33 +133,21 @@ _bad = next(
 )
 check("vencimento sempre depois do fechamento, em 31x31 pares", _bad, None)
 
-_gap = None
-for c in (1, 6, 15, 28, 30, 31):
-    fim_anterior = None
-    for m in [f"{x:02d}/2026" for x in range(1, 13)]:
-        ini, fim = cc.invoice_window(m, c)
-        if fim_anterior is not None and ini != fim_anterior + timedelta(days=1):
-            _gap = f"fech={c} em {m}"
-            break
-        fim_anterior = fim
-check("as janelas ladrilham o calendário sem buraco nem sobreposição", _gap, None)
-
 _fora = None
 for c in (1, 6, 30, 31):
     d = date(2026, 1, 1)
     while d <= date(2026, 12, 31):
         m = cc.invoice_month_for_purchase(d, c).strftime("%m/%Y")
-        ini, fim = cc.invoice_window(m, c)
-        if not ini.date() <= d <= fim.date():
+        fech, _ = cc.invoice_dates(m, c, 15 if c < 15 else 7)
+        anterior = parse_month_label(m) - pd.DateOffset(months=1)
+        fech_ant, _ = cc.invoice_dates(f"{anterior:%m/%Y}", c,
+                                       15 if c < 15 else 7)
+        if not (fech_ant.date() < d <= fech.date()):
             _fora = f"fech={c} {d}"
             break
         d += timedelta(days=1)
-check("toda data cai em exatamente uma janela", _fora, None)
-
-check("fecha 30 vence 7: 'Fechada' na virada do mês",
-      cc.invoice_phase(pd.Timestamp("2026-09-05"), 30, 7), "Fechada")
-check("e 'Aberta' no meio do ciclo",
-      cc.invoice_phase(pd.Timestamp("2026-09-20"), 30, 7), "Aberta")
+check("toda compra cai entre o fechamento anterior e o da sua fatura",
+      _fora, None)
 
 
 # ---------------------------------------------------------------------------
@@ -160,36 +160,30 @@ check("outubro soma os dois cartões", total_em("10/2026"), ESPERADO_OUTUBRO)
 check("é mais do que o rótulo 09/2026 sozinho",
       MOSTRAVA_ANTES < ESPERADO_OUTUBRO, True)
 
-_ag, _ileg = cc.schedule_invoices(TX, PAY, CARDS, today=HOJE)
-check("nenhum rótulo ilegível", _ileg, [])
+_l = livros()
+check("nenhum rótulo ilegível", [c.ilegiveis for c in _l], [(), ()])
 check("quais faturas vencem em outubro",
-      sorted((i.card, i.month) for i in cc.invoices_due_in(_ag, "10/2026")),
+      chaves(cb.due_through(_l, date(2026, 10, 31))),
       [("Cartão Itaú", "09/2026"), ("Principal", "10/2026")])
-check("a vencida fica de fora, mas é reportada",
-      [(i.card, i.month, i.balance) for i in cc.overdue_invoices(_ag)],
-      [("Cartão Itaú", "08/2026", 266.67)])
 
-# Os três baldes precisam particionar o que está em aberto: nada some,
-# nada é contado duas vezes. Entre hoje e o primeiro dia do alvo existia
-# uma janela cega em que a fatura prestes a ser paga não aparecia.
+# Cada fatura entra uma vez só, em qualquer dia do mês: entre hoje e o
+# primeiro dia do alvo existia uma janela cega em que a fatura prestes a
+# ser paga não aparecia — e em outra versão, aparecia duas vezes.
 _dup = None
 for _dia in (1, 8, 15, 18, 25, 30):
     _hoje = date(2026, 9, _dia)
-    _a, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)
     _alvo, _ = projection_target("x", today=_hoje)
-    _b = (cc.overdue_invoices(_a) + cc.invoices_due_before(_a, _alvo)
-          + cc.invoices_due_in(_a, _alvo))
-    _k = [(i.card, i.month) for i in _b]
+    _fim = (parse_month_label(_alvo) + pd.offsets.MonthEnd(0)).date()
+    _k = [(f.cartao, f.mes) for f in cb.due_through(livros(hoje=_hoje), _fim)]
     if len(_k) != len(set(_k)):
         _dup = f"duplicata em {_hoje}"
         break
-check("baldes disjuntos em qualquer dia do mês", _dup, None)
+check("nenhuma fatura contada duas vezes em qualquer dia do mês", _dup, None)
 
-check("a fatura que vence antes do alvo não some",
-      [(i.card, i.month) for i in cc.invoices_due_before(
-          cc.schedule_invoices(TX, PAY, CARDS, today=date(2026, 9, 1))[0],
-          "10/2026")],
-      [("Cartão Itaú", "08/2026")])
+check("no dia 1º, a fatura do Itaú que vence dia 7 ainda entra",
+      chaves(cb.due_through(livros(hoje=date(2026, 9, 1)),
+                            date(2026, 9, 30))),
+      [("Cartão Itaú", "08/2026"), ("Principal", "09/2026")])
 
 
 # ---------------------------------------------------------------------------
@@ -235,25 +229,17 @@ _tx_ruim = pd.concat([TX, pd.DataFrame([{
     "Descrição": "Torta", "Categoria": "Lanches", "Parcela": "1/1",
     "Valor": 99.0, "Status": "Pendente"}])], ignore_index=True)
 check("rótulo ilegível é reportado em vez de sumir calado",
-      cc.schedule_invoices(_tx_ruim, PAY, CARDS, today=HOJE)[1],
-      ["Principal · 09/26"])
+      [c.ilegiveis for c in livros(tx=_tx_ruim) if c.nome == "Principal"],
+      [("09/26",)])
 check("e não contamina o total", total_em("10/2026", tx=_tx_ruim),
       ESPERADO_OUTUBRO)
 
 _misto = pd.DataFrame([
-    {"Data Compra": "2026-10-01", "Mês da Fatura": "10/2026", "Cartão": "Principal",
-     "Descrição": "a", "Categoria": "x", "Parcela": "1/1", "Valor": 100.0,
-     "Status": "Pago"},
-    {"Data Compra": "2026-10-02", "Mês da Fatura": "10/2026", "Cartão": "Principal",
-     "Descrição": "b", "Categoria": "x", "Parcela": "1/1", "Valor": 50.0,
-     "Status": "pago"},
-    {"Data Compra": "2026-10-03", "Mês da Fatura": "10/2026", "Cartão": "Principal",
-     "Descrição": "c", "Categoria": "x", "Parcela": "1/1", "Valor": 30.0,
-     "Status": "Pendente"},
+    {"Status": "Pago"}, {"Status": "pago"}, {"Status": " PAGO "},
+    {"Status": "Pendente"}, {"Status": None},
 ])
-_i = cc.invoice_for(_misto, PAY, "Principal", "10/2026")
-check("'pago' minúsculo conta como quitado", (_i.settled, _i.outstanding),
-      (150.0, 30.0))
+check("'pago' em qualquer grafia conta como quitado",
+      list(cc._is_settled(_misto)), [True, True, True, False, False])
 
 _dupmes = pd.DataFrame([
     {"Data Compra": "2026-10-01", "Mês da Fatura": " 11/2026", "Cartão": "Principal",
@@ -263,15 +249,9 @@ _dupmes = pd.DataFrame([
      "Descrição": "b", "Categoria": "x", "Parcela": "1/1", "Valor": 0.0,
      "Status": "Pendente"},
 ])
-check("rótulo com espaço não vira duas faturas",
-      len(cc.open_invoices(_dupmes, PAY)), 1)
+_nov = [f for c in livros(tx=_dupmes) for f in c.faturas if f.mes == "11/2026"]
+check("rótulo com espaço não vira duas faturas", len(_nov), 1)
 check("nem dobra a dívida", total_em("11/2026", tx=_dupmes), 150.0)
-
-for _rot in ("10/2026", " 10/2026 ", "10 /2026", "10-2026"):
-    _p = pd.DataFrame([{"Data": "2026-09-20", "Cartão": "Principal",
-                        "Mês da Fatura": _rot, "Valor": 22.0, "Observação": "x"}])
-    check(f"adiantamento com rótulo {_rot!r} encontra a fatura",
-          round(cc.invoice_for(TX, _p, "Principal", "10/2026").advances, 2), 22.0)
 
 
 # ---------------------------------------------------------------------------
@@ -296,10 +276,12 @@ for _dia in (0, -3, 32, 99):
         {"Nome": "Principal", "Instituição": "", "Limite": 5000.0,
          "Dia Fechamento": 8, "Dia Vencimento": 15},
     ])
-    _a, _il = cc.schedule_invoices(TX, PAY, _ruim, today=HOJE)
-    check(f"dia {_dia}: não vira 'mês ilegível'", _il, [])
+    _lr = {c.nome: c for c in livros(cards=_ruim)}
+    check(f"dia {_dia}: não vira 'mês ilegível'",
+          [c.ilegiveis for c in _lr.values()], [(), ()])
     check(f"dia {_dia}: cartão marcado como estimado",
-          sorted({i.card for i in _a if i.estimated}), ["Cartão Itaú"])
+          sorted(n for n, c in _lr.items() if c.datas_estimadas),
+          ["Cartão Itaú"])
     check(f"dia {_dia}: nenhuma fatura some",
           total_em("10/2026", cards=_ruim), ESPERADO_OUTUBRO)
 
@@ -342,86 +324,47 @@ check("o pagamento de fatura sai da média variável",
       round(avg_monthly_expense(_txv, months=6)
             - avg_monthly_expense(_txv, months=6, exclude_card_invoices=True), 2),
       75.0)
+
+# O pagamento da fatura é o mesmo dinheiro das compras do cartão. O
+# gráfico de despesas por categoria somava os dois: R$ 2.500 onde o
+# certo era R$ 2.000. E o crédito "pagamento recebido" na fatura é
+# quitação, não estorno.
+_banco = pd.DataFrame([
+    {"Categoria": "Cartão de Crédito", "Valor": 500.0, "Tipo": "Saída"},
+    {"Categoria": "Aluguel", "Valor": 1500.0, "Tipo": "Saída"}])
+_compras = pd.DataFrame([
+    {"Categoria": "Supermercado", "Valor": 300.0},
+    {"Categoria": "Lazer", "Valor": 200.0},
+    {"Categoria": "Cartao de Credito", "Valor": -500.0}])
+check("despesas por categoria não contam o cartão duas vezes",
+      round(expenses_by_category(_banco, _compras)["Valor"].sum(), 2), 2000.0)
+check("e não listam a quitação como categoria",
+      sorted(expenses_by_category(_banco, _compras)["Categoria"]),
+      ["Aluguel", "Lazer", "Supermercado"])
+check("orçamento ignora o pagamento em qualquer grafia",
+      budget_status(pd.DataFrame([{"Categoria": "Cartao de Credito",
+                                   "Limite": 100}]),
+                    _banco.assign(Categoria=["Cartao de Credito", "Aluguel"]),
+                    _compras)["Gasto"].tolist(), [0.0])
 check("mas o default não muda (reserva de emergência conta tudo)",
       round(avg_monthly_expense(_txv, months=6), 2), round(1250.0 / 6, 2))
 
 
-# ---------------------------------------------------------------------------
-# Adiantamento: sai do caixa na hora e é absorvido na baixa, para o
-# dinheiro não ser contado duas vezes.
-# ---------------------------------------------------------------------------
-section("Pagamento parcial de fatura")
-
-_pay1 = pd.DataFrame([{"Data": "2026-09-20", "Cartão": "Principal",
-                       "Mês da Fatura": "10/2026", "Valor": 49.20,
-                       "Observação": "liberar limite"}])
-check("abate do mês", total_em("10/2026", pay=_pay1),
-      round(ESPERADO_OUTUBRO - 49.20, 2))
-_p = [i for i in cc.schedule_invoices(TX, _pay1, CARDS, today=HOJE)[0]
-      if i.card == "Principal"][0]
-check("total - quitado - adiantado = falta pagar",
-      round(_p.total - _p.settled - _p.advances, 2), round(_p.balance, 2))
-
-_tx2, _pay2, _caixa = cc.settle_invoice(TX, _pay1, "Principal", "10/2026")
-check("na baixa, só o saldo vai para o caixa", round(_caixa, 2),
-      round(149.20 - 49.20, 2))
-check("e o adiantamento é absorvido", len(_pay2), 0)
-check("as parcelas viram Pago",
-      total_em("10/2026", tx=_tx2, pay=_pay2),
-      round(ESPERADO_OUTUBRO - 149.20, 2))
-
-
-# ---------------------------------------------------------------------------
-# Recálculo do mês gravado, depois de corrigir o dia de fechamento.
-# ---------------------------------------------------------------------------
-section("Recálculo das faturas já gravadas")
-
-check("com o cadastro certo, nada a corrigir",
-      len(cc.invoice_month_drift(TX, CARDS, "Cartão Itaú")), 0)
-_c1 = pd.DataFrame([{"Nome": "Cartão Itaú", "Instituição": "Itaú",
-                     "Limite": 1600.0, "Dia Fechamento": 1,
-                     "Dia Vencimento": 7}])
-_d = cc.invoice_month_drift(TX, _c1, "Cartão Itaú")
-check("fechamento errado denuncia as 6 parcelas", len(_d), 6)
-_tx3, _pay3 = cc.apply_invoice_month_drift(TX, PAY, "Cartão Itaú", _d)
-check("aplicar é idempotente",
-      len(cc.invoice_month_drift(_tx3, _c1, "Cartão Itaú")), 0)
-_pago = TX.copy()
-_pago["Status"] = "Pago"
-check("fatura paga não é remexida sem opt-in",
-      len(cc.invoice_month_drift(_pago, _c1, "Cartão Itaú")), 0)
-check("com opt-in, é",
-      len(cc.invoice_month_drift(_pago, _c1, "Cartão Itaú",
-                                 only_pending=False)), 6)
-
-
 # A projeção do próximo mês parte do dinheiro que existe hoje e tira
-# tudo que vence até lá — incluindo o que já venceu e não foi pago, que
-# sai da mesma conta.
+# tudo que vence até lá. Fatura que já venceu NÃO entra: o app não vê o
+# pagamento, e toda vez que tratou fatura vencida como dívida estava
+# errado — o banco não cobrava mais. Se uma fatura de fato ficou para
+# trás, é o limite em uso informado pelo banco que acusa (ver run_book).
 section("Tudo que sai da conta até o fim do mês-alvo")
-_ag, _ = cc.schedule_invoices(TX, PAY, CARDS, today=date(2026, 9, 30))
-_ate = cc.invoices_due_through(_ag, "10/2026")
-check("inclui a vencida, a deste mês e a do alvo",
-      [(i.card, i.month) for i in _ate],
-      [("Cartão Itaú", "08/2026"), ("Cartão Itaú", "09/2026"),
-       ("Principal", "10/2026")])
-check("soma", round(sum(i.balance for i in _ate), 2), 682.54)
+_l30 = livros(hoje=date(2026, 9, 30))
+_ate = cb.due_through(_l30, date(2026, 10, 31))
+check("a deste mês e a do alvo; a vencida não",
+      chaves(_ate), [("Cartão Itaú", "09/2026"), ("Principal", "10/2026")])
+check("soma", round(sum(f.total for f in _ate), 2), ESPERADO_OUTUBRO)
 check("não alcança o mês seguinte ao alvo",
-      [(i.card, i.month) for i in cc.invoices_due_through(_ag, "09/2026")],
-      [("Cartão Itaú", "08/2026")])
-check("mês ilegível devolve vazio", cc.invoices_due_through(_ag, "lixo"), [])
+      chaves(cb.due_through(_l30, date(2026, 9, 30))), [])
 
-# O balde do alvo é subconjunto do que sai até lá: quem some de um tem
-# de aparecer no outro.
-_no_alvo = {(i.card, i.month) for i in cc.invoices_due_in(_ag, "10/2026")}
-_ate_chaves = {(i.card, i.month) for i in _ate}
-check("o que vence no alvo está contido no que sai até lá",
-      _no_alvo <= _ate_chaves, True)
-check("e a vencida entra só no segundo",
-      ("Cartão Itaú", "08/2026") in _ate_chaves - _no_alvo, True)
 
-# São os estados que o app do cartão mostra. "Aberta" para tudo
-# escondia a diferença entre dever agora e dever em 2027.
 # A Pluggy envia "2026-09-08T00:00:00.000Z" e a planilha envia
 # "2026-09-08". Misturar os dois estourava com "Cannot compare tz-naive
 # and tz-aware", e inferir um formato do primeiro valor fazia o outro
@@ -440,97 +383,23 @@ check("sem zero à esquerda", _mix.iloc[4], pd.Timestamp(2026, 2, 3))
 check("nulo e lixo viram NaT",
       [bool(pd.isna(v)) for v in _mix.iloc[5:]], [True, True])
 
-# A importação traz toda compra como Pendente e nada dá baixa: o
-# pagamento aparece no extrato da conta, não no do cartão. Faturas de
-# meses atrás ficavam "vencidas" para sempre, inflando a projeção.
-section("Fatura que o banco fechou e já venceu conta como paga")
-_venc = {("Cartão Itaú", "08/2026"): date(2026, 9, 7)}
-_tx_pago, _n = cc.settle_closed_bills(TX, _venc, today=date(2026, 9, 30))
-check("marcou a parcela da fatura vencida", _n, 1)
-check("a fatura sai das abertas",
-      ("Cartão Itaú", "08/2026") in
-      {(i.card, i.month)
-       for i in cc.schedule_invoices(_tx_pago, PAY, CARDS,
-                                     today=date(2026, 9, 30))[0]},
-      False)
 
-check("fatura ainda a vencer não é tocada",
-      cc.settle_closed_bills(TX, {("Cartão Itaú", "09/2026"):
-                                  date(2026, 10, 7)},
-                             today=date(2026, 9, 30))[1], 0)
-check("cartão sem fatura publicada fica intacto",
-      cc.settle_closed_bills(TX, {}, today=date(2026, 9, 30))[1], 0)
-check("rodar duas vezes não muda nada",
-      cc.settle_closed_bills(_tx_pago, _venc, today=date(2026, 9, 30))[1], 0)
-
-# O cartão que não publica fatura não é alcançado pela regra do
-# vencimento — mas o pagamento está no extrato da conta e diz o mesmo.
-section("Fatura com pagamento no extrato conta como paga")
-_ag_p, _ = cc.schedule_invoices(TX, PAY, CARDS, today=date(2026, 9, 30))
-_extrato = pd.DataFrame([{
-    "Data": "2026-09-07", "Descrição": "Pagamento de fatura",
-    "Categoria": "Cartão de Crédito", "Valor": 266.67, "Tipo": "Saída"}])
-_tx_q, _quitadas = cc.match_payments(TX, _extrato, _ag_p)
-check("casou com a fatura vencida", [(c, m) for c, m, _ in _quitadas],
-      [("Cartão Itaú", "08/2026")])
-check("e ela sai das vencidas",
-      cc.overdue_invoices(cc.schedule_invoices(
-          _tx_q, PAY, CARDS, today=date(2026, 9, 30))[0]), [])
-
-# Um pagamento parcial não quitou nada — dizer que quitou esconderia
-# dívida real.
-check("pagamento parcial não quita",
-      cc.match_payments(TX, _extrato.assign(Valor=100.0), _ag_p)[1], [])
-check("pagamento longe do vencimento não casa",
-      cc.match_payments(TX, _extrato.assign(Data="2026-08-01"), _ag_p)[1], [])
-check("saída de outra categoria não casa",
-      cc.match_payments(TX, _extrato.assign(Categoria="Lazer"), _ag_p)[1], [])
-check("entrada de mesmo valor não casa",
-      cc.match_payments(TX, _extrato.assign(Tipo="Entrada"), _ag_p)[1], [])
-
-# Um débito não pode baixar duas faturas de mesmo valor.
-check("cada pagamento serve a uma fatura só",
-      len(cc.match_payments(
-          TX, _extrato,
-          [i for i in _ag_p if i.card == "Cartão Itaú"][:2])[1]), 1)
-check("extrato vazio", cc.match_payments(TX, pd.DataFrame(), _ag_p)[1], [])
-
-
+# São os estados que o app do cartão mostra. "Aberta" para tudo
+# escondia a diferença entre dever agora e dever em 2027.
 section("Faturas classificadas como o banco classifica")
-_hoje = date(2026, 9, 30)
-_ag2, _ = cc.schedule_invoices(TX, PAY, CARDS, today=_hoje)
-_sit = cc.situations(_ag2, _hoje)
-check("a que passou do vencimento", _sit[("Cartão Itaú", "08/2026")],
-      "Vencida")
-check("a que ainda não fechou", _sit[("Cartão Itaú", "09/2026")], "Atual")
+_c = {c.nome: c for c in livros(hoje=date(2026, 9, 30))}
+_sit = {f.mes: f.situacao for f in _c["Cartão Itaú"].faturas}
+check("a que passou do vencimento está paga", _sit["08/2026"], cb.PAGA)
+check("a que fecha hoje ainda é a aberta", _sit["09/2026"], cb.ABERTA)
 check("as seguintes são futuras",
-      {_sit[("Cartão Itaú", m)] for m in
-       ("10/2026", "11/2026", "12/2026", "01/2027")}, {"Futura"})
-check("cada cartão tem a sua atual", _sit[("Principal", "10/2026")], "Atual")
-
-# Uma fatura atual por cartão: sem olhar a sequência, toda parcela dos
-# próximos meses passaria por atual.
-_atuais = [k for k, v in _sit.items() if v == "Atual"]
-check("uma por cartão", sorted(c for c, _ in _atuais),
-      ["Cartão Itaú", "Principal"])
-
-# Fatura ainda não baixada, mas já coberta por adiantamento: o saldo
-# zera e ela deixa de ser cobrança.
-_adiantada = pd.DataFrame([{
-    "Data": "2026-09-20", "Cartão": "Principal", "Mês da Fatura": "10/2026",
-    "Valor": 149.20, "Observação": "quitou antes do fechamento"}])
-_ag3, _ = cc.schedule_invoices(TX, _adiantada, CARDS, today=_hoje)
-check("coberta por adiantamento aparece como paga",
-      cc.situations(_ag3, _hoje).get(("Principal", "10/2026")), "Paga")
-
-# Uma fatura totalmente quitada não chega a aparecer: `open_invoices`
-# só devolve pares com parcela em aberto.
-_paga = TX.copy()
-_paga.loc[_paga["Cartão"] == "Principal", "Status"] = "Pago"
-_ag4, _ = cc.schedule_invoices(_paga, PAY, CARDS, today=_hoje)
-check("quitada some da lista",
-      ("Principal", "10/2026") in cc.situations(_ag4, _hoje), False)
-check("sem faturas", cc.situations([], _hoje), {})
+      {_sit[m] for m in ("10/2026", "11/2026", "12/2026", "01/2027")},
+      {cb.FUTURA})
+check("cada cartão tem a sua aberta",
+      sorted((n, c.atual.mes) for n, c in _c.items()),
+      [("Cartão Itaú", "09/2026"), ("Principal", "10/2026")])
+check("no dia seguinte ao fechamento, ela vira 'a pagar'",
+      [f.mes for f in {c.nome: c for c in livros(
+          hoje=date(2026, 10, 1))}["Cartão Itaú"].a_pagar], ["09/2026"])
 
 section("Carteira vazia e meses sem fatura")
 check("mês sem nada", total_em("07/2027"), 0.0)
@@ -539,61 +408,6 @@ check("compras sem cartão preenchido caem no padrão",
       int((cc.card_series(TX.assign(**{"Cartão": None})) == "Principal").sum()),
       len(TX))
 
-
-
-# ---------------------------------------------------------------------------
-# Fatura que o banco já recebeu não é fatura vencida
-# ---------------------------------------------------------------------------
-#
-# A planilha guarda a compra como Pendente para sempre: o pagamento da
-# fatura aparece no extrato da CONTA, não no do cartão, e nada liga os
-# dois. `settle_closed_bills` resolve isso, mas só roda na importação —
-# entre uma e outra a tela decidia pela data e chamava de "vencida"
-# fatura que o banco não cobra mais. O usuário via três, somando mais que
-# a dívida inteira que a instituição informa.
-print("  Fatura já recebida pelo banco não aparece como vencida")
-_bills = pd.DataFrame([
-    {"Cartão": "Principal", "Mês": "06/2026", "Total": 2678.77,
-     "Fechamento": "2026-06-08", "Vencimento": "2026-06-15",
-     "Situação": "CLOSED", "Lido em": "2026-09-30"},
-    {"Cartão": "Principal", "Mês": "07/2026", "Total": 3371.12,
-     "Fechamento": "2026-07-08", "Vencimento": "2026-07-15",
-     "Situação": "CLOSED", "Lido em": "2026-09-30"},
-    {"Cartão": "Principal", "Mês": "10/2026", "Total": 1539.14,
-     "Fechamento": "2026-10-08", "Vencimento": "2026-10-15",
-     "Situação": "OPEN", "Lido em": "2026-09-30"},
-])
-_hoje = date(2026, 9, 30)
-_liq = cc.settled_by_bank(_bills, today=_hoje)
-check("as duas vencidas entram, a que ainda vai vencer não",
-      _liq, {("Principal", "06/2026"), ("Principal", "07/2026")})
-
-_agendadas = [
-    cc.ScheduledInvoice(
-        card="Principal", month="06/2026", total=2678.77, settled=0.0,
-        advances=0.0, balance=2678.77, closed=True,
-        closing=pd.Timestamp("2026-06-08"), due=pd.Timestamp("2026-06-15"),
-        overdue=True, estimated=False),
-    cc.ScheduledInvoice(
-        card="Principal", month="10/2026", total=1539.14, settled=0.0,
-        advances=0.0, balance=1539.14, closed=False,
-        closing=pd.Timestamp("2026-10-08"), due=pd.Timestamp("2026-10-15"),
-        overdue=False, estimated=False),
-]
-_sem = cc.situations(_agendadas, _hoje)
-check("sem o aviso do banco, a de junho é dada como vencida",
-      _sem[("Principal", "06/2026")], "Vencida")
-_com = cc.situations(_agendadas, _hoje, _liq)
-check("com o aviso, ela é paga", _com[("Principal", "06/2026")], "Paga")
-check("e a que ainda não venceu segue atual",
-      _com[("Principal", "10/2026")], "Atual")
-
-check("sem faturas do banco, nada é dado por pago",
-      cc.settled_by_bank(pd.DataFrame(), today=_hoje), set())
-check("vencimento ilegível não liquida nada",
-      cc.settled_by_bank(pd.DataFrame([
-          {"Cartão": "P", "Mês": "06/2026", "Vencimento": "sem data"}]),
-          today=_hoje), set())
 
 print()
 for _linha in _fail:

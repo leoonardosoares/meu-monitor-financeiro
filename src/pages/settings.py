@@ -7,11 +7,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 
-from src import (
-    components, pluggy, positions, reconcile, repository, reset,
-)
+from src import components, pluggy, repository, reset
 from src.config import ConfigKeys
-from src.finance import compute_wealth
 from src.format import brl, md
 from src.sidebar import ALL_MONTHS
 
@@ -29,7 +26,7 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
     )
 
     tabs = st.tabs(["Categorias", "Orçamento", "Custos Fixos", "Open Finance",
-                    "Conciliar", "Recomeçar"])
+                    "Recomeçar"])
 
     with tabs[0]:
         _categories_tab(df_categories)
@@ -45,84 +42,9 @@ def render(*, df_categories: pd.DataFrame, df_budgets: pd.DataFrame,
     with tabs[3]:
         _open_finance_tab()
     with tabs[4]:
-        _conciliar_tab()
-    with tabs[5]:
         _reset_tab(df_transactions_period)
 
 
-def _conciliar_tab() -> None:
-    """Fecha a diferença que sobra depois de tirar as duplicatas.
-
-    Vem depois da limpeza de propósito. Ajustar por cima de linha
-    repetida esconde o defeito: o total fica certo e a fatura continua
-    mostrando a mesma compra duas vezes.
-    """
-    components.section("Conciliar com o banco")
-
-    guardada = positions.from_rows(repository.load_positions())
-    if guardada.vazia:
-        st.info(
-            "Preciso da posição real primeiro. Vá ao **Dashboard** e "
-            "clique em **Atualizar**."
-        )
-        return
-
-    df_tx = repository.load_transactions().drop(
-        columns=["Data_DT", "Mes_Ano"], errors="ignore")
-    atual = compute_wealth(df_tx, df_tx)
-
-    st.caption(
-        "Compara o que a planilha soma com o que as instituições "
-        "reportam e cria um lançamento para cada diferença. O ajuste "
-        "entra numa categoria neutra — não vira receita nem despesa."
-    )
-
-    linhas = [
-        {"O quê": "Saldo em conta", "Banco diz": guardada.em_conta,
-         "Planilha soma": atual.bank_balance,
-         "Diferença": guardada.em_conta - atual.bank_balance},
-        {"O quê": "Investido", "Banco diz": guardada.investido,
-         "Planilha soma": atual.invested,
-         "Diferença": guardada.investido - atual.invested},
-    ]
-    components.table(pd.DataFrame([
-        {k: (brl(v) if isinstance(v, float) else v) for k, v in linha.items()}
-        for linha in linhas
-    ]))
-
-    ajustes = reconcile.adjustments(
-        saldo_real=guardada.em_conta, saldo_planilha=atual.bank_balance,
-        investido_real=guardada.investido, investido_planilha=atual.invested,
-        quando=date.today(),
-    )
-    if not ajustes:
-        st.success("Já bate com o banco. Nada a conciliar.")
-        return
-
-    if any(abs(linha["Diferença"]) > 1000 for linha in linhas):
-        st.warning(md(
-            "⚠️ Diferença grande. Antes de ajustar, confira se não há "
-            "**lançamento repetido** — ajuste por cima de duplicata "
-            "deixa o total certo e o extrato errado. A aba Cartão de "
-            "Crédito tem um removedor de duplicatas."
-        ))
-
-    st.markdown("**Lançamentos que serão criados**")
-    components.table(pd.DataFrame([{
-        "Data": a.data.strftime("%d/%m/%Y"), "Descrição": a.descricao,
-        "Categoria": a.categoria, "Tipo": a.tipo, "Valor": brl(a.valor),
-        "Por quê": a.motivo,
-    } for a in ajustes]))
-
-    if st.button("✅ Lançar conciliação", type="primary"):
-        repository.save_transactions(pd.concat(
-            [df_tx, pd.DataFrame([a.to_row() for a in ajustes])],
-            ignore_index=True))
-        st.success(
-            f"{len(ajustes)} lançamento(s) criado(s). A planilha passa a "
-            "reproduzir o banco."
-        )
-        st.rerun()
 
 
 def _reset_tab(_df_period) -> None:
@@ -165,9 +87,10 @@ def _reset_tab(_df_period) -> None:
 
     corte = reset.cutoff(date.today())
     st.info(
-        f"Depois disso a importação passa a buscar desde **{corte:%d/%m/%Y}** "
-        "e o registro de importação é zerado, para o mês inteiro poder "
-        "voltar pelo Open Finance."
+        f"Depois disso a sincronização passa a trazer desde "
+        f"**{corte:%d/%m/%Y}** e o registro de importação é zerado, para o "
+        "mês inteiro voltar pelo Open Finance — já com as faturas no mês "
+        "em que o banco as cobrou."
     )
     st.warning(
         "Os seus **cartões cadastrados, categorias, orçamentos, custos "
@@ -200,10 +123,12 @@ def _reset_tab(_df_period) -> None:
         repository.save_imports(df_imp.iloc[0:0])
         repository.save_config_text(ConfigKeys.PLUGGY_DESDE, corte.isoformat())
         repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, "")
-
+        # A sincronização automática roda uma vez por sessão; sem limpar
+        # a marca, o app ficaria vazio até o próximo login.
+        st.session_state["sync_tentado"] = False
         st.success(
-            "Pronto. Vá em **Importar do banco** e busque os lançamentos "
-            f"desde {corte:%d/%m/%Y}."
+            f"Pronto. A sincronização roda agora e traz tudo desde "
+            f"{corte:%d/%m/%Y}."
         )
         st.rerun()
 

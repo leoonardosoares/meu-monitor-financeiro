@@ -163,12 +163,16 @@ p, _ = montar(
     [(CONTA_BANCO, pi.DESTINO_BANCO), (CONTA_CARTAO, "Principal")],
     {"acc-banco": [tx("b1", "2026-09-10", "Salário", 5000.0, "CREDIT")],
      "acc-cartao": [tx("c1", "2026-09-05", "Padaria", -20.0, "DEBIT")]})
+from src.config import SHEETS_SCHEMA as _ESQ  # noqa: E402
+_ESQUEMA_FIN = _ESQ["financeiro"]
 banco, cartao, registro = pi.to_rows(p)
 check("uma linha de banco", len(banco), 1)
 check("uma de cartão", len(cartao), 1)
 check("e duas no registro de importação", len(registro), 2)
-check("colunas do banco", sorted(banco[0]),
-      ["Categoria", "Data", "Descrição", "Tipo", "Valor"])
+# As colunas da linha de conta são as da aba: a gravação automática
+# depende do id para a caixa de categorização saber o que chegou agora.
+check("colunas do banco batem com a aba", sorted(banco[0]),
+      sorted(_ESQUEMA_FIN))
 from src.config import SHEETS_SCHEMA as _ESQUEMA  # noqa: E402
 check("colunas do cartão batem com a aba", sorted(cartao[0]),
       sorted(_ESQUEMA["cartao"]))
@@ -281,6 +285,23 @@ check("os créditos são reportados",
       sum("crédito(s) em fatura" in a for a in avisos), 1)
 check("o aviso explica o abatimento",
       any("abatem a fatura" in a for a in avisos), True)
+# O pagamento é quitação; o estorno é devolução de compra. Na mesma
+# categoria comum, o pagamento abatia um gasto que nunca foi devolvido.
+check("o pagamento é categorizado como quitação",
+      next(x.categoria for x in p if x.descricao == "Pagamento recebido"),
+      "Cartão de Crédito")
+check("o estorno não",
+      next(x.categoria for x in p
+           if x.descricao == "Crédito de parcelamento") != "Cartão de Crédito",
+      True)
+
+print("  Na conta, 'pagamento recebido' não vira quitação de cartão")
+p, _ = montar(
+    [(CONTA_BANCO, pi.DESTINO_BANCO)],
+    {"acc-banco": [tx("k9", "2026-09-05", "Pagamento recebido", 300.0,
+                      "CREDIT")]})
+check("dinheiro de outra pessoa continua receita",
+      p[0].categoria != "Cartão de Crédito", True)
 
 print("  No banco, crédito continua sendo receita")
 p, avisos = montar(

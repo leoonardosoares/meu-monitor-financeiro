@@ -36,6 +36,30 @@ class Conta:
     # cadastrado aqui, já que o mapa de destinos é guardado por id — o
     # nome muda de "platinum" para outra coisa sem aviso.
     chave: str = ""
+    # Só para cartão, e só quando a instituição informa (`creditData`).
+    # São as respostas que o app antes deduzia: o limite e o disponível
+    # vêm prontos, e as datas são as da fatura que está aberta AGORA — o
+    # fechamento real deste ciclo, inclusive quando feriado ou fim de
+    # semana o empurra para fora do dia cadastrado.
+    limite: float | None = None
+    disponivel: float | None = None
+    fecha: str = ""               # ISO, fechamento da fatura aberta
+    vence: str = ""               # ISO, vencimento da fatura aberta
+
+    @property
+    def usado(self) -> float | None:
+        """Limite usado segundo o banco: tudo que está comprometido.
+
+        Inclui as parcelas futuras — comprar em 10x tira o valor inteiro
+        do limite de uma vez. É por isso que serve de conferência para a
+        soma das faturas em aberto mais as parcelas que ainda vão vir.
+        Só existe quando o banco informa limite e disponível; o `saldo`
+        sozinho não é usado aqui porque cada instituição o preenche com
+        um conceito diferente.
+        """
+        if self.limite is None or self.disponivel is None:
+            return None
+        return max(self.limite - self.disponivel, 0.0)
 
 
 @dataclass(frozen=True)
@@ -96,6 +120,41 @@ def _valor_do_ativo(bruto: dict) -> float:
     return 0.0
 
 
+def _opcional(valor) -> float | None:
+    n = pd.to_numeric(valor, errors="coerce")
+    return None if pd.isna(n) else float(n)
+
+
+def _data_iso(valor) -> str:
+    """Data da API em "AAAA-MM-DD", ou vazio se não houver."""
+    if not valor:
+        return ""
+    lida = pd.to_datetime(str(valor), errors="coerce", utc=True)
+    return "" if pd.isna(lida) else lida.date().isoformat()
+
+
+def account_from_api(bruto: dict, *, instituicao: str) -> Conta:
+    """Uma conta da Pluggy, com os dados de crédito quando houver.
+
+    `creditData` traz `creditLimit`, `availableCreditLimit`,
+    `balanceCloseDate` e `balanceDueDate`. Antes eram descartados, e o
+    app deduzia limite, disponível e datas a partir do cadastro manual —
+    três números que o banco já entregava prontos.
+    """
+    credito = bruto.get("creditData") or {}
+    return Conta(
+        nome=str(bruto.get("name") or "conta"),
+        tipo=str(bruto.get("type") or "").upper(),
+        saldo=_num(bruto.get("balance")),
+        instituicao=instituicao,
+        chave=str(bruto.get("id") or "").strip(),
+        limite=_opcional(credito.get("creditLimit")),
+        disponivel=_opcional(credito.get("availableCreditLimit")),
+        fecha=_data_iso(credito.get("balanceCloseDate")),
+        vence=_data_iso(credito.get("balanceDueDate")),
+    )
+
+
 def fetch(item_ids: list[str]) -> Posicao:
     """Lê contas e investimentos de todas as conexões.
 
@@ -118,13 +177,7 @@ def fetch(item_ids: list[str]) -> Posicao:
 
         try:
             for bruto in pluggy.list_accounts(item_id):
-                contas.append(Conta(
-                    nome=str(bruto.get("name") or "conta"),
-                    tipo=str(bruto.get("type") or "").upper(),
-                    saldo=_num(bruto.get("balance")),
-                    instituicao=rotulo,
-                    chave=str(bruto.get("id") or "").strip(),
-                ))
+                contas.append(account_from_api(bruto, instituicao=rotulo))
         except pluggy.PluggyError as exc:
             erros.append(f"{rotulo} (contas): {exc}")
 
@@ -154,26 +207,46 @@ def fetch(item_ids: list[str]) -> Posicao:
 # a API, e a série histórica permite ver o patrimônio crescer — algo que
 # a leitura ao vivo, sozinha, nunca daria.
 
-COLUNAS = ["Data", "Origem", "Nome", "Classe", "Valor", "Chave"]
+COLUNAS = ["Data", "Origem", "Nome", "Classe", "Valor", "Chave",
+           "Limite", "Disponível", "Fechamento", "Vencimento"]
 
 
-def card_balances(posicao: Posicao, mapa: dict[str, str]) -> dict[str, float]:
-    """{cartão cadastrado: dívida informada pela instituição}.
+def carry_forward(nova: Posicao, anterior: Posicao) -> Posicao:
+    """Completa um retrato parcial com o que o anterior tinha.
 
-    Casa pelo id da conta na Pluggy, que é o que o mapa de destinos
-    guarda. Casar por nome quebraria no dia em que o banco renomeasse
-    "platinum" — e quebraria em silêncio, mostrando dívida zero.
-
-    Dois cartões da Pluggy apontando para o mesmo cartão aqui somam,
-    que é o certo quando alguém tem cartão adicional.
+    Contas que não vieram (a conexão delas falhou) são copiadas do
+    retrato anterior pela chave; investimentos, pela instituição que não
+    respondeu nada desta vez.
     """
-    out: dict[str, float] = {}
+    chaves = {c.chave for c in nova.contas if c.chave}
+    contas = list(nova.contas) + [c for c in anterior.contas
+                                  if c.chave and c.chave not in chaves]
+    com_ativos = {a.instituicao for a in nova.ativos}
+    ativos = list(nova.ativos) + [a for a in anterior.ativos
+                                  if a.instituicao not in com_ativos
+                                  and a.instituicao not in
+                                  {c.instituicao for c in nova.contas}]
+    return Posicao(contas=contas, ativos=ativos, erros=nova.erros,
+                   quando=nova.quando)
+
+
+def card_accounts(posicao: Posicao, mapa: dict[str, str]) -> dict[str, Conta]:
+    """{cartão cadastrado: conta da Pluggy}, com os dados de crédito.
+
+    Quando duas contas apontam para o mesmo cartão (adicional), fica a
+    primeira com dados de crédito: limite e disponível são do cartão, não
+    somam entre titular e adicional.
+    """
+    out: dict[str, Conta] = {}
     for conta in posicao.contas:
         if conta.tipo != TIPO_CARTAO:
             continue
         destino = (mapa or {}).get(conta.chave)
-        if destino:
-            out[destino] = out.get(destino, 0.0) + abs(conta.saldo)
+        if not destino:
+            continue
+        if destino not in out or (out[destino].limite is None
+                                  and conta.limite is not None):
+            out[destino] = conta
     return out
 
 
@@ -182,11 +255,15 @@ def to_rows(posicao: Posicao) -> list[dict]:
     linhas = [{
         "Data": quando, "Origem": c.instituicao, "Nome": c.nome,
         "Classe": c.tipo, "Valor": c.saldo, "Chave": c.chave,
+        "Limite": "" if c.limite is None else c.limite,
+        "Disponível": "" if c.disponivel is None else c.disponivel,
+        "Fechamento": c.fecha, "Vencimento": c.vence,
     } for c in posicao.contas]
     linhas += [{
         "Data": quando, "Origem": a.instituicao, "Nome": a.nome,
         "Classe": a.classe or "INVESTIMENTO", "Valor": a.valor,
-        "Chave": "",
+        "Chave": "", "Limite": "", "Disponível": "", "Fechamento": "",
+        "Vencimento": "",
     } for a in posicao.ativos]
     return linhas
 
@@ -205,8 +282,14 @@ def from_rows(df: pd.DataFrame) -> Posicao:
         nome = str(linha.get("Nome") or "")
         origem = str(linha.get("Origem") or "")
         if classe in (TIPO_BANCO, TIPO_CARTAO):
-            contas.append(Conta(nome, classe, valor, origem,
-                                str(linha.get("Chave") or "").strip()))
+            contas.append(Conta(
+                nome, classe, valor, origem,
+                str(linha.get("Chave") or "").strip(),
+                limite=_opcional(linha.get("Limite")),
+                disponivel=_opcional(linha.get("Disponível")),
+                fecha=_data_iso(linha.get("Fechamento")),
+                vence=_data_iso(linha.get("Vencimento")),
+            ))
         else:
             ativos.append(Ativo(nome, classe, valor, origem))
     return Posicao(contas=contas, ativos=ativos, quando=str(ultima))

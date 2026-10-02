@@ -33,7 +33,7 @@ def render(*, df_transactions: pd.DataFrame, categories: list[str]) -> None:
         st.caption(
             "Dinheiro vivo, empréstimo a um amigo, conta de um banco que "
             "você não conectou. O que passa pelas contas conectadas chega "
-            "sozinho pela aba **Importar do banco** — não lance aqui, ou "
+            "sozinho pela aba **Sincronização** — não lance aqui, ou "
             "vai ficar duplicado."
         )
         _new_transaction_form(df_transactions, categories)
@@ -43,7 +43,7 @@ def _summary(df: pd.DataFrame) -> None:
     """Três números do que está na tela, para dar escala ao histórico."""
     if df.empty:
         st.info(
-            "Nenhum lançamento ainda. Vá em **Importar do banco** para "
+            "Nenhum lançamento ainda. Vá em **Sincronização** para "
             "trazer os seus."
         )
         return

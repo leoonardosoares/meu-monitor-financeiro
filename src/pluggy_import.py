@@ -20,6 +20,8 @@ import pandas as pd
 
 from src import credit_card as cc
 from src.config import CATEGORIA_TRANSFERENCIA, ORIGEM_BANCO
+
+CATEGORIA_CARTAO = "Cartão de Crédito"
 from src.dates import month_label, parse_dates
 
 # Onde cada conta da Pluggy pode desaguar.
@@ -33,7 +35,7 @@ DESTINO_BANCO = "Entradas e Saídas"
 # — basta classificar assim na entrada. Aporte de investimento segue a
 # mesma lógica: é transferência entre contas do mesmo dono.
 _TRANSFERENCIAS = (
-    ("Cartão de Crédito", re.compile(
+    (CATEGORIA_CARTAO, re.compile(
         r"pagamento.*(fatura|cartao)|fatura.*(cartao|paga)|"
         r"pgto.*(fatura|cartao)|credit.?card.?payment")),
     ("Investimento", re.compile(
@@ -45,6 +47,21 @@ _TRANSFERENCIAS = (
 def _sem_acento(texto: str) -> str:
     return unicodedata.normalize("NFKD", str(texto)) \
         .encode("ascii", "ignore").decode().lower()
+
+
+# Do lado do CARTÃO, o crédito "Pagamento recebido" (ou antecipado,
+# efetuado) é a quitação chegando — não um estorno de compra. Sem esta
+# regra ele caía numa categoria comum e abatia um gasto que não foi
+# devolvido. Só vale para o cartão: na conta corrente, "pagamento
+# recebido" pode ser dinheiro de outra pessoa, receita de verdade.
+_QUITACAO_NO_CARTAO = re.compile(
+    r"pagamento\s+(recebido|efetuado|antecipado|da fatura)|"
+    r"pagto\s+(recebido|efetuado)|pagamento\s*$")
+
+
+def card_payment_credit(descricao: str) -> bool:
+    """O crédito na fatura é o pagamento dela?"""
+    return bool(_QUITACAO_NO_CARTAO.search(_sem_acento(descricao)))
 
 
 # Juros, rendimento e dividendo não são transferência: é patrimônio que
@@ -421,9 +438,13 @@ def build_pending(*, accounts: list[tuple[dict, str]],
             # A transferência tem prioridade sobre o histórico: acertar
             # que é quitação de fatura importa mais do que repetir a
             # categoria que o usuário deu a um gasto parecido.
-            categoria = (transfer_category(descricao, cat_pluggy)
-                         or (sugerir(descricao) if sugerir else None)
-                         or "Outros")
+            if e_cartao and tipo == "Entrada" and \
+                    card_payment_credit(descricao):
+                categoria = CATEGORIA_CARTAO
+            else:
+                categoria = (transfer_category(descricao, cat_pluggy)
+                             or (sugerir(descricao) if sugerir else None)
+                             or "Outros")
 
             vistos.add(pid)
             pendentes.append(Pendente(
@@ -545,6 +566,10 @@ def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dic
                 "Categoria": p.categoria,
                 "Valor": p.valor,
                 "Tipo": p.tipo,
+                # Com a gravação automática, categorizar acontece depois
+                # de gravar. O id é o que liga a linha ao registro de
+                # importação e diz "isto chegou na última sincronização".
+                "ID Pluggy": p.pluggy_id,
             })
         registro.append({
             "ID Pluggy": p.pluggy_id,
