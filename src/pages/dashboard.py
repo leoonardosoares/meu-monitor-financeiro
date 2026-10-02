@@ -350,34 +350,46 @@ def _kpi_section(df_all: pd.DataFrame, df_period: pd.DataFrame,
         prev_income = None
         prev_expense = None
 
+    # Só números DO PERÍODO. Saldo e patrimônio moravam aqui também, mas
+    # somados da planilha — e a aba "Agora" mostra os mesmos dois lidos do
+    # banco. Dois "saldo bancário" diferentes no mesmo painel; o daqui
+    # saiu, e o do banco é o único.
+    entradas = wealth_current.total_income
+    saidas = wealth_current.total_expense
+    resultado = entradas - saidas
     c1, c2, c3, c4 = st.columns(4)
     components.metric_with_delta(
-        c1, label="Receitas do período",
-        value=wealth_current.total_income, previous=prev_income,
-        higher_is_better=True,
+        c1, label="Entradas do período", value=entradas,
+        previous=prev_income, higher_is_better=True,
     )
     components.metric_with_delta(
-        c2, label="Despesas do período",
-        value=wealth_current.total_expense, previous=prev_expense,
-        higher_is_better=False,
+        c2, label="Saídas do período", value=saidas,
+        previous=prev_expense, higher_is_better=False,
     )
-    c3.metric("Saldo bancário", brl(wealth_current.bank_balance))
-    c4.metric("Patrimônio total 💎", brl(wealth_current.net_worth))
+    c3.metric("Resultado", brl(resultado),
+              delta="sobrou" if resultado >= 0 else "faltou",
+              delta_color="normal" if resultado >= 0 else "inverse")
+    taxa = savings_rate(entradas, saidas)
+    c4.metric("Taxa de poupança", f"{taxa:.0f}%",
+              delta="ideal ≥ 20%" if taxa >= 20 else "abaixo do ideal",
+              delta_color="normal" if taxa >= 20 else "inverse")
 
 
 def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
-    # compute_wealth já exclui transferências (aportes/saques de
-    # investimento) de total_income/total_expense — reusar aqui garante
-    # que todos os KPIs do dashboard contem a mesma história.
-    wealth_period = compute_wealth(df_all, df_period)
-    income = wealth_period.total_income
-    expense = wealth_period.total_expense
-    rate = savings_rate(income, expense)
+    """Quanto tempo a reserva cobre e quanto da renda está comprometida.
 
+    Taxa de poupança e resultado do período ficaram só no bloco de cima:
+    apareciam nos dois, e um leitor atento procurava a diferença entre
+    eles. A reserva usa o investido LIDO DO BANCO quando existe — a soma
+    dos aportes da planilha ignora rendimento e tudo antes da data de
+    corte.
+    """
     avg_expense = avg_monthly_expense(df_all, months=6)
-    # Reserva de emergência: aportes na meta da reserva, limitado pela meta
     reserve_goal = repository.load_config(ConfigKeys.META_RESERVA, 10000.0)
-    reserve_value = min(wealth_period.invested, reserve_goal)
+    posicao = positions.from_rows(repository.load_positions())
+    investido = (posicao.investido if not posicao.vazia
+                 else compute_wealth(df_all, df_period).invested)
+    reserve_value = min(investido, reserve_goal)
     fi_months = financial_independence_months(reserve_value, avg_expense)
 
     # Comprometimento da renda (despesas / receitas globais, sem transferências)
@@ -387,28 +399,16 @@ def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
         if wealth_global.total_income > 0 else 0.0
     )
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2 = st.columns(2)
     c1.metric(
-        "Taxa de poupança",
-        f"{rate:.0f}%",
-        delta=("Ideal ≥ 20%" if rate >= 20 else
-               ("Abaixo do ideal" if rate >= 0 else "Déficit")),
-        delta_color="normal" if rate >= 20 else "inverse",
+        "A reserva cobre",
+        f"{fi_months:.1f} meses" if avg_expense > 0 else "—",
+        delta=f"meta de reserva {brl(reserve_goal)}",
+        delta_color="off",
+        help=("Investido (lido do banco), até a meta de reserva, dividido "
+              "pela saída média dos últimos 6 meses."),
     )
     c2.metric(
-        "Independência financeira",
-        f"{fi_months:.1f} meses" if avg_expense > 0 else "—",
-        delta="Quanto sua reserva cobre",
-        delta_color="off",
-        help="Reserva atual ÷ despesa mensal média (últimos 6 meses).",
-    )
-    c3.metric(
-        "Fluxo líquido do período",
-        brl(float(income) - float(expense)),
-        delta=("Sobrou" if float(income) >= float(expense) else "Faltou"),
-        delta_color="normal" if float(income) >= float(expense) else "inverse",
-    )
-    c4.metric(
         "Comprometimento da renda",
         f"{commitment:.0f}%",
         delta="< 50% recomendado",

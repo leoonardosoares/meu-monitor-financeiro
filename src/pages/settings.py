@@ -61,10 +61,10 @@ def _conciliar_tab() -> None:
 
     guardada = positions.from_rows(repository.load_positions())
     if guardada.vazia:
-        st.info(
-            "Preciso da posição real primeiro. Vá ao **Dashboard** e "
-            "clique em **Atualizar**."
-        )
+        st.info(md(
+            "Preciso da posição real primeiro. Vá em **Sincronização** e "
+            "clique em **Sincronizar agora**."
+        ))
         return
 
     df_tx = repository.load_transactions().drop(
@@ -101,10 +101,11 @@ def _conciliar_tab() -> None:
 
     if any(abs(linha["Diferença"]) > 1000 for linha in linhas):
         st.warning(md(
-            "⚠️ Diferença grande. Antes de ajustar, confira se não há "
-            "**lançamento repetido** — ajuste por cima de duplicata "
-            "deixa o total certo e o extrato errado. A aba Cartão de "
-            "Crédito tem um removedor de duplicatas."
+            "⚠️ Diferença grande. Normalmente é o histórico anterior à "
+            "data de corte da sincronização, que nunca entrou na planilha "
+            "— e aí o ajuste é a resposta certa. Mas confira antes se não "
+            "há **lançamento repetido** em Entradas e Saídas: ajuste por "
+            "cima de duplicata deixa o total certo e o extrato errado."
         ))
 
     st.markdown("**Lançamentos que serão criados**")
@@ -165,9 +166,10 @@ def _reset_tab(_df_period) -> None:
 
     corte = reset.cutoff(date.today())
     st.info(
-        f"Depois disso a importação passa a buscar desde **{corte:%d/%m/%Y}** "
-        "e o registro de importação é zerado, para o mês inteiro poder "
-        "voltar pelo Open Finance."
+        f"Depois disso a sincronização passa a trazer desde "
+        f"**{corte:%d/%m/%Y}** e o registro de importação é zerado, para o "
+        "mês inteiro voltar pelo Open Finance — já com as faturas no mês "
+        "em que o banco as cobrou."
     )
     st.warning(
         "Os seus **cartões cadastrados, categorias, orçamentos, custos "
@@ -200,10 +202,12 @@ def _reset_tab(_df_period) -> None:
         repository.save_imports(df_imp.iloc[0:0])
         repository.save_config_text(ConfigKeys.PLUGGY_DESDE, corte.isoformat())
         repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, "")
-
+        # A sincronização automática roda uma vez por sessão; sem limpar
+        # a marca, o app ficaria vazio até o próximo login.
+        st.session_state["sync_tentado"] = False
         st.success(
-            "Pronto. Vá em **Sincronização** e busque os lançamentos "
-            f"desde {corte:%d/%m/%Y}."
+            f"Pronto. A sincronização roda agora e traz tudo desde "
+            f"{corte:%d/%m/%Y}."
         )
         st.rerun()
 
