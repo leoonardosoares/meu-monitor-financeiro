@@ -72,6 +72,10 @@ class Fatura:
     compras: pd.DataFrame            # linhas gravadas desta fatura
     projetadas: tuple[dict, ...]     # parcelas deduzidas que caem aqui
     datas_do_banco: bool             # fechamento/vencimento informados
+    # Pagamento da fatura ANTERIOR que o banco lançou neste ciclo. Ele
+    # quita o saldo anterior, não as compras deste mês — fica fora do
+    # total e aparece na tela como tal.
+    quitacoes: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def soma_compras(self) -> float:
@@ -256,28 +260,42 @@ def build_card(*, card: str, compras: pd.DataFrame, df_bills: pd.DataFrame,
     if mes_aberta_banco:
         meses.add(mes_aberta_banco)
 
+    def datas_do_mes(mes: str):
+        """(fechamento, vencimento, vieram do banco) de uma fatura."""
+        conta_banco = do_banco.get(mes)
+        if conta_banco and conta_banco["fechamento"] and conta_banco["vencimento"]:
+            return conta_banco["fechamento"], conta_banco["vencimento"], True
+        if mes == mes_aberta_banco and aberta_fecha and aberta_vence:
+            return aberta_fecha, aberta_vence, True
+        f, v = cc.invoice_dates(mes, int(settings["fechamento"]),
+                                int(settings["vencimento"]))
+        return f.date(), v.date(), False
+
+    def total_do_mes(mes: str) -> float | None:
+        """Total conhecido de uma fatura, para reconhecer o pagamento dela."""
+        if mes in do_banco:
+            return do_banco[mes]["total"]
+        if base.empty:
+            return None
+        linhas = base[base["_mes"] == mes]
+        if linhas.empty:
+            return None
+        return float(pd.to_numeric(linhas["Valor"], errors="coerce")
+                     .fillna(0).clip(lower=0).sum())
+
     faturas: list[Fatura] = []
     for mes in meses:
         conta_banco = do_banco.get(mes)
-        fech = venc = None
-        datas_banco = False
-        if conta_banco and conta_banco["fechamento"] and conta_banco["vencimento"]:
-            fech, venc = conta_banco["fechamento"], conta_banco["vencimento"]
-            datas_banco = True
-        elif mes == mes_aberta_banco and aberta_fecha and aberta_vence:
-            fech, venc = aberta_fecha, aberta_vence
-            datas_banco = True
-        else:
-            try:
-                f, v = cc.invoice_dates(mes, int(settings["fechamento"]),
-                                        int(settings["vencimento"]))
-            except ValueError:
-                ilegiveis.append(mes)
-                continue
-            fech, venc = f.date(), v.date()
+        try:
+            fech, venc, datas_banco = datas_do_mes(mes)
+        except ValueError:
+            ilegiveis.append(mes)
+            continue
 
         compras_mes = (base[base["_mes"] == mes].drop(columns=["_mes"])
                        if not base.empty else pd.DataFrame())
+        compras_mes, quitacoes = _separar_quitacao_anterior(
+            compras_mes, mes, datas_do_mes, total_do_mes)
         proj_mes = tuple(p for p in projetadas if p["Mês da Fatura"] == mes)
 
         if conta_banco is not None:
@@ -300,7 +318,7 @@ def build_card(*, card: str, compras: pd.DataFrame, df_bills: pd.DataFrame,
             cartao=card, mes=mes, fechamento=fech, vencimento=venc,
             total=round(float(total), 2), fonte=fonte, situacao="",
             compras=compras_mes, projetadas=proj_mes,
-            datas_do_banco=datas_banco,
+            datas_do_banco=datas_banco, quitacoes=quitacoes,
         ))
 
     faturas = _classificar(faturas, hoje)
@@ -315,7 +333,7 @@ def build_card(*, card: str, compras: pd.DataFrame, df_bills: pd.DataFrame,
     limite = getattr(conta, "limite", None) if conta else None
     disponivel = getattr(conta, "disponivel", None) if conta else None
     limites_do_banco = limite is not None and disponivel is not None
-    if limite is None:
+    if limite is None and _cadastrado(df_cards, card):
         limite = float(settings["limite"]) if settings["limite"] else None
     usado = conta.usado if (conta is not None and limites_do_banco) else None
     if disponivel is None and limite is not None:
@@ -330,6 +348,86 @@ def build_card(*, card: str, compras: pd.DataFrame, df_bills: pd.DataFrame,
         datas_estimadas=not cadastrado and not do_banco and not aberta_fecha,
         faturas=tuple(faturas), ilegiveis=tuple(sorted(set(ilegiveis))),
     )
+
+
+def _cadastrado(df_cards: pd.DataFrame, card: str) -> bool:
+    """O cartão existe no cadastro?
+
+    `card_settings` devolve R$ 2.000 de limite para qualquer nome, até
+    para cartão que não foi cadastrado. Usado como limite, inflava o
+    "disponível" com um número que ninguém informou.
+    """
+    if df_cards is None or df_cards.empty or "Nome" not in df_cards.columns:
+        return False
+    return bool((df_cards["Nome"].astype(str).str.strip()
+                 == str(card).strip()).any())
+
+
+def _e_pagamento(linhas: pd.DataFrame) -> pd.Series:
+    """Máscara dos créditos que são pagamento de fatura, não estorno."""
+    from src.finance import is_card_category
+    from src.pluggy_import import card_payment_credit
+    if linhas.empty:
+        return pd.Series(dtype=bool)
+    valor = pd.to_numeric(linhas["Valor"], errors="coerce").fillna(0)
+    categoria = (is_card_category(linhas["Categoria"])
+                 if "Categoria" in linhas.columns
+                 else pd.Series(False, index=linhas.index))
+    descricao = (linhas["Descrição"].map(card_payment_credit)
+                 if "Descrição" in linhas.columns
+                 else pd.Series(False, index=linhas.index))
+    return (valor < 0) & (categoria | descricao)
+
+
+# Dias depois do vencimento em que um pagamento ainda é da fatura
+# anterior: pagar no dia útil seguinte a um vencimento de fim de semana é
+# o caso comum, e atraso de poucos dias também acontece.
+FOLGA_PAGAMENTO = 5
+
+
+def _separar_quitacao_anterior(compras: pd.DataFrame, mes: str,
+                               datas_do_mes, total_do_mes
+                               ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Tira da fatura o pagamento que quitou a fatura ANTERIOR.
+
+    O banco lança o pagamento da fatura de setembro como crédito no ciclo
+    de outubro. Na fatura de outubro ele cancela o "saldo anterior" — que
+    não é importado —, então somá-lo às compras de outubro derrubava a
+    fatura pelo valor inteiro da de setembro: R$ 397,57 na tela contra
+    R$ 2.679,04 no banco.
+
+    É quitação da anterior o crédito de pagamento feito até o vencimento
+    dela (mais uma folga), ou de valor igual ao total dela. Pagamento
+    feito depois disso é antecipação DESTA fatura e continua abatendo —
+    é o caso do "pagamento antecipado" que o banco desconta do total.
+    """
+    vazio = compras.iloc[0:0] if not compras.empty else pd.DataFrame()
+    if compras.empty:
+        return compras, vazio
+    pagamentos = _e_pagamento(compras)
+    if not pagamentos.any():
+        return compras, vazio
+
+    anterior = parse_month_label(mes)
+    if anterior is None:
+        return compras, vazio
+    rotulo_ant = month_label(anterior - pd.DateOffset(months=1))
+    try:
+        _, venc_ant, _ = datas_do_mes(rotulo_ant)
+    except ValueError:
+        return compras, vazio
+    limite = pd.Timestamp(venc_ant) + pd.Timedelta(days=FOLGA_PAGAMENTO)
+    total_ant = total_do_mes(rotulo_ant)
+
+    quando = pd.to_datetime(compras["Data Compra"].astype(str).str[:10],
+                            errors="coerce")
+    valor = pd.to_numeric(compras["Valor"], errors="coerce").fillna(0).abs()
+    no_prazo = quando.notna() & (quando <= limite)
+    mesmo_valor = (pd.Series(False, index=compras.index) if total_ant is None
+                   else (valor - abs(total_ant)).abs() <= max(1.0,
+                                                              abs(total_ant) * 0.01))
+    quita = pagamentos & (no_prazo | mesmo_valor)
+    return compras[~quita], compras[quita]
 
 
 def _classificar(faturas: list[Fatura], hoje: date) -> list[Fatura]:
@@ -363,7 +461,7 @@ def _com_situacao(f: Fatura, situacao: str) -> Fatura:
         cartao=f.cartao, mes=f.mes, fechamento=f.fechamento,
         vencimento=f.vencimento, total=f.total, fonte=f.fonte,
         situacao=situacao, compras=f.compras, projetadas=f.projetadas,
-        datas_do_banco=f.datas_do_banco,
+        datas_do_banco=f.datas_do_banco, quitacoes=f.quitacoes,
     )
 
 

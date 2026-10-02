@@ -315,6 +315,13 @@ def _composicao(f: cb.Fatura, *, aberta: bool = False) -> None:
         st.caption("Nenhuma compra nesta fatura ainda.")
         return
     components.table(tabela, align_right=("Valor",))
+    if not f.quitacoes.empty:
+        pago = float(pd.to_numeric(f.quitacoes["Valor"],
+                                   errors="coerce").fillna(0).sum())
+        st.caption(md(
+            f"O pagamento de {brl(abs(pago))} feito nesta fatura quitou a "
+            "fatura anterior — no banco ele cancela o saldo anterior, então "
+            "não entra no total desta."))
     if f.projetadas:
         st.caption(
             f"{len(f.projetadas)} linha(s) marcada(s) como *parcela a cair* "

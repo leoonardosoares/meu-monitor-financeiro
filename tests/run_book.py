@@ -191,6 +191,39 @@ check("nenhuma futura vazia", [f.mes for f in it2.futuras
                                if f.total == 0 and f.compras.empty], [])
 check("a aberta é a que tem as compras", it2.atual.mes, "10/2026")
 
+print("Pagamento da fatura anterior não abate a fatura nova")
+# O banco lança o pagamento de setembro como crédito no ciclo de
+# outubro; ali ele quita o saldo anterior. Somado às compras, derrubava
+# a fatura aberta de R$ 2.679,04 para R$ 397,57.
+_pag = pd.DataFrame([
+    compra("Principal", "10/2026", "Compras", 2679.04, ident="c1",
+           data="2026-09-12"),
+    {**compra("Principal", "10/2026", "Pagamento recebido", -2281.47,
+              ident="p1", data="2026-09-15"), "Categoria": "Cartão de Crédito"},
+    {**compra("Principal", "10/2026", "Pagamento antecipado", -75.01,
+              ident="p2", data="2026-09-28"), "Categoria": "Cartão de Crédito"},
+])
+_nu = cb.build_card(card="Principal", compras=_pag, df_bills=BILLS,
+                    df_cards=CARTOES, conta=None, today=HOJE)
+check("a quitação de setembro fica fora; a antecipação abate",
+      _nu.atual.total, round(2679.04 - 75.01, 2))
+check("a quitação aparece separada", len(_nu.atual.quitacoes), 1)
+# Pagamento atrasado, mas do valor exato da anterior, também é quitação.
+_atr = _pag.copy()
+_atr.loc[1, "Data Compra"] = "2026-09-25"
+check("pagamento atrasado do valor da anterior também quita",
+      cb.build_card(card="Principal", compras=_atr, df_bills=BILLS,
+                    df_cards=CARTOES, conta=None, today=HOJE).atual.total,
+      round(2679.04 - 75.01, 2))
+check("estorno de compra continua abatendo",
+      cb.build_card(card="Principal", compras=pd.DataFrame([
+          compra("Principal", "10/2026", "Loja", 100.0, ident="a",
+                 data="2026-09-12"),
+          compra("Principal", "10/2026", "Estorno Loja", -40.0, ident="b",
+                 data="2026-09-13")]),
+          df_bills=BILLS, df_cards=CARTOES, conta=None,
+          today=HOJE).atual.total, 60.0)
+
 print("Planilha vazia")
 vazio = cb.build(compras=pd.DataFrame(), df_bills=pd.DataFrame(),
                  df_cards=CARTOES, contas={}, today=HOJE)
