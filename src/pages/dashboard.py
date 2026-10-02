@@ -220,13 +220,15 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
             ],
         )
 
-    _reconciliation(guardada, df_transactions)
 
     with st.expander("Ver conta a conta"):
         linhas = [{
             "Instituição": c.instituicao, "Conta": c.nome,
             "Tipo": "Cartão" if c.tipo == positions.TIPO_CARTAO else "Conta",
-            "Valor": brl(abs(c.saldo)),
+            # Conta no cheque especial fica negativa, como no cartão de
+            # cima; só a dívida do cartão é mostrada sem sinal.
+            "Valor": brl(abs(c.saldo) if c.tipo == positions.TIPO_CARTAO
+                         else c.saldo),
         } for c in guardada.contas]
         linhas += [{
             "Instituição": a.instituicao, "Conta": a.nome,
@@ -259,12 +261,6 @@ def _linha_de_cartao(conta, mapa: dict, livros: dict) -> dict:
             "valor": brl(abs(conta.saldo)), "divida": True}
 
 
-def _limite_total() -> float:
-    """Soma dos limites cadastrados, para a barra de uso do cartão."""
-    df = repository.load_cards()
-    if df.empty or "Limite" not in df.columns:
-        return 0.0
-    return float(pd.to_numeric(df["Limite"], errors="coerce").fillna(0).sum())
 
 
 def _quando(carimbo: str) -> str:
@@ -275,36 +271,6 @@ def _quando(carimbo: str) -> str:
         return str(carimbo) or "—"
 
 
-def _reconciliation(posicao, df_transactions: pd.DataFrame) -> None:
-    """Quanto a planilha difere do banco, e por quê.
-
-    A diferença não é defeito a esconder: ela mede exatamente o que
-    falta lançar. Mostrá-la é o que transforma "não está batendo" numa
-    pergunta com resposta.
-    """
-    derivado = compute_wealth(df_transactions, df_transactions).bank_balance
-    diferenca = posicao.em_conta - derivado
-    if abs(diferenca) < 0.01:
-        st.success("A planilha bate com o banco, ao centavo.")
-        return
-
-    with st.expander(
-        f"⚖️ A planilha difere do banco em {brl(abs(diferenca))}"
-    ):
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Banco diz", brl(posicao.em_conta))
-        c2.metric("Planilha soma", brl(derivado))
-        c3.metric("Diferença", brl(diferenca),
-                  delta="falta lançar" if diferenca > 0 else "lançado a mais",
-                  delta_color="off")
-        st.caption(
-            "A soma da planilha só igualaria o banco se ela contivesse "
-            "toda a sua história, sem falha nem repetição. Se você "
-            "importou a partir de uma data, o que veio antes está fora "
-            "— e a diferença é justamente isso. **Os números acima, do "
-            "banco, são os corretos**; a planilha serve para explicar "
-            "para onde o dinheiro foi, não para dizer quanto você tem."
-        )
 
 def _spending_velocity_section(df_period: pd.DataFrame, df_budgets: pd.DataFrame) -> None:
     velocity = spending_velocity(df_period)

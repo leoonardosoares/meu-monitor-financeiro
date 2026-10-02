@@ -73,10 +73,30 @@ use_theme(TEMA_PADRAO)
 # ---------------------------------------------------------------------------
 
 def _classe(valor: float, *, divida: bool) -> str:
-    """Verde para o que é seu, vermelho para o que você deve."""
+    """Verde para o que é seu, vermelho para o que você deve.
+
+    Zero não é dívida: "nada a pagar" em vermelho alarmava à toa. E um
+    valor de dívida negativo é crédito a seu favor, então fica verde.
+    """
+    if abs(valor) < 0.005:
+        return "mf-mut"
     if divida:
-        return "mf-neg"
+        return "mf-neg" if valor > 0 else "mf-pos"
     return "mf-pos" if valor >= 0 else "mf-neg"
+
+
+def _texto(valor) -> str:
+    """Texto vindo do banco ou da planilha, seguro dentro de HTML.
+
+    Escapa tudo e depois devolve o negrito e o itálico do markdown, que
+    os cabeçalhos usam: dentro de um bloco HTML o Streamlit não processa
+    markdown, e os asteriscos apareciam literais na tela.
+    """
+    import re
+    t = escape(str(valor or ""))
+    t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
+    t = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"<i>\1</i>", t)
+    return t
 
 
 def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
@@ -93,23 +113,23 @@ def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
     positivo, que é o erro mais caro que esta tela pode cometer.
     """
     classe = _classe(value, divida=divida)
-    texto = brl(abs(value)) if divida else brl(value)
+    texto = brl(abs(value)) if divida and value > 0 else brl(value)
     html = [
         '<div class="mf-card">',
-        f'<div class="mf-card__label">{label}</div>',
+        f'<div class="mf-card__label">{_texto(label)}</div>',
         f'<div class="mf-card__value {classe}">{texto}</div>',
     ]
     if bar is not None:
         pct = max(0.0, min(bar, 1.0)) * 100
         cor = Colors.EXPENSE if pct >= 80 else Colors.PRIMARY
         html.append(
-            f'<div class="mf-row__sub">{bar_label}</div>'
+            f'<div class="mf-row__sub">{_texto(bar_label)}</div>'
             f'<div class="mf-bar"><span style="width:{pct:.0f}%;'
             f'background:{cor}"></span></div>'
         )
     for linha in rows or []:
-        sub = f'<div class="mf-row__sub">{linha.get("sub", "")}</div>' \
-            if linha.get("sub") else ""
+        sub = (f'<div class="mf-row__sub">{_texto(linha.get("sub"))}</div>'
+               if linha.get("sub") else "")
         # Cada linha é colorida pelo próprio valor: herdar a cor do
         # total pintaria "Em conta R$ 222,69" de vermelho só porque o
         # patrimônio ficou negativo.
@@ -117,9 +137,9 @@ def stat_card(*, label: str, value: float, rows: list[dict] | None = None,
             linha.get("bruto", 0.0), divida=bool(linha.get("divida")))
         html.append(
             '<div class="mf-row"><div>'
-            f'<div class="mf-row__name">{linha.get("nome", "")}</div>{sub}'
+            f'<div class="mf-row__name">{_texto(linha.get("nome"))}</div>{sub}'
             f'</div><div class="mf-row__val {cor}">'
-            f'{linha.get("valor", "")}</div></div>'
+            f'{_texto(linha.get("valor"))}</div></div>'
         )
     html.append("</div>")
     st.markdown("".join(html), unsafe_allow_html=True)
@@ -178,10 +198,10 @@ def page_header(title: str, subtitle: str | None = None) -> None:
     """
     partes = [
         '<div class="mf-page">',
-        f'<div class="mf-page__title">{title}</div>',
+        f'<div class="mf-page__title">{_texto(title)}</div>',
     ]
     if subtitle:
-        partes.append(f'<div class="mf-page__sub">{subtitle}</div>')
+        partes.append(f'<div class="mf-page__sub">{_texto(subtitle)}</div>')
     partes.append("</div>")
     st.markdown("".join(partes), unsafe_allow_html=True)
 
@@ -197,10 +217,10 @@ def section(title: str, sub: str | None = None, *,
     """
     partes = ['<div class="mf-sec">']
     if eyebrow:
-        partes.append(f'<div class="mf-sec__eyebrow">{eyebrow}</div>')
-    partes.append(f'<div class="mf-sec__title">{title}</div>')
+        partes.append(f'<div class="mf-sec__eyebrow">{_texto(eyebrow)}</div>')
+    partes.append(f'<div class="mf-sec__title">{_texto(title)}</div>')
     if sub:
-        partes.append(f'<div class="mf-sec__sub">{sub}</div>')
+        partes.append(f'<div class="mf-sec__sub">{_texto(sub)}</div>')
     partes.append("</div>")
     st.markdown("".join(partes), unsafe_allow_html=True)
 
@@ -265,20 +285,23 @@ def invoice_card(*, card: str, month: str, value: str, state: str,
     etiqueta colorida, as datas embaixo do nome e o valor à direita — que
     é a ordem em que se lê.
     """
-    classe = "mf-neg" if negative else "mf-pos"
+    numero = pd.to_numeric(str(value).replace("R$", "").replace(".", "")
+                           .replace(",", ".").strip(), errors="coerce")
+    classe = ("mf-pos" if not negative or (not pd.isna(numero) and numero < 0)
+              else "mf-neg")
     html = [
         f'<div class="mf-inv" style="--accent:{accent}">',
         "<div>",
-        f'<span class="mf-tag" style="color:{accent}">{state}</span>',
-        f'<div class="mf-inv__who">{card} · {month}</div>',
+        f'<span class="mf-tag" style="color:{accent}">{_texto(state)}</span>',
+        f'<div class="mf-inv__who">{_texto(card)} · {_texto(month)}</div>',
     ]
     if dates:
-        html.append(f'<div class="mf-inv__when">{dates}</div>')
+        html.append(f'<div class="mf-inv__when">{_texto(dates)}</div>')
     html.append("</div><div>")
     html.append(f'<div class="mf-inv__val {classe}">{value}</div>')
     if source:
         html.append(f'<div class="mf-inv__src" style="text-align:right">'
-                    f'{source}</div>')
+                    f'{_texto(source)}</div>')
     html.append("</div></div>")
     st.markdown("".join(html), unsafe_allow_html=True)
 

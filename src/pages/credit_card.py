@@ -176,9 +176,10 @@ def _conferencia(livros: list[cb.CartaoLivro]) -> None:
                 f"**{livro.nome}**: o banco informa {brl(livro.usado_banco)} "
                 f"de limite em uso; as faturas em aberto e as parcelas que "
                 f"ainda vão cair somam {brl(livro.compromisso)}. Faltam "
-                f"**{brl(diff)}** — quase sempre é compra que ainda não "
-                "chegou pela sincronização, ou parcelamento antigo cujas "
-                "parcelas o banco não detalha."))
+                f"**{brl(diff)}** — compra que ainda não chegou pela "
+                "sincronização, parcelamento antigo cujas parcelas o banco "
+                "não detalha, ou uma fatura que de fato ficou sem pagar. "
+                "Confira no app do banco se há saldo de fatura anterior."))
         else:
             st.info(md(
                 f"**{livro.nome}**: as faturas em aberto e as parcelas a "
@@ -219,7 +220,10 @@ def _faturas(livros: list[cb.CartaoLivro]) -> None:
         st.write("")
         components.section(
             "Fechadas, a pagar",
-            "O banco já fechou o valor; falta o vencimento chegar.")
+            "A fatura já fechou; falta o vencimento chegar."
+            + ("" if all(f.fonte == cb.FONTE_BANCO for f in livro.a_pagar)
+               else " Onde o banco não informa o total, o valor é a soma "
+                    "das compras."))
         for f in livro.a_pagar:
             _bloco(f)
             with st.expander(f"Compras da fatura {f.mes}"):
@@ -296,8 +300,7 @@ def _linhas(faturas: list[cb.Fatura]) -> pd.DataFrame:
                     "Parcela": r.get("Parcela") or "",
                     "Categoria": r.get("Categoria") or "",
                     "Valor": brl(0.0 if pd.isna(valor) else float(valor)),
-                    "Origem": _ORIGEM.get(str(r.get("Origem") or "").strip(),
-                                          "do banco"),
+                    "Origem": _origem(r),
                 })
         for p in f.projetadas:
             linhas.append({
@@ -307,6 +310,16 @@ def _linhas(faturas: list[cb.Fatura]) -> pd.DataFrame:
                 "Valor": brl(p["Valor"]), "Origem": _ORIGEM[ORIGEM_PROJECAO],
             })
     return pd.DataFrame(linhas)
+
+
+def _origem(r) -> str:
+    """Quem trouxe a linha. Sem id do banco, ela foi digitada — mesmo
+    que a coluna Origem esteja vazia, como nas versões antigas."""
+    origem = str(r.get("Origem") or "").strip()
+    if origem in (ORIGEM_PROJECAO, ORIGEM_MANUAL):
+        return _ORIGEM[origem]
+    tem_id = str(r.get("ID Pluggy") or "").strip() not in ("", "nan")
+    return _ORIGEM[ORIGEM_BANCO] if tem_id else _ORIGEM[ORIGEM_MANUAL]
 
 
 def _composicao(f: cb.Fatura, *, aberta: bool = False) -> None:

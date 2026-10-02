@@ -138,7 +138,9 @@ def list_months(df_transactions: pd.DataFrame,
         months.update(df_credit_card["Mês da Fatura"].dropna().unique().tolist())
     months.discard("Sem Data")
     months.discard("")
-    return sorted(months, reverse=True)
+    # Por data: como texto, 12/2025 ficava acima de 10/2026.
+    return sorted(months, key=lambda m: parse_month_label(m)
+                  or pd.Timestamp.min, reverse=True)
 
 
 def filter_by_month(df_transactions: pd.DataFrame,
