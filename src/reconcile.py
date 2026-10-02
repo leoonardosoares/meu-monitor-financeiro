@@ -96,19 +96,6 @@ def duplicates(df: pd.DataFrame, chaves: list[str]) -> pd.Index:
     return pd.Index(remover)
 
 
-def duplicate_preview(df: pd.DataFrame, chaves: list[str]) -> pd.DataFrame:
-    """O que seria apagado, agrupado, para conferir antes de apagar."""
-    idx = duplicates(df, chaves)
-    if len(idx) == 0:
-        return pd.DataFrame()
-    usadas = _chaves_validas(df, chaves)
-    recorte = df.loc[idx, usadas].copy()
-    contagem = recorte.groupby(usadas, dropna=False).size()
-    fora = contagem.reset_index()
-    fora.columns = [*usadas, "Cópias a remover"]
-    return fora.sort_values("Cópias a remover", ascending=False)
-
-
 @dataclass(frozen=True)
 class Ajuste:
     """Um lançamento de conciliação, pronto para virar linha."""
@@ -241,53 +228,6 @@ def manual_future_rows(df: pd.DataFrame, *, today: date) -> pd.Index:
     return pd.Index(suspeitos)
 
 
-def parcel_gaps(df: pd.DataFrame) -> pd.DataFrame:
-    """Parcelamentos cujos meses não formam uma sequência.
-
-    A parcela 4/10 tem de cair um mês depois da 3/10. Um buraco ou uma
-    repetição aponta linha faltando ou linha inventada — e é o tipo de
-    erro que o total esconde, porque a soma continua parecendo
-    plausível.
-    """
-    vazio = pd.DataFrame(columns=["Cartão", "Descrição", "Parcelas",
-                                  "Meses", "Problema"])
-    precisa = {"Cartão", "Descrição", "Parcela", "Mês da Fatura"}
-    if df.empty or not precisa.issubset(df.columns):
-        return vazio
-
-    base = df.copy()
-    base["_n"] = base["Parcela"].map(_indice_parcela)
-    base["_total"] = base["Parcela"].map(_total_parcelas)
-    base = base[(base["_total"] > 1) & base["_n"].notna()]
-    if base.empty:
-        return vazio
-    base["_mes"] = base["Mês da Fatura"].map(parse_month_label)
-    base = base[base["_mes"].notna()]
-
-    problemas = []
-    for (cartao, desc, total), grupo in base.groupby(
-            ["Cartão", "Descrição", "_total"], dropna=False):
-        grupo = grupo.sort_values("_n")
-        esperado = None
-        falha = None
-        for _, linha in grupo.iterrows():
-            mes = linha["_mes"]
-            if esperado is None:
-                esperado = mes
-            elif mes != esperado:
-                falha = (f"parcela {int(linha['_n'])}/{int(total)} em "
-                         f"{mes:%m/%Y}, esperada em {esperado:%m/%Y}")
-                break
-            esperado = esperado + pd.DateOffset(months=1)
-        if falha:
-            problemas.append({
-                "Cartão": cartao, "Descrição": desc,
-                "Parcelas": int(total), "Meses": len(grupo),
-                "Problema": falha,
-            })
-    return pd.DataFrame(problemas) if problemas else vazio
-
-
 def _indice_parcela(valor) -> float:
     try:
         return float(str(valor).split("/")[0].strip())
@@ -418,61 +358,3 @@ def project_installments(df: pd.DataFrame, *, today: date,
     return novas
 
 
-
-def supersede_projections(df: pd.DataFrame) -> pd.Index:
-    """Projeções que o banco já substituiu por cobrança de verdade.
-
-    Uma parcela projetada não tem existência própria: ela é um palpite
-    sobre uma cobrança que ainda não chegou. Quando o banco lança a
-    parcela 5/10 daquela compra, a projeção da 5/10 tem de sair — senão a
-    fatura conta a mesma parcela duas vezes.
-
-    O comparador de duplicatas não resolve isso sozinho. Ele exige
-    coincidência em seis campos, incluindo valor e data da compra, e a
-    projeção acerta os dois só por sorte: a última parcela costuma
-    absorver o arredondamento, e aí a 10/10 real vem alguns centavos
-    diferente da projetada. Seis campos iguais viram cinco, a duplicata
-    passa e a fatura dobra.
-
-    Aqui a chave é (cartão, descrição, parcela), que é o que identifica a
-    cobrança independentemente de quanto ela veio. Nenhuma linha do banco
-    é tocada: só sai projeção, e só a que já tem substituta.
-    """
-    precisa = {"Cartão", "Descrição", "Parcela", "Origem"}
-    if df.empty or not precisa.issubset(df.columns):
-        return pd.Index([])
-
-    base = df.copy()
-    base["_cartao"] = base["Cartão"].astype(str).str.strip()
-    # Pela identidade da compra, e não pelo texto cru: a projeção nasce
-    # sem o "N/M" que o banco escreve na descrição, então comparar as
-    # duas literalmente faria a substituição nunca casar — e a parcela
-    # ficaria contada duas vezes, que é o defeito que isto evita.
-    base["_desc"] = base["Descrição"].map(purchase_identity)
-    base["_parc"] = base["Parcela"].astype(str).str.strip()
-    base["_proj"] = (base["Origem"].astype(str).str.strip().str.casefold()
-                     == ORIGEM_PROJECAO.casefold())
-
-    # Uma linha vale como cobrança do banco quando carrega identificador.
-    # Não basta "não ser projeção": o lançamento manual também não é, e
-    # ele não é prova de que a cobrança chegou.
-    if COLUNA_ID in base.columns:
-        tem_id = base[COLUNA_ID].astype(str).str.strip() != ""
-    else:
-        tem_id = pd.Series(False, index=base.index)
-
-    do_banco = set(
-        zip(base.loc[tem_id, "_cartao"], base.loc[tem_id, "_desc"],
-            base.loc[tem_id, "_parc"]))
-    if not do_banco:
-        return pd.Index([])
-
-    # A lista vira Series com o mesmo índice: o pandas 3 não combina
-    # Series com sequência solta, e alinhar pelo índice é o que garante
-    # que a máscara aponte para as linhas certas.
-    tem_substituta = pd.Series(
-        [chave in do_banco
-         for chave in zip(base["_cartao"], base["_desc"], base["_parc"])],
-        index=base.index,
-    )
-    return base.index[base["_proj"] & tem_substituta]

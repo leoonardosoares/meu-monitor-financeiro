@@ -112,25 +112,56 @@ POS_CHAVE = ps.Posicao(contas=[
     ps.Conta("Nu conta", "BANK", 222.68, "Nubank", "acc-3"),
 ])
 mapa = {"acc-1": "Principal", "acc-2": "Cartão Itaú", "acc-3": "Entradas e Saídas"}
-saldos = ps.card_balances(POS_CHAVE, mapa)
-check("dois cartões", sorted(saldos), ["Cartão Itaú", "Principal"])
-check("sinal normalizado", round(saldos["Principal"], 2), 5083.68)
-check("o outro também", round(saldos["Cartão Itaú"], 2), 1333.30)
-check("conta corrente não entra", "Entradas e Saídas" in saldos, False)
+contas = ps.card_accounts(POS_CHAVE, mapa)
+check("dois cartões", sorted(contas), ["Cartão Itaú", "Principal"])
+check("a conta certa para cada um",
+      (contas["Principal"].chave, contas["Cartão Itaú"].chave),
+      ("acc-1", "acc-2"))
+check("conta corrente não entra", "Entradas e Saídas" in contas, False)
 
-check("sem mapa, nada casa", ps.card_balances(POS_CHAVE, {}), {})
-check("mapa None", ps.card_balances(POS_CHAVE, None), {})
+check("sem mapa, nada casa", ps.card_accounts(POS_CHAVE, {}), {})
+check("mapa None", ps.card_accounts(POS_CHAVE, None), {})
 check("conta sem destino é ignorada",
-      ps.card_balances(POS_CHAVE, {"acc-9": "X"}), {})
+      ps.card_accounts(POS_CHAVE, {"acc-9": "X"}), {})
 
 # Cartão adicional: duas contas da Pluggy para o mesmo cartão daqui.
+# Limite e disponível são do cartão, não somam entre titular e
+# adicional — fica a conta que trouxe os dados de crédito.
 dois = ps.Posicao(contas=[
     ps.Conta("titular", "CREDIT", -100.0, "Nubank", "a"),
-    ps.Conta("adicional", "CREDIT", -50.0, "Nubank", "b"),
+    ps.Conta("adicional", "CREDIT", -50.0, "Nubank", "b",
+             limite=3000.0, disponivel=2850.0),
 ])
-check("somam no mesmo cartão",
-      ps.card_balances(dois, {"a": "Principal", "b": "Principal"}),
-      {"Principal": 150.0})
+check("fica a que tem dados de crédito",
+      ps.card_accounts(dois, {"a": "Principal", "b": "Principal"})
+      ["Principal"].chave, "b")
+
+print("  Dados de crédito: o que o banco informa sobre o cartão")
+_api = ps.account_from_api({
+    "id": "acc-nu", "type": "CREDIT", "name": "Nubank", "balance": 5083.68,
+    "creditData": {"creditLimit": 5150, "availableCreditLimit": 66.32,
+                   "balanceCloseDate": "2026-10-08T03:00:00.000Z",
+                   "balanceDueDate": "2026-10-15"}}, instituicao="Nubank")
+check("limite e disponível", (_api.limite, _api.disponivel), (5150.0, 66.32))
+check("limite em uso", round(_api.usado, 2), 5083.68)
+check("datas da fatura aberta", (_api.fecha, _api.vence),
+      ("2026-10-08", "2026-10-15"))
+_sem = ps.account_from_api({"id": "x", "type": "BANK", "balance": 10},
+                           instituicao="Itaú")
+check("conta sem creditData não inventa limite",
+      (_sem.limite, _sem.disponivel, _sem.usado, _sem.fecha),
+      (None, None, None, ""))
+_ida_volta = ps.from_rows(pd.DataFrame(ps.to_rows(
+    ps.Posicao(contas=[_api, _sem], quando="2026-10-02T09:00"))))
+check("os dados de crédito sobrevivem à planilha",
+      next(c for c in _ida_volta.contas if c.chave == "acc-nu").usado, 5083.68)
+check("e a conta comum continua sem eles",
+      next(c for c in _ida_volta.contas if c.chave == "x").limite, None)
+_antigo = pd.DataFrame([{"Data": "2026-09-01T10:00", "Origem": "Nubank",
+                         "Nome": "Nubank", "Classe": "CREDIT",
+                         "Valor": -100.0, "Chave": "acc-nu"}])
+check("retrato antigo, sem as colunas novas, ainda é lido",
+      ps.from_rows(_antigo).contas[0].limite, None)
 
 # A curva da carteira responde "quanto rendeu"; misturar conta
 # corrente e cartão a tornaria a curva de outra coisa.

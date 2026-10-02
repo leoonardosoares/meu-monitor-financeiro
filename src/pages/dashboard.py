@@ -6,10 +6,11 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from src import (
-    components, credit_card as cc, insights, positions, repository,
-)
+from src import card_book as cb
+from src import components, insights, positions, repository
+from src import pluggy_import as pi
 from src.config import ConfigKeys
+from src.dates import parse_month_label
 from src.finance import (
     avg_monthly_expense, budget_status, compute_wealth, expenses_by_category,
     financial_independence_months, fixed_costs_split,
@@ -17,6 +18,7 @@ from src.finance import (
     projection_target, savings_rate, spending_velocity,
 )
 from src.format import brl, md
+from src.pages import import_page
 from src.sidebar import ALL_MONTHS
 
 
@@ -153,17 +155,16 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
             "não uma soma de lançamentos.",
             eyebrow="Posição real",
         )
-    if botao.button("🔄 Atualizar", use_container_width=True):
-        nova = positions.fetch(ids)
-        for erro in nova.erros:
-            st.warning(f"⚠️ {erro}")
-        if not nova.vazia:
-            repository.append_position(positions.to_rows(nova))
-            st.rerun()
+    if botao.button("🔄 Sincronizar", use_container_width=True):
+        # A mesma sincronização da abertura do app: posição, faturas e
+        # lançamentos juntos. Ler só a posição deixava o cartão com saldo
+        # novo e faturas velhas, que era uma das formas de não bater.
+        import_page.executar(ids, df_transactions)
+        st.rerun()
 
     if guardada.vazia:
         st.info(
-            "Ainda não li a sua posição. Clique em **Atualizar** para "
+            "Ainda não li a sua posição. Clique em **Sincronizar** para "
             "buscar saldos e investimentos direto das instituições."
         )
         return
@@ -180,16 +181,19 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
                   if c.tipo == positions.TIPO_BANCO],
         )
     with dir_:
-        limite = _limite_total()
+        # O valor é o saldo devedor que o banco informa — o mesmo que
+        # entra no patrimônio ao lado. A linha de cada cartão diz qual é a
+        # próxima fatura, tirada do mesmo livro que a tela do Cartão usa:
+        # um número de dívida só, e a fatura como contexto.
+        livros = {c.nome: c for c in cb.load(
+            df_credit_card=repository.load_credit_card(),
+            df_cards=repository.load_cards())}
+        mapa = pi.parse_mapping(
+            repository.load_config_text(ConfigKeys.PLUGGY_MAPA))
         components.stat_card(
-            label="💳 Cartões de crédito", value=guardada.em_cartao,
-            divida=True,
-            bar=(guardada.em_cartao / limite) if limite else None,
-            bar_label=(
-                f"{guardada.em_cartao / limite * 100:.0f}% utilizado · "
-                f"limite {brl(limite)}" if limite else ""),
-            rows=[{"nome": c.nome, "sub": c.instituicao,
-                   "valor": brl(abs(c.saldo)), "divida": True}
+            label="💳 Cartões — saldo devedor no banco",
+            value=guardada.em_cartao, divida=True,
+            rows=[_linha_de_cartao(c, mapa, livros)
                   for c in guardada.contas
                   if c.tipo == positions.TIPO_CARTAO],
         )
@@ -243,6 +247,16 @@ def _real_position_section(df_transactions: pd.DataFrame) -> None:
             "Evolução do patrimônio",
             "Um ponto por dia em que a posição foi lida.")
         components.area_trend(historico, x="Data", y="Patrimônio")
+
+
+def _linha_de_cartao(conta, mapa: dict, livros: dict) -> dict:
+    """Uma conta de cartão do banco, com a próxima fatura do livro."""
+    livro = livros.get(mapa.get(conta.chave, ""))
+    proxima = livro.proxima_a_vencer if livro else None
+    sub = (f"próxima fatura {brl(proxima.total)} · vence "
+           f"{proxima.vencimento:%d/%m}" if proxima else conta.instituicao)
+    return {"nome": livro.nome if livro else conta.nome, "sub": sub,
+            "valor": brl(abs(conta.saldo)), "divida": True}
 
 
 def _limite_total() -> float:
@@ -402,33 +416,6 @@ def _health_section(df_all: pd.DataFrame, df_period: pd.DataFrame) -> None:
     )
 
 
-def _totais_do_banco() -> dict[tuple[str, str], float]:
-    """{(cartão, mês): total que a instituição informa para a fatura}."""
-    df = repository.load_bank_bills()
-    if df.empty or not {"Cartão", "Mês", "Total"}.issubset(df.columns):
-        return {}
-    out: dict[tuple[str, str], float] = {}
-    for _, linha in df.iterrows():
-        valor = pd.to_numeric(linha.get("Total"), errors="coerce")
-        if not pd.isna(valor):
-            out[(str(linha["Cartão"]).strip(),
-                 str(linha["Mês"]).strip())] = abs(float(valor))
-    return out
-
-
-def _valor_a_pagar(fatura, banco: dict[tuple[str, str], float]) -> float:
-    """Quanto essa fatura tira da conta.
-
-    O total do banco manda quando existe: ele conhece compras que ainda
-    não foram importadas. A soma das linhas entra só quando a fatura
-    ainda não foi emitida — parcela futura, que o banco não faturou.
-    """
-    do_banco = banco.get((fatura.card, fatura.month))
-    if do_banco is None:
-        return fatura.balance
-    return max(do_banco - fatura.advances, 0.0)
-
-
 def _projection_section(*, df_credit_card: pd.DataFrame,
                         df_card_payments: pd.DataFrame,
                         df_cards: pd.DataFrame,
@@ -445,17 +432,19 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     hoje = date.today()
     alvo, veio_do_filtro = projection_target(selected_month, today=hoje)
 
-    agendadas, ilegiveis = cc.schedule_invoices(
-        df_credit_card, df_card_payments, df_cards, today=hoje)
-    banco_totais = _totais_do_banco()
-    a_pagar = cc.invoices_due_through(agendadas, alvo)
-    faturas = sum(_valor_a_pagar(i, banco_totais) for i in a_pagar)
+    # As faturas vêm do mesmo livro da tela do Cartão: a mesma fatura tem
+    # o mesmo valor nas duas telas. Entra toda fatura não paga que vence
+    # até o último dia do mês projetado.
+    livros = cb.load(df_credit_card=df_credit_card, df_cards=df_cards,
+                     today=hoje)
+    a_pagar = cb.due_through(livros, _ultimo_dia(alvo))
+    faturas = round(sum(f.total for f in a_pagar), 2)
 
     posicao = positions.from_rows(repository.load_positions())
     saldo_hoje = posicao.em_conta
     receita = repository.load_config(ConfigKeys.RECEITA_PREVISTA, 0.0)
     fixos, fixos_cartao = fixed_costs_split(
-        df_fixed_costs, {i.card for i in a_pagar})
+        df_fixed_costs, {f.cartao for f in a_pagar})
     sobra = saldo_hoje + receita - fixos - faturas
 
     components.section(
@@ -505,18 +494,22 @@ def _projection_section(*, df_credit_card: pd.DataFrame,
     if posicao.vazia:
         st.info(md(
             "O saldo de hoje está zerado porque ainda não li as "
-            "instituições. Vá ao topo do Dashboard e clique em "
-            "**Atualizar**."
+            "instituições. Clique em **Sincronizar** na aba *Agora*."
         ))
 
-    _projection_warnings(agendadas, ilegiveis)
-    _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
-                      faturas, sobra, alvo, fixos_cartao, df_transactions)
+    _avisos_do_livro(livros)
+    _detalhe_projecao(a_pagar, saldo_hoje, receita, fixos, faturas, sobra,
+                      alvo, fixos_cartao, df_transactions)
 
 
-def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
-                      faturas, sobra, alvo, fixos_cartao,
-                      df_transactions) -> None:
+def _ultimo_dia(mes: str) -> date:
+    """Último dia do mês "MM/AAAA"."""
+    inicio = parse_month_label(mes) or pd.Timestamp(date.today()).replace(day=1)
+    return (inicio + pd.offsets.MonthEnd(0)).date()
+
+
+def _detalhe_projecao(a_pagar, saldo_hoje, receita, fixos, faturas, sobra,
+                      alvo, fixos_cartao, df_transactions) -> None:
     """A conta aberta, linha a linha, para poder ser conferida."""
     with st.expander("Como cheguei nesse número"):
         components.table(pd.DataFrame([
@@ -530,18 +523,18 @@ def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
         if a_pagar:
             st.markdown("**As faturas que entram na conta**")
             components.table(pd.DataFrame([{
-                "Cartão": i.card, "Fatura": i.month,
-                "Vence": f"{i.due:%d/%m/%Y}",
-                "Valor": brl(_valor_a_pagar(i, banco_totais)),
-                "Fonte": ("banco"
-                          if (i.card, i.month) in banco_totais
-                          else "soma das linhas"),
-                "Situação": "vencida" if i.overdue else "a vencer",
-            } for i in a_pagar]))
+                "Cartão": f.cartao, "Fatura": f.mes,
+                "Vence": f"{f.vencimento:%d/%m/%Y}",
+                "Situação": f.situacao,
+                "Valor": brl(f.total),
+                "Valor de": ("banco" if f.fonte == cb.FONTE_BANCO
+                             else "soma das compras"),
+            } for f in a_pagar]), align_right=("Valor",))
             st.caption(
-                "Entra tudo que sai da conta daqui até o fim do mês: o "
-                "que venceu e não foi pago, o que ainda vence neste mês "
-                "e o do mês projetado."
+                "Entra toda fatura não paga que vence até o fim do mês "
+                "projetado: as fechadas, a aberta e as próximas. Uma "
+                "fatura futura só tem as parcelas já contratadas — o que "
+                "você ainda vai comprar não está nela."
             )
 
         if fixos_cartao > 0:
@@ -561,34 +554,16 @@ def _detalhe_projecao(a_pagar, banco_totais, saldo_hoje, receita, fixos,
             ))
 
 
-def _projection_warnings(agendadas: list, ilegiveis: list[str]) -> None:
-    atrasadas = cc.overdue_invoices(agendadas)
-    if atrasadas:
-        linhas = " · ".join(
-            f"{i.card} {i.month} ({brl(i.balance)}, venceu {i.due:%d/%m})"
-            for i in atrasadas
-        )
-        st.warning(md(
-            f"⚠️ **{brl(sum(i.balance for i in atrasadas))} em fatura "
-            f"vencida e não paga** — {linhas}. Já está incluída nas "
-            "faturas a pagar acima, porque esse dinheiro sai da conta de "
-            "qualquer forma. Dê baixa na aba Cartão de Crédito."
-        ))
-
-    estimados = sorted({i.card for i in agendadas if i.estimated})
-    if estimados:
-        st.warning(
-            "⚠️ Sem dia de fechamento e vencimento cadastrados em **"
-            + "**, **".join(estimados)
-            + "**, o app chuta fecha dia 8 / vence dia 15 — o que pode jogar "
-            "a fatura para o mês errado. Cadastre em Cartão de Crédito → "
-            "Meus cartões."
-        )
-
-    if ilegiveis:
-        st.warning(
-            f"⚠️ {len(ilegiveis)} fatura(s) com mês ilegível ficaram de fora "
-            f"da conta: {', '.join(ilegiveis)}. Corrija o campo "
-            "**Mês da Fatura** no extrato — o formato é MM/AAAA."
-        )
-
+def _avisos_do_livro(livros) -> None:
+    """O que pode deixar a projeção incompleta, dito uma vez."""
+    for livro in livros:
+        if livro.ilegiveis:
+            st.warning(md(
+                f"⚠️ **{livro.nome}**: compras com mês de fatura ilegível "
+                "ficaram de fora da conta. Corrija em Cartão de Crédito → "
+                "Compras."))
+        if livro.datas_estimadas:
+            st.warning(md(
+                f"⚠️ **{livro.nome}** não tem datas do banco nem do "
+                "cadastro: o app supõe fecha dia 8, vence dia 15. Cadastre "
+                "em Cartão de Crédito → Cartões."))

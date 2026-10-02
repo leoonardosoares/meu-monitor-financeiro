@@ -202,7 +202,7 @@ def _reset_tab(_df_period) -> None:
         repository.save_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC, "")
 
         st.success(
-            "Pronto. Vá em **Importar do banco** e busque os lançamentos "
+            "Pronto. Vá em **Sincronização** e busque os lançamentos "
             f"desde {corte:%d/%m/%Y}."
         )
         st.rerun()

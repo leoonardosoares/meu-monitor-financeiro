@@ -13,7 +13,8 @@ GOOGLE_SCOPES = [
 
 # Estrutura das abas da planilha (nome -> colunas obrigatórias).
 SHEETS_SCHEMA: dict[str, list[str]] = {
-    "financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo"],
+    "financeiro": ["Data", "Descrição", "Categoria", "Valor", "Tipo",
+                   "ID Pluggy"],
     "cartao": [
         "Data Compra", "Mês da Fatura", "Cartão", "Descrição", "Categoria",
         "Parcela", "Valor", "Status", "ID Pluggy", "Origem",
@@ -53,7 +54,8 @@ SHEETS_SCHEMA: dict[str, list[str]] = {
     # Retratos da posição real lida das instituições. É o que faz o app
     # mostrar o saldo do banco em vez de uma soma de lançamentos.
     "posicao_real": ["Data", "Origem", "Nome", "Classe", "Valor",
-                     "Chave"],
+                     "Chave", "Limite", "Disponível", "Fechamento",
+                     "Vencimento"],
     # Faturas como o banco as reporta. Existe para o app mostrar o
     # total que a instituição informa, em vez de somar as linhas que
     # tem — que só coincidem se nenhuma compra faltar.

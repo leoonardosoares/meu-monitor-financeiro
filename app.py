@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src import auth, components, repository, sidebar, styles
+from src import auth, components, pluggy, repository, sidebar, styles, sync
 from src.config import (
     APP_ICON, APP_TITLE, ConfigKeys, SYSTEM_CATEGORIES, TEMA_PADRAO,
 )
@@ -36,6 +36,27 @@ def _bootstrap_categories() -> list[str]:
     return user_categories + [
         c for c in SYSTEM_CATEGORIES if c not in user_categories
     ]
+
+
+def _sincronizar_se_preciso() -> None:
+    """Sincroniza ao abrir o app, uma vez por sessão, se estiver velho.
+
+    Uma vez por sessão porque o Streamlit reexecuta o script inteiro a
+    cada clique; sem a marca, cada interação viraria uma ida aos bancos.
+    """
+    if st.session_state.get("sync_tentado") or not pluggy.is_configured():
+        return
+    st.session_state["sync_tentado"] = True
+    ids = import_page.item_ids()
+    carimbo = repository.load_config_text(ConfigKeys.PLUGGY_ULTIMA_SYNC)
+    if not ids or not sync.stale(carimbo, hours=6):
+        return
+    import_page.executar(ids, repository.load_transactions())
+    res = st.session_state.get("sync_resultado")
+    if isinstance(res, str):
+        st.toast(f"⚠️ Não consegui sincronizar: {res}")
+    elif res is not None:
+        st.toast(f"🔄 {res.resumo()}")
 
 
 def main() -> None:
@@ -59,6 +80,11 @@ def main() -> None:
 
     st.title(f"{APP_ICON} {APP_TITLE}")
     st.caption("Controle financeiro pessoal — dados sincronizados no Google Sheets.")
+
+    # Antes de qualquer tela ler a planilha: se a última sincronização
+    # passou de 6 horas, ela roda agora. Depois disso, o que cada página
+    # lê já é o que o banco diz — sem botão para lembrar de clicar.
+    _sincronizar_se_preciso()
 
     # Sempre carregados: o filtro de mês da sidebar depende dos dois.
     df_transactions = repository.load_transactions()
@@ -99,7 +125,7 @@ def main() -> None:
         )
     elif page == PAGES[3]:  # Investimentos
         investments.render(df_transactions=df_transactions)
-    elif page == PAGES[4]:  # Importar do banco
+    elif page == PAGES[4]:  # Sincronização
         import_page.render(
             df_transactions=df_transactions,
             df_credit_card=df_credit_card,

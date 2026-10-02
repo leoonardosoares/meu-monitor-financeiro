@@ -545,6 +545,10 @@ def to_rows(pendentes: list[Pendente]) -> tuple[list[dict], list[dict], list[dic
                 "Categoria": p.categoria,
                 "Valor": p.valor,
                 "Tipo": p.tipo,
+                # Com a gravação automática, categorizar acontece depois
+                # de gravar. O id é o que liga a linha ao registro de
+                # importação e diz "isto chegou na última sincronização".
+                "ID Pluggy": p.pluggy_id,
             })
         registro.append({
             "ID Pluggy": p.pluggy_id,

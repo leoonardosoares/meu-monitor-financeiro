@@ -17,7 +17,7 @@ PAGES = [
     "Entradas e Saídas",
     "Cartão de Crédito",
     "Investimentos",
-    "Importar do banco",
+    "Sincronização",
     "Configurações e Orçamento",
 ]
 
