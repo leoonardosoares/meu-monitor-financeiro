@@ -157,6 +157,31 @@ _r3 = sync.Resultado(retidos=[1, 2, 3])
 check("lote retido é avisado", "aguardando confirmação" in _r3.resumo(),
       True)
 
+print("Compra mudada ou cancelada no banco é atualizada")
+_vals, _desde = sync.bank_card_values([
+    {"id": "t1", "date": "2026-09-20T10:00:00Z", "amount": 187.40,
+     "type": "DEBIT"},
+    {"id": "t5", "date": "2026-09-22T10:00:00Z", "amount": 50.0,
+     "type": "CREDIT"},
+])
+check("valor com sinal: compra positiva, crédito negativo",
+      (_vals["t1"][0], _vals["t5"][0]), (187.40, -50.0))
+_atual = pd.DataFrame([
+    compra("10/2026", "Posto (pré-autorização)", 1.0, "t1",
+           data="2026-09-20"),
+    compra("10/2026", "Hotel pendente", 300.0, "t9", data="2026-09-21"),
+    compra("08/2026", "Antiga, fora da janela", 10.0, "t0",
+           data="2026-08-01"),
+    compra("10/2026", "Digitada", 10.0, "", data="2026-09-25"),
+])
+_ref, _n, _foi = sync.refresh_from_bank(_atual, "Principal", _vals, _desde)
+check("o posto ficou com o valor abastecido", _ref.loc[0, "Valor"], 187.40)
+check("um valor corrigido", _n, 1)
+check("o hotel cancelado é apontado; antiga e digitada não",
+      list(_atual.loc[_foi, "Descrição"]), ["Hotel pendente"])
+check("sem resposta do banco, nada muda",
+      sync.refresh_from_bank(_atual, "Principal", {}, _desde)[1:], (0, []))
+
 print("Saber quando sincronizar de novo")
 _agora = datetime(2026, 10, 2, 12, 0)
 check("nunca sincronizou", sync.stale("", hours=6, now=_agora), True)

@@ -88,6 +88,69 @@ def realign_months(df: pd.DataFrame, meses: dict[str, str]
     return out, int(mudar.sum())
 
 
+def bank_card_values(transactions: list[dict]
+                     ) -> tuple[dict[str, tuple[float, str]], date | None]:
+    """({id: (valor com sinal, data ISO)}, data mais antiga devolvida).
+
+    O valor segue a mesma regra da importação: compra positiva, crédito
+    negativo. A data mais antiga marca até onde a resposta cobre.
+    """
+    valores: dict[str, tuple[float, str]] = {}
+    mais_antiga: date | None = None
+    for tx in transactions or []:
+        pid = str(tx.get("id") or "").strip()
+        quando = pi._data(tx)
+        if not pid or quando is None:
+            continue
+        valor, tipo = pi._valor_e_tipo(tx, cartao=True)
+        valores[pid] = (round(-valor if tipo == "Entrada" else valor, 2),
+                        quando.isoformat())
+        mais_antiga = quando if mais_antiga is None else min(mais_antiga,
+                                                             quando)
+    return valores, mais_antiga
+
+
+def refresh_from_bank(df: pd.DataFrame, card: str,
+                      valores: dict[str, tuple[float, str]],
+                      desde: date | None) -> tuple[pd.DataFrame, int, list[int]]:
+    """Atualiza as compras já importadas com o que o banco diz agora.
+
+    Devolve (aba atualizada, quantas mudaram, índices das que sumiram).
+
+    O banco muda uma compra depois de lançá-la: a pré-autorização do
+    posto vira o valor abastecido, o câmbio fecha, a compra pendente é
+    cancelada e some da resposta. O app só olhava id novo, então a
+    planilha guardava para sempre o valor da primeira leitura — e a
+    compra cancelada seguia inflando a fatura.
+
+    Some = tem id, é deste cartão, a data está dentro do período que a
+    resposta cobre, e o id não veio. Fora dessa janela não dá para
+    afirmar nada, e a linha fica.
+    """
+    if df.empty or "ID Pluggy" not in df.columns or not valores:
+        return df, 0, []
+    out = df.copy()
+    ids = out["ID Pluggy"].astype(str).str.strip()
+    do_cartao = cc._card_series(out) == str(card).strip()
+    mudou = 0
+    for idx in out.index[do_cartao & ids.isin(list(valores))]:
+        valor, quando = valores[ids[idx]]
+        atual = pd.to_numeric(out.at[idx, "Valor"], errors="coerce")
+        if pd.isna(atual) or abs(float(atual) - valor) > 0.004:
+            out.at[idx, "Valor"] = valor
+            mudou += 1
+        if str(out.at[idx, "Data Compra"])[:10] != quando:
+            out.at[idx, "Data Compra"] = quando
+    sumiram: list[int] = []
+    if desde is not None:
+        datas = pd.to_datetime(out["Data Compra"].astype(str).str[:10],
+                               errors="coerce")
+        candidatas = do_cartao & (ids != "") & ~ids.isin(list(valores)) \
+            & datas.notna() & (datas >= pd.Timestamp(desde))
+        sumiram = list(out.index[candidatas])
+    return out, mudou, sumiram
+
+
 @dataclass
 class Arrumacao:
     manter: pd.DataFrame
@@ -207,6 +270,8 @@ class Resultado:
     novos_conta: int = 0
     novos_cartao: int = 0
     realinhadas: int = 0
+    atualizadas: int = 0
+    canceladas: int = 0
     arquivadas: int = 0
     projecoes_removidas: int = 0
     baixas: int = 0
@@ -236,6 +301,12 @@ class Resultado:
         if self.realinhadas:
             partes.append(f"{self.realinhadas} compra(s) movida(s) para a "
                           "fatura em que o banco as cobrou")
+        if self.atualizadas:
+            partes.append(f"{self.atualizadas} compra(s) com valor "
+                          "corrigido pelo banco")
+        if self.canceladas:
+            partes.append(f"{self.canceladas} compra(s) cancelada(s) no "
+                          "banco foram para o arquivo")
         if self.baixas:
             partes.append(f"{self.baixas} compra(s) de faturas vencidas "
                           "marcadas como pagas")
@@ -318,6 +389,7 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
     # 4. Faturas emitidas.
     linhas_fatura: list[dict] = []
     meses_do_banco: dict[str, str] = {}
+    valores_por_cartao: dict[str, tuple[dict, date | None]] = {}
     for conta in ativas:
         chave = pi.account_key(conta)
         destino = mapa.get(chave, "")
@@ -371,7 +443,36 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
         res.novos_conta, res.novos_cartao = len(banco), len(cartao)
 
     # 6 e 7. A aba do cartão se arruma sozinha.
+    for conta in ativas:
+        chave = pi.account_key(conta)
+        destino = mapa.get(chave, "")
+        # Só cartão, e só se a leitura das transações deu certo: conta
+        # que falhou não pode fazer as compras dela parecerem canceladas.
+        if (str(conta.get("type") or "").upper() != "CREDIT"
+                or destino in ("", pi.DESTINO_BANCO, pi.DESTINO_IGNORAR)
+                or chave not in transacoes):
+            continue
+        v, d = bank_card_values(transacoes[chave])
+        anteriores, desde_ant = valores_por_cartao.get(destino, ({}, None))
+        anteriores.update(v)
+        valores_por_cartao[destino] = (
+            anteriores, min(x for x in (d, desde_ant) if x) if (d or desde_ant)
+            else None)
+
     df = repository.load_credit_card()
+    canceladas: list[int] = []
+    for destino, (valores, cobre_desde) in valores_por_cartao.items():
+        # Só afirma cancelamento dentro da janela que a resposta cobre E
+        # que a importação usa; antes do corte nada foi importado mesmo.
+        janela = max(cobre_desde, desde) if cobre_desde and desde else None
+        df, n, sumiram = refresh_from_bank(df, destino, valores, janela)
+        res.atualizadas += n
+        canceladas += sumiram
+    if canceladas:
+        repository.save_archive("arquivo_cartao", df.loc[canceladas].assign(
+            **{"Arquivado em": today.isoformat()}))
+        df = df.drop(index=canceladas).reset_index(drop=True)
+        res.canceladas = len(canceladas)
     df, res.realinhadas = realign_months(df, meses_do_banco)
     arr = housekeeping(df, today=today)
     df = arr.manter
@@ -386,7 +487,8 @@ def run(*, ids: list[str], today: date, confirmar_lote: bool = False,
         contas=positions.card_accounts(posicao, mapa), today=today)
     df, res.baixas = settle_status(df, livros)
 
-    if res.realinhadas or arr.mudou or res.baixas:
+    if (res.realinhadas or arr.mudou or res.baixas or res.atualizadas
+            or res.canceladas):
         repository.save_credit_card(df)
 
     # Sem carimbo quando tudo falhou ou o lote ficou retido: a próxima
