@@ -33,15 +33,19 @@ class SidebarState:
 
 def render(months: list[str]) -> SidebarState:
     """Renderiza a sidebar e retorna o estado escolhido pelo usuário."""
-    st.sidebar.markdown("### 💸 Monitor Financeiro")
-    st.sidebar.caption("Controle total das suas finanças.")
-    st.sidebar.divider()
+    st.sidebar.markdown(
+        '<div class="mf-brand"><span class="mf-brand__logo">💸</span>'
+        '<div><div class="mf-brand__name">Monitor Financeiro</div>'
+        '<div class="mf-brand__sub">suas contas, do banco para cá</div>'
+        '</div></div>', unsafe_allow_html=True)
 
-    if st.sidebar.button("Sair", use_container_width=True):
-        logout()
+    st.sidebar.markdown('<div class="mf-side-label">Menu</div>',
+                        unsafe_allow_html=True)
+    page = st.sidebar.radio("Escolha uma seção:", PAGES,
+                            label_visibility="collapsed", key="nav")
 
-    st.sidebar.divider()
-    st.sidebar.subheader("Filtro de mês")
+    st.sidebar.markdown('<div class="mf-side-label">Período</div>',
+                        unsafe_allow_html=True)
     current_month = date.today().strftime("%m/%Y")
     # Garante que o mês atual sempre apareça no select, mesmo que ainda
     # não haja lançamentos.
@@ -50,13 +54,11 @@ def render(months: list[str]) -> SidebarState:
                        reverse=True)
     options = [ALL_MONTHS, *available]
     default_idx = options.index(current_month)
-    month = st.sidebar.selectbox("Período:", options, index=default_idx)
+    month = st.sidebar.selectbox("Período", options, index=default_idx,
+                                 label_visibility="collapsed")
 
-    st.sidebar.divider()
-    st.sidebar.subheader("Navegação")
-    page = st.sidebar.radio("Escolha uma seção:", PAGES, label_visibility="collapsed")
-
-    st.sidebar.divider()
+    st.sidebar.markdown('<div class="mf-side-label">Aparência</div>',
+                        unsafe_allow_html=True)
     escuro = st.sidebar.toggle(
         "🌙 Modo escuro", value=st.session_state.get("tema", TEMA_PADRAO) == "dark",
         help="A preferência fica salva na sua planilha.",
@@ -66,5 +68,10 @@ def render(months: list[str]) -> SidebarState:
         st.session_state["tema"] = tema
         repository.save_config_text(ConfigKeys.TEMA, tema)
         st.rerun()
+
+    st.sidebar.markdown('<div class="mf-side-gap"></div>',
+                        unsafe_allow_html=True)
+    if st.sidebar.button("Sair", use_container_width=True):
+        logout()
 
     return SidebarState(selected_month=month, selected_page=page, tema=tema)

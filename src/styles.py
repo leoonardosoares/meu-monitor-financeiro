@@ -495,38 +495,43 @@ def _css() -> str:
        sujo atravessando a tela. Agora o fundo é o próprio cartão e a cor
        fica só numa barra à esquerda: o alerta é reconhecível pela cor sem
        pintar o texto inteiro por trás. */
-    [data-testid="stAlert"] {
-        border-radius: 12px;
-        box-shadow: none;
+    [data-testid="stAlert"] { border-radius: 12px; box-shadow: none; }
+    /* O botão "Deploy" e o menu de desenvolvedor do Streamlit não são do
+       app. */
+    [data-testid="stAppDeployButton"], [data-testid="stMainMenu"] {
+        display: none !important;
     }
     [data-testid="stAlert"] p, [data-testid="stAlert"] li,
     [data-testid="stAlert"] strong {
         color: var(--text) !important;
     }
-    [data-testid="stAlert"] > div,
-    [data-testid="stAlertContentSuccess"],
-    [data-testid="stAlertContentWarning"],
-    [data-testid="stAlertContentError"],
-    [data-testid="stAlertContentInfo"] {
+    [data-testid="stAlertContainer"] {
         background: var(--surface) !important;
         border: 1px solid var(--border) !important;
         border-left: 3px solid var(--neutral) !important;
         border-radius: 12px !important;
         box-shadow: var(--shadow) !important;
+        padding: .55rem .9rem !important;
     }
-    [data-testid="stAlertContentSuccess"] {
+    /* A camada de dentro era uma segunda caixa com cor própria dentro da
+       primeira. Fica transparente: o alerta é uma caixa só. */
+    [data-testid^="stAlertContent"] {
+        background: transparent !important;
+        border: 0 !important;
+    }
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {
         border-left-color: var(--green) !important;
         background: var(--ok-soft) !important;
     }
-    [data-testid="stAlertContentWarning"] {
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {
         border-left-color: var(--amber) !important;
         background: var(--warn-soft) !important;
     }
-    [data-testid="stAlertContentError"] {
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
         border-left-color: var(--red) !important;
         background: var(--err-soft) !important;
     }
-    [data-testid="stAlertContentInfo"] {
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {
         border-left-color: var(--blue) !important;
         background: var(--info-soft) !important;
     }
@@ -639,6 +644,166 @@ def _css() -> str:
         border: 1px solid currentColor;
         margin-bottom: .3rem;
     }
+    /* ── Casco: marca e menu lateral ────────────────────────────────────
+       O título do app aparecia em letras gigantes no topo de toda página,
+       pesando mais que o próprio título da página. A marca mora aqui,
+       pequena, e o menu é uma lista com o item ativo destacado — e não
+       botões de rádio com bolinhas. */
+    [data-testid="stSidebar"] > div:first-child { padding-top: 1.2rem; }
+    .mf-brand {
+        display: flex; align-items: center; gap: .7rem;
+        padding: .3rem .2rem 1.1rem;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: .6rem;
+    }
+    .mf-brand__logo {
+        display: grid; place-items: center;
+        width: 2.3rem; height: 2.3rem; border-radius: 11px;
+        background: var(--green-soft); font-size: 1.15rem;
+    }
+    .mf-brand__name { font-weight: 800; font-size: .98rem; color: var(--text);
+                      letter-spacing: -.01em; }
+    .mf-brand__sub { font-size: .72rem; color: var(--faint); }
+    .mf-side-label {
+        color: var(--faint) !important; font-size: .66rem; font-weight: 700;
+        letter-spacing: .12em; text-transform: uppercase;
+        margin: 1rem 0 .35rem .2rem;
+    }
+    .mf-side-gap { height: 1.4rem; }
+
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {
+        gap: .15rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadioOption"] {
+        width: 100%; margin: 0 !important;
+        padding: .55rem .75rem !important;
+        border-radius: 10px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        transition: background .15s ease;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadioOption"]:hover {
+        background: var(--surface-2);
+    }
+    /* A bolinha do rádio some: o destaque do item ativo diz o mesmo. */
+    [data-testid="stSidebar"] [data-testid="stRadioOption"] > div > div:first-child:not([data-testid]) {
+        display: none !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadioOption"] p {
+        font-size: .9rem !important; font-weight: 600;
+        color: var(--muted) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"],
+    [data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) {
+        background: var(--green-soft);
+        border-color: var(--border);
+    }
+    [data-testid="stSidebar"] [data-testid="stRadioOption"][data-selected="true"] p,
+    [data-testid="stSidebar"] [data-testid="stRadioOption"]:has(input:checked) p {
+        color: var(--green) !important;
+    }
+
+    /* ── Gráfico como cartão ────────────────────────────────────────────
+       Todo gráfico senta numa superfície com borda e sombra, igual aos
+       cartões de número. Solto na página, o Plotly parecia um bloco
+       estranho de outra cor. */
+    [data-testid="stPlotlyChart"] {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 0;
+        overflow: hidden;
+    }
+    /* O fundo é o do próprio gráfico; sem padding, não sobra uma moldura
+       de outra cor em volta dele. */
+    [data-testid="stPlotlyChart"] .main-svg { border-radius: var(--radius); }
+
+    /* Respiro: a página vinha colada no topo e larga demais em telas
+       grandes, com os cartões espalhados. */
+    .block-container { padding-top: 2.4rem !important; max-width: 1180px; }
+    [data-testid="stHorizontalBlock"] { gap: 1rem; }
+    /* ── Destaque (components.hero) ── */
+    .mf-hero {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        padding: 1.5rem 1.6rem 1.2rem;
+        position: relative; overflow: hidden;
+    }
+    .mf-hero::before {
+        content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+        background: var(--green);
+    }
+    .mf-hero__label {
+        color: var(--faint); font-size: .72rem; font-weight: 700;
+        letter-spacing: .12em; text-transform: uppercase;
+    }
+    .mf-hero__value {
+        font-size: clamp(2rem, 4.2vw, 2.9rem); font-weight: 800;
+        letter-spacing: -.035em; line-height: 1.1; margin: .25rem 0 .2rem;
+    }
+    .mf-hero__note { color: var(--faint); font-size: .78rem; }
+    .mf-hero__parts {
+        display: flex; flex-wrap: wrap; gap: .6rem 2.2rem;
+        margin-top: 1rem; padding-top: .9rem;
+        border-top: 1px solid var(--border);
+    }
+    .mf-hero__part { display: flex; flex-direction: column; gap: .1rem; }
+    .mf-hero__part span { color: var(--muted); font-size: .78rem; }
+    .mf-hero__part b { font-size: 1.05rem; font-weight: 700; }
+    .mf-mut { color: var(--muted); }
+    .mf-row__name { overflow-wrap: anywhere; }
+    /* ── Abas, no DOM do Streamlit 1.5x+ (role=tablist / stTab) ────────
+       As regras de cima miram o BaseWeb das versões antigas; estas, o
+       componente atual. Mesmo desenho: uma calha e a aba ativa erguida. */
+    .stTabs [role="tablist"] {
+        display: inline-flex !important; flex-wrap: wrap; gap: .2rem;
+        background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: 12px; padding: .25rem; margin-bottom: 1.1rem;
+        width: auto !important;
+    }
+    .stTabs [data-testid="stTab"] {
+        padding: .45rem 1rem !important; border-radius: 9px;
+        border: 1px solid transparent;
+        transition: background .15s ease;
+    }
+    .stTabs [data-testid="stTab"] p {
+        font-weight: 600; font-size: .875rem; color: var(--muted) !important;
+    }
+    .stTabs [data-testid="stTab"]:hover p { color: var(--text) !important; }
+    .stTabs [data-testid="stTab"][aria-selected="true"] {
+        background: var(--surface); border-color: var(--border);
+        box-shadow: var(--shadow);
+    }
+    .stTabs [data-testid="stTab"][aria-selected="true"] p {
+        color: var(--green) !important;
+    }
+    .stTabs .react-aria-SelectionIndicator { display: none !important; }
+
+    /* Seletor horizontal no corpo da página (ex.: qual cartão) vira um
+       grupo de pílulas, sem bolinha de rádio. */
+    [data-testid="stMain"] [data-testid="stRadio"] [role="radiogroup"] {
+        gap: .4rem; flex-wrap: wrap;
+    }
+    [data-testid="stMain"] [data-testid="stRadioOption"] {
+        border: 1px solid var(--border); border-radius: 999px;
+        padding: .35rem .95rem !important; margin: 0 !important;
+        background: var(--surface); cursor: pointer;
+    }
+    [data-testid="stMain"] [data-testid="stRadioOption"] > div > div:first-child:not([data-testid]) {
+        display: none !important;
+    }
+    [data-testid="stMain"] [data-testid="stRadioOption"] p {
+        font-weight: 600; font-size: .86rem; color: var(--muted) !important;
+    }
+    [data-testid="stMain"] [data-testid="stRadioOption"][data-selected="true"] {
+        background: var(--green-soft); border-color: var(--green);
+    }
+    [data-testid="stMain"] [data-testid="stRadioOption"][data-selected="true"] p {
+        color: var(--green) !important;
+    }
     </style>
     """.replace("__ROOT__", _root())
 
@@ -657,14 +822,58 @@ def missing_vars() -> set[str]:
     return citadas - definidas
 
 
-def inject(mode: str = TEMA_PADRAO) -> None:
-    """Aplica a paleta do modo e injeta o CSS.
+def native_theme(mode: str) -> dict[str, str]:
+    """As opções do tema nativo do Streamlit que correspondem ao modo.
 
-    A troca acontece por variável CSS, e não por tema do Streamlit: o
-    tema nativo só é lido na inicialização do processo, então mudar ali
-    exigiria reiniciar o app para ver a cor mudar.
+    São elas que pintam o que o CSS não alcança: o seletor de período, o
+    editor de tabelas (desenhado em canvas), o fundo atrás dos gráficos.
+    Com o `config.toml` fixo em escuro, tudo isso ficava preto no modo
+    claro — era o "modo claro buga".
+    """
+    cores = PALETTES.get(mode, PALETTES[TEMA_PADRAO])
+    return {
+        "theme.base": cores["SCHEME"],
+        "theme.primaryColor": cores["PRIMARY"],
+        "theme.backgroundColor": cores["BG"],
+        "theme.secondaryBackgroundColor": cores["SURFACE_2"],
+        "theme.textColor": cores["TEXT"],
+    }
+
+
+def _sincronizar_tema_nativo(mode: str) -> None:
+    """Põe o tema nativo no modo escolhido, recarregando uma vez se mudou.
+
+    O tema nativo viaja para o navegador no começo de cada execução do
+    script. Mudá-lo no meio só vale a partir da execução seguinte — por
+    isso, quando ele muda, o script recomeça uma vez. Se a API interna
+    não existir nesta versão do Streamlit, o CSS continua cobrindo o que
+    alcança.
+    """
+    try:
+        from streamlit import config as _config
+        desejado = native_theme(mode)
+        mudou = False
+        for chave, valor in desejado.items():
+            if _config.get_option(chave) != valor:
+                _config.set_option(chave, valor)
+                mudou = True
+    except Exception:                                     # noqa: BLE001
+        return
+    if mudou and not st.session_state.get("_tema_nativo_recarregado"):
+        st.session_state["_tema_nativo_recarregado"] = True
+        st.rerun()
+    st.session_state["_tema_nativo_recarregado"] = False
+
+
+def inject(mode: str = TEMA_PADRAO) -> None:
+    """Aplica a paleta do modo: no tema nativo e no CSS.
+
+    O CSS cuida do que é HTML (cartões, abas, tabelas próprias); o tema
+    nativo, do que o Streamlit desenha sozinho. Os dois saem da mesma
+    paleta, então não há mais um app claro com peças escuras.
     """
     C.use(mode)
+    _sincronizar_tema_nativo(mode)
     st.markdown(_css(), unsafe_allow_html=True)
 
 

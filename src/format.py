@@ -18,3 +18,39 @@ def md(texto: str) -> str:
     código. Escapar o cifrão desarma isso.
     """
     return str(texto).replace("$", "\\$")
+
+
+# Onde a razão social começa: daí em diante, nada interessa.
+_JURIDICO = ("s.a.", "s.a", "s/a", "ltda", "ltda.", "sociedade",
+             "instituicao", "instituição", "me", "eireli")
+
+
+def short_name(texto: str) -> str:
+    """Nome legível a partir do que o banco envia.
+
+    "CDB - NU FINANCEIRA S.A. - SOCIEDADE DE CREDITO, FINANCIAMENTO E
+    INVESTIMENTO" vira "CDB · Nu Financeira"; "Nu Pagamentos S.A. -
+    Instituição de Pagamento" vira "Nu Pagamentos". A razão social
+    inteira quebrava em três linhas em cada cartão do painel.
+    """
+    partes = [p.strip() for p in str(texto or "").split(" - ") if p.strip()]
+    if not partes:
+        return ""
+
+    def limpa(p: str) -> str:
+        palavras = []
+        for w in p.replace(",", " ").split():
+            if w.casefold() in _JURIDICO:
+                break
+            palavras.append(w)
+        nome = " ".join(palavras[:3])
+        if nome.isupper() and len(nome) > 4:
+            return nome.title()
+        return nome[:1].upper() + nome[1:] if nome.islower() else nome
+
+    primeiro = limpa(partes[0]) or partes[0]
+    if len(partes) > 1 and len(primeiro) <= 12:
+        emissor = limpa(partes[1])
+        if emissor and emissor.casefold() != primeiro.casefold():
+            return f"{primeiro} · {emissor}"
+    return primeiro

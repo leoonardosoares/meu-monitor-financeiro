@@ -295,7 +295,7 @@ def _linhas(faturas: list[cb.Fatura]) -> pd.DataFrame:
                 valor = pd.to_numeric(r.get("Valor"), errors="coerce")
                 linhas.append({
                     "Fatura": f.mes,
-                    "Data": str(r.get("Data Compra") or "")[:10],
+                    "Data": _data_br(r.get("Data Compra")),
                     "Descrição": r.get("Descrição"),
                     "Parcela": r.get("Parcela") or "",
                     "Categoria": r.get("Categoria") or "",
@@ -304,12 +304,17 @@ def _linhas(faturas: list[cb.Fatura]) -> pd.DataFrame:
                 })
         for p in f.projetadas:
             linhas.append({
-                "Fatura": f.mes, "Data": str(p.get("Data Compra") or "")[:10],
+                "Fatura": f.mes, "Data": _data_br(p.get("Data Compra")),
                 "Descrição": p["Descrição"], "Parcela": p["Parcela"],
                 "Categoria": p.get("Categoria") or "",
                 "Valor": brl(p["Valor"]), "Origem": _ORIGEM[ORIGEM_PROJECAO],
             })
     return pd.DataFrame(linhas)
+
+
+def _data_br(valor) -> str:
+    lida = pd.to_datetime(str(valor or "")[:10], errors="coerce")
+    return "" if pd.isna(lida) else f"{lida:%d/%m/%Y}"
 
 
 def _origem(r) -> str:
